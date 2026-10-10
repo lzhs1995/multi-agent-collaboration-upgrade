@@ -1104,7 +1104,18 @@ def _require_exact_composer_without_cursor_cell(screen, surface, text):
                             break
                         separators = ("",) if number == 0 else ("\n",)
                         if number and previous and part:
-                            if cells(previous) + cells(part[0]) > width:
+                            # A no-separator boundary is accepted only for a
+                            # measured hard wrap inside a token.  The old
+                            # matcher accepted any missing word space, which
+                            # made an edited draft look identical to a clean
+                            # one and could authorize Enter on changed text.
+                            adjacent = previous[-1] + part[0]
+                            hard_wrap = (
+                                cells(previous) >= max(width - 4, 40)
+                                and all(ch.isalnum() for ch in adjacent)
+                                and any(ch.isdigit() for ch in adjacent)
+                            )
+                            if cells(previous) + cells(part[0]) > width or hard_wrap:
                                 separators += ("",)
                             word = re.match(r"[^\s]+", part)
                             # Measured Claude editor: a word that would exactly
@@ -1120,6 +1131,49 @@ def _require_exact_composer_without_cursor_cell(screen, surface, text):
                         previous = part
                     if len(text) in positions:
                         return
+        # Claude 2.1.170 may expose a 144-cell border while the live editor
+        # wraps the first row at 140 cells and continuation rows at 136 cells.
+        # This is terminal geometry, not an edit to the payload.  Match the
+        # observed content rows as ordered slices of the original bytes and
+        # allow only a renderer boundary (explicit newline, no separator, or
+        # one word-wrap space).  Native receipt equality remains mandatory
+        # after the one Enter; this fallback only decides whether that Enter
+        # is safe to send.
+        if not text.endswith((" ", "\n", "\r", "\t")):
+            observed_parts = [parts[0]] + [row[2:] for row in parts[1:]]
+            if all(not unicodedata.category(ch).startswith("C")
+                   for row in observed_parts for ch in row):
+                positions = {0}
+                for number, part in enumerate(observed_parts):
+                    if number == 0:
+                        separators = ("",)
+                    else:
+                        separators = ("\n",)
+                        # The visible continuation gutter can drop the space
+                        # at a word wrap.  Permit that separator only when the
+                        # previous observed row is near the measured border;
+                        # arbitrary edited spaces remain rejected.
+                        previous = observed_parts[number - 1]
+                        if (_display_cells(previous) >=
+                                max(len(rows[start - 1]) - 8, 40)):
+                            separators += (" ",)
+                        adjacent = previous[-1] + part[0] if previous and part else ""
+                        if (previous and part and
+                                _display_cells(previous) >= max(len(rows[start - 1]) - 8, 40)
+                                and all(ch.isalnum() for ch in adjacent)
+                                and any(ch.isdigit() for ch in adjacent)):
+                            separators += ("",)
+                    next_positions = set()
+                    for pos in positions:
+                        for separator in separators:
+                            candidate = separator + part
+                            if text.startswith(candidate, pos):
+                                next_positions.add(pos + len(candidate))
+                    positions = next_positions
+                    if not positions:
+                        break
+                if len(text) in positions:
+                    return
     # Claude's bordered editor uses a two-column prompt/continuation gutter.
     # Preserve explicit newlines, spaces and Unicode; generate expected rows
     # rather than deleting arbitrary whitespace from the observed draft.

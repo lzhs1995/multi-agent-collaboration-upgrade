@@ -68,6 +68,29 @@ class EqualWidthTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertFalse(b._exact_pending_text(value, original))
 
+    def test_live_claude_variable_continuation_width_is_accepted(self):
+        # Claude Code 2.1.170 exposed a 144-cell border while the live
+        # composer rendered this long single-line notice as 140/136/136/28
+        # content cells.  The matcher must prove the same bytes before it
+        # permits Enter, while an edited byte remains rejected.
+        text = (
+            'STATUS: MESSAGE_REFERENCE_V2 BOUNDARY_20261010 '
+            'BODY="/tmp/message-bodies/abcdef0123456789.txt" '
+            'SHA256=' + 'abcdef0123456789' * 30 + ' '
+            'BYTES=1609 Verify and read the exact UTF-8 body; follow its reply '
+            'contract within existing authority.'
+        )
+        parts = [text[:140], text[140:276], text[276:412], text[412:]]
+        value = '\n'.join([parts[0]] + ['  ' + part for part in parts[1:]])
+        screen_text = screen(parts[0], parts[1], border=144, cursor=False)
+        rows = screen_text.splitlines()
+        start = max(i for i, row in enumerate(rows) if row.startswith('❯'))
+        end = next(i for i in range(start + 1, len(rows)) if rows[i] == '─' * 144)
+        rows[start:end] = ['❯\u00a0' + parts[0]] + ['  ' + part for part in parts[1:]]
+        screen_text = '\n'.join(rows)
+        self.assertTrue(b._exact_pending_text(screen_text, text))
+        self.assertFalse(b._exact_pending_text(screen_text, text.replace('Verify and', 'Verify  and')))
+
 
 if __name__ == '__main__':
     unittest.main()
