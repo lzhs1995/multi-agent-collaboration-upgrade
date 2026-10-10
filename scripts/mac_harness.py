@@ -1679,11 +1679,9 @@ def _handshake_one(args, root, gate, item, per_executor):
         receipt['dispatch_body_reference'] = prepared['reference']
         receipt['dispatch_confirmation_scope'] = 'reference_notice' if prepared['reference'] else 'inline_payload'
         _write_handshake_receipt(root, per_executor)
-        # --force-compose is consumed by bridge-test to discard a previously
-        # fingerprinted idle draft.  Handshake runs only after that phase has
-        # proved an empty composer; forwarding the flag here would make the
-        # native sender reject the clean handshake as a forbidden replacement.
         submit_kwargs = {"marker": ack_nonce}
+        if getattr(args, "force_compose", False):
+            submit_kwargs["force_compose"] = True
         cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)
         receipt["dispatch_submitted_at"] = _now()
         receipt["updated_at"] = _now()
