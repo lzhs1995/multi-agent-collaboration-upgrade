@@ -1,0 +1,20 @@
+{
+  "plan_id": "orchestration-replay-v1",
+  "evidence_class": "offline_schedule_estimate",
+  "command": "python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orchestration-plan.json",
+  "nodes": 7,
+  "waves": 5,
+  "parallel_waves": 2,
+  "serial_seconds": 790.0,
+  "scheduled_seconds": 600.0,
+  "wall_time_reduction_percent": 24.051,
+  "speedup": 1.317,
+  "meets_fifteen_percent_target": true,
+  "tests": {
+    "focused": 9,
+    "full_offline": 1280,
+    "failures": 0,
+    "errors": 0
+  },
+  "interpretation": "Deterministic scheduling estimate only; no live model, JEV, or third-party API call was made."
+}

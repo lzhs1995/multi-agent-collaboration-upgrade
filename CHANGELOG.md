@@ -92,3 +92,5 @@ explicit migration notes. Published tags and release assets are never replaced.
   delivery, ACK, callback or closeout checks.
 - Add deterministic offline benchmark/tests and document why TypeSafe/JEV stays
   behind a local decision seam under the no-third-party-API policy.
+- Record the offline benchmark separately from the still-required live
+  Claude/Codex CLI replay gate.
