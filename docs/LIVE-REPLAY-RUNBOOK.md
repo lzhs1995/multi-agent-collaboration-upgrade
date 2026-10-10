@@ -21,6 +21,12 @@ a safe idle boundary and are not compacting, reconnecting, waiting on a user
 task, or running a tool. Resolve the full installed skill release and use its
 `scripts/mac_harness.py`; do not use a stale checkout copy.
 
+The harness's `identity`/`doctor` result is authoritative for dispatch. If an
+API shell's native caller resolves to a different workspace or surface than
+the raw `cmux identify` result, stop: run the harness from the actual native
+supervisor surface or repair discovery. Never set `CMUX_WORKSPACE_ID` or
+`CMUX_SURFACE_ID` by hand to force a match.
+
 ## 2. Materialize the graph
 
 ```sh

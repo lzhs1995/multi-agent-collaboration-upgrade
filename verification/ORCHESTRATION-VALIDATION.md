@@ -29,6 +29,13 @@ session-reuse and scope rules, so no live result is claimed. The next safe
 action is to run the replay at an approved idle/session boundary and append
 the native evidence and measured metrics here.
 
+The current API-shell probe also fails closed on caller identity: installed
+harness `identity --json` resolves `workspace:9/surface:5990`, while raw cmux
+inspection from this supervisor reports `workspace:15/surface:46`. This is an
+identity-discovery mismatch, not permission to rewrite environment variables;
+the live harness must be invoked from the native supervisor surface so its
+caller proof and the selected workspace agree.
+
 When that evidence exists, promotion is mechanical and fail-closed:
 
 ```sh
