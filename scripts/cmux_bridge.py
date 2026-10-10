@@ -995,6 +995,72 @@ def _display_cells(value):
                for c in value)
 
 
+def _measured_claude_wrap_match(rows, start, body, text):
+    """Match Claude 2.1.170's measured full-width bordered editor wrap.
+
+    A 144-cell Claude editor exposes a 140-cell prompt row and 136-cell
+    continuation rows. A long reference notice can consequently split inside
+    a path or hash token even though the native buffer is one line. Only this
+    measured geometry and ordered slices of ``text`` are accepted here.
+    """
+    if (start <= 0 or not text or text[-1].isspace()
+            or not re.fullmatch(r"─{128,}", rows[start - 1])):
+        return False
+    parts = body.split("\n")
+    if len(parts) < 3 or any(number and not part.startswith("  ")
+                              for number, part in enumerate(parts)):
+        return False
+    content = [parts[0]] + [part[2:] for part in parts[1:]]
+    if any(any(unicodedata.category(char).startswith("C") for char in part)
+           for part in content):
+        return False
+    border_cells = _display_cells(rows[start - 1])
+    first_width = border_cells - 4
+    continuation_width = border_cells - 8
+    if first_width < 100 or continuation_width < 96:
+        return False
+    if _display_cells(content[0]) != first_width:
+        return False
+    for part in content[1:-1]:
+        if _display_cells(part) != continuation_width:
+            return False
+    # The measured read-screen layout showed four renderer cells after a
+    # short final row. Keep the normal one-cell cursor rule for every other
+    # bordered layout; this exception is tied to the full measured geometry.
+    tail = len(content[-1]) - len(content[-1].rstrip(" "))
+    if tail not in (0, 4):
+        return False
+    if tail:
+        content[-1] = content[-1][:-tail]
+
+    positions = {0}
+    for number, part in enumerate(content):
+        if number == 0:
+            separators = ("",)
+        else:
+            previous = content[number - 1]
+            separators = ["\n"]
+            if _display_cells(previous) >= continuation_width and part:
+                # A word-wrap consumes one source separator. The source-prefix
+                # check below means an edited draft with a missing separator
+                # cannot pass this branch.
+                separators.append(" ")
+                # A token split has no source separator. Restrict this to an
+                # alphanumeric boundary on a full visual row.
+                if previous and previous[-1].isalnum() and part[0].isalnum():
+                    separators.append("")
+        next_positions = set()
+        for position in positions:
+            for separator in separators:
+                candidate = separator + part
+                if text.startswith(candidate, position):
+                    next_positions.add(position + len(candidate))
+        positions = next_positions
+        if not positions:
+            return False
+    return len(text) in positions
+
+
 def _require_exact_composer_without_cursor_cell(screen, surface, text):
     """Require the expected visible draft, allowing known bordered hard wrapping.
 
@@ -1082,6 +1148,8 @@ def _require_exact_composer_without_cursor_cell(screen, surface, text):
     if body == text:
         return
     if bordered:
+        if _measured_claude_wrap_match(rows, start, body, text):
+            return
         # Claude's editor reserves two additional cursor cells in some builds.
         # Word wrapping can consume exactly one separator at a visual boundary.
         # Match complete content against measured geometry; never strip user
