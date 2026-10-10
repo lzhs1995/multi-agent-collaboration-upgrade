@@ -55,6 +55,24 @@ The benchmark is labelled `offline_schedule_estimate` unless an external
 measurement process supplies real CLI replay evidence. Its percentage is a
 scheduling estimate, not a claim about model quality or API latency.
 
+## Measured-gain gate
+
+After the same graph has completed once serially and once as scheduled, run the
+separate evidence gate:
+
+```sh
+python3 scripts/validate_replay_evidence.py \
+  --plan /absolute/path/to/orchestration-plan.json \
+  --evidence /absolute/path/to/measured-cli-replay.json
+```
+
+The evidence must contain both runs, exact task ids, existing-session bindings,
+native receipt, ACK, callback, report hash, closeout and acceptance proof for
+every node. The validator computes wall time from the run timestamps and returns
+`PASS` only when correctness passes and the configured 15% reduction target is
+met. Offline benchmark output cannot be promoted to `measured_cli_replay` by
+changing a label.
+
 ## JEV boundary
 
 The plan contract has a `decision_provider` field. The shipped values are

@@ -93,3 +93,11 @@ The fixture in `tests/fixtures/orchestration-plan.json` is intentionally marked
 of bounded waves (24.051% schedule reduction). This is an architecture test,
 not a measured model or live cmux result. A real gain claim requires a replay
 with the existing Claude/Codex sessions and preserved native evidence.
+
+`scripts/validate_replay_evidence.py` now enforces that last boundary. It
+accepts only a pair of serial/scheduled runs whose exact node ids and expected
+waves carry native receipt, ACK, callback, report-hash, closeout and acceptance
+proof. It computes reduction from timestamps and rejects offline labels,
+third-party calls, replacement sessions, missing proofs and reductions below
+15%. The current checkout has no such live evidence because both candidate
+Claude executor surfaces are occupied by another user task.

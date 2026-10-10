@@ -27,3 +27,15 @@ is occupied by another user task. Reusing or restarting it would violate the
 session-reuse and scope rules, so no live result is claimed. The next safe
 action is to run the replay at an approved idle/session boundary and append
 the native evidence and measured metrics here.
+
+When that evidence exists, promotion is mechanical and fail-closed:
+
+```sh
+python3 scripts/validate_replay_evidence.py \
+  --plan tests/fixtures/orchestration-plan.json \
+  --evidence /absolute/path/to/measured-cli-replay.json
+```
+
+The validator requires both serial and scheduled runs and rejects third-party
+API calls, replacement sessions, missing native receipts, missing callbacks,
+incorrect task ids, overlapping serial work, and reductions below 15%.
