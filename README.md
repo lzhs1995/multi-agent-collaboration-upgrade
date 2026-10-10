@@ -70,3 +70,14 @@ not a live UI transport. There is no Windows/tmux or ACP adapter in this release
 
 See [lessons](references/lessons.md), [security](SECURITY.md), and
 [version history](CHANGELOG.md). MIT; cmux, Codex and Claude remain separate products.
+
+## Isolated orchestration upgrade
+
+This public upgrade branch adds an experimental, CLI-owned graph adapter in
+[`scripts/orchestration_planner.py`](scripts/orchestration_planner.py). Claude
+Code or Codex can author a dependency graph; the adapter validates it, schedules
+bounded ready waves, and emits task-pack seeds for the existing
+`mac_harness.py`/`cmux_bridge` lifecycle. It never starts a replacement session
+or calls a third-party model API. See [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)
+and [`RESEARCH-FINDINGS.md`](RESEARCH-FINDINGS.md) for the evidence review and
+the limits of the offline benchmark.

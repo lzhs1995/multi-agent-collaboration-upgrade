@@ -83,3 +83,12 @@ Check current agent input before sending, preserve user drafts and queued work, 
 Versioning: SemVer for this distribution; breaking public schema changes require
 a major version after 1.0. Before 1.0, breaking changes require a minor bump and
 explicit migration notes. Published tags and release assets are never replaced.
+## Unreleased — isolated orchestration adapter
+
+- Add a validated CLI-owned dependency graph and bounded scheduler that keeps
+  one writer per scope and routes work through existing Claude Code/Codex CLI
+  sessions.
+- Emit hash-bound task-pack seeds without bypassing identity-gate, native
+  delivery, ACK, callback or closeout checks.
+- Add deterministic offline benchmark/tests and document why TypeSafe/JEV stays
+  behind a local decision seam under the no-third-party-API policy.
