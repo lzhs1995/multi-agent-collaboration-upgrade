@@ -35,6 +35,19 @@ shipped.
 
 ## Issue and PR lessons
 
+- The target repository's PR #28 verifies native delivery and automatic hooks
+  in 0.4.7; PR #27 requires native receipt and bounded callback waiting; PR #20
+  fixes bridge recovery after an empty idle observation; and PR #19 binds
+  closeout to dispatch proof and the original callback controller. These are
+  hard boundaries for the graph adapter: a ready wave may decide *what* is
+  ready, but it cannot declare a node delivered, accepted or complete.
+- PRs #24 and #12 distinguish a submitted payload from Enter/Tab activity and
+  preserve pending ACK states during cleanup. The generated seed therefore
+  contains no send shortcut and explicitly points back to the existing
+  `cmux_bridge` entrypoint.
+- Open PRs #21--#26 explore idle re-ask and escalation. The scheduler does not
+  add a polling loop; it leaves idle/recovery ownership with the existing
+  bounded sentinel and executor availability state machine.
 - OmO PR #1726 (`feat: native agent-teams & optional MCB integration`) is a
   large, draft, conflict-prone feature. Its own triage describes a config-gated
   integration and separate team task/inbox/runtime layers. This supports using
@@ -56,6 +69,16 @@ shipped.
   and Jev/LLM cooperation. They are community proposals, not evidence that JEV
   is available through Claude/Codex subscriptions. The adapter therefore
   treats them as design input only.
+
+Relevant links: [target PR #28](https://github.com/lzhs1995/multi-agent-collaboration/pull/28),
+[target PR #27](https://github.com/lzhs1995/multi-agent-collaboration/pull/27),
+[target PR #20](https://github.com/lzhs1995/multi-agent-collaboration/pull/20),
+[target PR #19](https://github.com/lzhs1995/multi-agent-collaboration/pull/19),
+[OmO PR #1726](https://github.com/code-yeongyu/oh-my-openagent/pull/1726),
+[codeg PR #879](https://github.com/spacering-net/codeg/pull/879),
+[TypeSafe issue #4](https://github.com/typesafe-ai/skills/issues/4),
+[TypeSafe issue #5](https://github.com/typesafe-ai/skills/issues/5), and
+[TypeSafe issue #11](https://github.com/typesafe-ai/skills/issues/11).
 
 ## What is implemented
 
