@@ -55,6 +55,8 @@ The benchmark is labelled `offline_schedule_estimate` unless an external
 measurement process supplies real CLI replay evidence. Its percentage is a
 scheduling estimate, not a claim about model quality or API latency.
 
+The exact live procedure is in [`LIVE-REPLAY-RUNBOOK.md`](LIVE-REPLAY-RUNBOOK.md).
+
 ## Measured-gain gate
 
 After the same graph has completed once serially and once as scheduled, run the
