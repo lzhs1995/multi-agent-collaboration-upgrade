@@ -3,10 +3,11 @@
 The shipped adapter has two separate validation layers:
 
 1. **Offline contract validation** runs without a cmux transport or model call.
-   The focused suite has 9 tests and the repository suite has 1280 tests, with
-   zero failures and zero errors. It rejects dependency cycles, unknown
-   executors, mismatched transports, replacement sessions, third-party API
-   flags, and concurrent writes to one scope.
+   The planner-focused suite has 9 tests, the replay-gate suite has 6 tests,
+   and the repository suite has 1286 tests, with zero failures and zero errors.
+   It rejects dependency cycles, unknown executors, mismatched transports,
+   replacement sessions, third-party API flags, and concurrent writes to one
+   scope.
 2. **Offline scheduling estimate** reduces the seven-node fixture from 790
    serial seconds to 600 scheduled seconds (24.051%). This is the result in
    `orchestration-offline-benchmark.json`; it is an upper-bound estimate based

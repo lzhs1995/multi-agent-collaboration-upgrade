@@ -11,8 +11,9 @@
   "speedup": 1.317,
   "meets_fifteen_percent_target": true,
   "tests": {
-    "focused": 9,
-    "full_offline": 1280,
+    "planner_focused": 9,
+    "replay_gate_focused": 6,
+    "full_offline": 1286,
     "failures": 0,
     "errors": 0
   },
