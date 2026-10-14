@@ -19,7 +19,8 @@ class CorpusFixture:
         (self.inputs / "fetched").mkdir(parents=True)
         commit = "a" * 40
         source = "demo@" + commit[:12] + "__code.py"
-        values = {source: b"print(42)\n", "docs-typesafe__confidence.md": b"# Observed documentation\n", "tssdkpy-head.json": b""}
+        values = {source: b"print(42)\n", "docs-typesafe__confidence.md": b"# Observed documentation\n",
+                  "tssdkpy-head.json": b"", "ts-org-repos.json": b"[[]]\n"}
         rows = []
         for name, raw in values.items():
             (self.inputs / "fetched" / name).write_bytes(raw)
@@ -29,6 +30,9 @@ class CorpusFixture:
             elif name.startswith("docs-"):
                 url = "https://docs.typesafe.ai/confidence.md"
                 args = ["CURL", url]
+            elif name == "ts-org-repos.json":
+                endpoint = "orgs/typesafe-ai/repos?per_page=100"
+                url, args = "https://api.github.com/" + endpoint, ["--paginate", "--slurp", endpoint]
             else:
                 endpoint = "repos/typesafe-ai/typesafe-sdk-python/commits/main"
                 url, args = "https://api.github.com/" + endpoint, [endpoint]
@@ -87,7 +91,7 @@ class WorkloadTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, "-I", "-B", str(Path(__file__).with_name("orchestration_checker.py"))],
                     input=canonical(checked), capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads(result.stdout)["records"], 3)
+                self.assertEqual(json.loads(result.stdout)["records"], 4)
                 self.assertIn("tssdkpy-head.json", (Path(request["output_root"]) / "report.md").read_text())
 
     def test_rehashed_wrong_answer_is_not_a_pass(self):
@@ -143,6 +147,51 @@ class WorkloadTests(unittest.TestCase):
         p.write_bytes(b"".join(canonical(r) for r in rows))
         ref = self.fx.request("verify_inputs")
         with self.assertRaisesRegex(ContractError, "Git commit"):
+            execute(ref, read_json(ref["path"])["output_root"])
+
+    def test_organization_listing_is_metadata_with_exact_original_args(self):
+        ref = self.fx.request("verify_inputs")
+        root = Path(read_json(ref["path"])["output_root"])
+        execute(ref, str(root))
+        sources = read_json(root / "result.json")["data"]["sources"]
+        source = next(s for s in sources if s["name"] == "ts-org-repos.json")
+        self.assertEqual(source, dict(name="ts-org-repos.json", source_kind="github_api_metadata", git_ref=None,
+            url="https://api.github.com/orgs/typesafe-ai/repos?per_page=100"))
+        self.assertEqual(check(self.fx.check_request(ref))["records"], 4)
+
+    def test_unrelated_organization_routes_and_changed_provenance_are_rejected(self):
+        variants = (
+            ("https://api.github.com/orgs/typesafe-ai/members", ["orgs/typesafe-ai/members"]),
+            ("https://api.github.com/orgs/typesafe-ai/repos", ["orgs/different-owner/repos"]),
+            ("https://example.com/orgs/typesafe-ai/repos", ["orgs/typesafe-ai/repos"]),
+            ("https://api.github.com/orgs/typesafe-ai/repos/extra", ["orgs/typesafe-ai/repos/extra"]),
+        )
+        for url, args in variants:
+            with self.subTest(url=url, args=args), tempfile.TemporaryDirectory() as directory:
+                fx = CorpusFixture(directory)
+                manifest = fx.inputs / "MANIFEST.jsonl"
+                rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+                row = next(r for r in rows if r["name"] == "ts-org-repos.json")
+                row.update(url=url, gh_api_args=args)
+                manifest.write_bytes(b"".join(canonical(r) for r in rows))
+                ref = fx.request("verify_inputs")
+                root = Path(read_json(ref["path"])["output_root"])
+                with self.assertRaisesRegex(ContractError, "GitHub provenance mismatch"):
+                    execute(ref, str(root))
+                write_json(root / "result.json", dict(schema="orchestration-corpus-result-v2",
+                    **{k: read_json(ref["path"])[k] for k in ("task_id", "attempt_id", "run_id", "node_id")}, data={}))
+                (root / "report.md").write_text("rejected fixture\n")
+                with self.assertRaisesRegex(ValueError, "GitHub source mismatch"):
+                    check(fx.check_request(ref))
+
+    def test_git_content_cannot_use_an_organization_listing(self):
+        manifest = self.fx.inputs / "MANIFEST.jsonl"
+        rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+        endpoint = "orgs/typesafe-ai/repos?ref=" + "a" * 40
+        rows[0].update(url="https://api.github.com/" + endpoint, gh_api_args=[endpoint])
+        manifest.write_bytes(b"".join(canonical(r) for r in rows))
+        ref = self.fx.request("verify_inputs")
+        with self.assertRaisesRegex(ContractError, "GitHub provenance mismatch"):
             execute(ref, read_json(ref["path"])["output_root"])
 
     def test_other_run_dependency_is_rejected(self):

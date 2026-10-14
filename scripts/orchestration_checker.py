@@ -173,7 +173,12 @@ def check(request):
                 source_kind = "documentation"
             else:
                 endpoint = url.path[1:] + ("?" + url.query if url.query else "")
-                must(url.netloc == "api.github.com" and endpoint.startswith("repos/") and endpoint in row["gh_api_args"],
+                parts = url.path.split("/")
+                organization_listing = (classify(row["name"]) == "metadata" and len(parts) == 4 and
+                    parts[1] == "orgs" and parts[3] == "repos" and
+                    re.fullmatch(r"[A-Za-z0-9-]+", parts[2]) is not None)
+                must(url.netloc == "api.github.com" and (endpoint.startswith("repos/") or organization_listing) and
+                     endpoint in row["gh_api_args"],
                      "GitHub source mismatch")
                 source_kind = "github_api_metadata"
                 if classify(row["name"]) == "git_source":

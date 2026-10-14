@@ -90,7 +90,9 @@ def verify_sources(rows, blobs, raw):
             kind = "documentation"
         else:
             endpoint = url.path.lstrip("/") + ("?" + url.query if url.query else "")
-            require(url.netloc == "api.github.com" and endpoint.startswith("repos/") and
+            organization_listing = category(row["name"]) == "metadata" and re.fullmatch(
+                r"/orgs/[A-Za-z0-9-]+/repos", url.path) is not None
+            require(url.netloc == "api.github.com" and (endpoint.startswith("repos/") or organization_listing) and
                     endpoint in row["gh_api_args"], "GitHub provenance mismatch")
             kind = "github_api_metadata"
             if category(row["name"]) == "git_source":

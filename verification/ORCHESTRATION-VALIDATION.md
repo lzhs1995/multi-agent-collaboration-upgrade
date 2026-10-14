@@ -5,15 +5,17 @@ or shared installation is certified by this checkpoint.**
 
 | Layer | Observed result | What it establishes |
 | --- | --- | --- |
-| Full repository suite | 1,404 tests; 0 failures/errors; 106.804 s | Current implementation's offline regression coverage, including original journals larger than 64 MiB. |
+| Full repository suite | 1,407 tests; 0 failures/errors; 127.945 s | Current implementation's offline regression coverage, including original journals larger than 64 MiB and exact GitHub organization-list provenance. |
 | Long original journal | 65 MiB fixture passed | Streaming preserves model history and tail actions while retaining file identity, EOF, record-boundary and per-record size checks. |
+| Original corpus, isolated checker | 82 records, 48 Git sources, all eight checks passed | Offline verification of the actual research inputs, including the failed zero-byte fetch; no live business run. |
+| Initial real freeze | Failed before any input | The validator rejected a legitimate GitHub organization repository list. The failed freeze is preserved; the corrected validator requires the exact original GitHub endpoint and CLI arguments and allows this route only for metadata. |
 | Runner boundary suite | 10 tests; 4.070 s | Incomplete preparation/uncertain input preserve leases; missing end timestamps are not zero-input proof. Included in the full suite. |
 | Legacy installer dry-run/install | Passed in a private `--home` | Private configuration/link operations only. |
 | Legacy installer doctor | Failed | Empty input reached real active markers; legacy Stop guard returned `HOOK_CALLER_UNRESOLVED: managed hook lacks a valid session_id`. |
 | Sandbox closeout | Passed using the absolute checkout entrypoint | Links retired with backups; foreign settings preserved; actual client config hashes unchanged during closeout. |
 | Original sandbox uninstall refusal | Preserved | Relative invocation reported a foreign skill; absolute entrypoint did not reproduce it. The exact original cause remains unproven. |
 | Original install's real-config before/after | Unmeasured | The interrupted script did not persist its original before snapshot; do not infer a retrospective pass. |
-| Frozen adapter / nine live runs | Not yet measured | Offline results and an idle executor cannot stand in for execution. |
+| Successful frozen adapter / nine live runs | Not yet measured | The failed freeze and offline checks cannot stand in for execution. |
 | Shared installation / automatic hooks | Not established by this work | Owned by the designated shared maintainer and requires separate live evidence. |
 
 The full suite uses private fixtures and real offline entrypoints. Coverage

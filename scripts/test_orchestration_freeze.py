@@ -86,7 +86,7 @@ class FreezeTests(unittest.TestCase):
         self.assertIn("scripts/__pycache__/existing.pyc", value["adapter"]["files"])
         self.assertNotIn(".git", value["adapter"]["directories"])
         self.assertEqual(value["input_tree"]["files"]["fetched/tssdkpy-head.json"]["bytes"], 0)
-        self.assertEqual(len(value["inputs"]), 5)
+        self.assertEqual(len(value["inputs"]), 6)
         probe = result["schedule_probe"]
         self.assertTrue(probe["distinguishes_all"])
         self.assertEqual({s: p["estimated_seconds"] for s, p in probe["strategies"].items()},
