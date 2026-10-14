@@ -241,6 +241,28 @@ class NativeEvidenceTests(unittest.TestCase):
                             f.reader.action_summary(start, f.reader.snapshot()["offset"],
                                 task_id="task", output_root="/task/output", allow_empty=True)
 
+    def test_long_original_session_preserves_prior_model_and_native_tail(self):
+        f = NativeFixture(self.root, "codex")
+        call, result = self.action_records(f, {"exit_code": 0})
+        padding = canonical(dict(type="event_msg", payload={"text": "x" * (1024 * 1024)}))
+        with f.path.open("ab") as stream:
+            for _ in range(65):
+                stream.write(padding)
+        start = f.reader.snapshot()["offset"]
+        self.assertGreater(start, 64 * 1024 * 1024)
+        original = f.append(call)
+        f.append(result)
+        end = f.reader.snapshot()["offset"]
+        summary = f.reader.action_summary(start, end, task_id="task", output_root="/task/output")
+        self.assertEqual(summary["models"], ["test-model"])
+        self.assertEqual(summary["completed_task_calls"], 1)
+        self.assertEqual(f.reader.record(original), call)
+        self.assertEqual(sum(1 for _ in f.reader.records(0, end)), 69)
+        with self.assertRaisesRegex(ContractError, "native range truncated"):
+            next(f.reader.records(0, end + 1))
+        with self.assertRaisesRegex(ContractError, "native range starts inside a record"):
+            next(f.reader.records(start + 1, end))
+
     def test_duplicate_calls_and_results_cannot_inflate_useful_actions(self):
         for provider in ("claude", "codex"):
             for duplicate in ("call", "result"):

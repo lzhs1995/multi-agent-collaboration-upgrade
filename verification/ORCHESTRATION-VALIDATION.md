@@ -5,7 +5,8 @@ or shared installation is certified by this checkpoint.**
 
 | Layer | Observed result | What it establishes |
 | --- | --- | --- |
-| Full repository suite | 1,403 tests; 0 failures/errors; 105.046 s | Current implementation's offline regression coverage. |
+| Full repository suite | 1,404 tests; 0 failures/errors; 106.804 s | Current implementation's offline regression coverage, including original journals larger than 64 MiB. |
+| Long original journal | 65 MiB fixture passed | Streaming preserves model history and tail actions while retaining file identity, EOF, record-boundary and per-record size checks. |
 | Runner boundary suite | 10 tests; 4.070 s | Incomplete preparation/uncertain input preserve leases; missing end timestamps are not zero-input proof. Included in the full suite. |
 | Legacy installer dry-run/install | Passed in a private `--home` | Private configuration/link operations only. |
 | Legacy installer doctor | Failed | Empty input reached real active markers; legacy Stop guard returned `HOOK_CALLER_UNRESOLVED: managed hook lacks a valid session_id`. |

@@ -204,7 +204,10 @@ class NativeReader:
 
     def records(self, start, end):
         start, end = count(start, "start offset"), count(end, "end offset")
-        require(start <= end and end - start <= 64 * 1024 * 1024, "native observation range invalid/too large")
+        require(start <= end, "native observation range invalid")
+        # Reused CLI sessions can exceed 64 MiB before a campaign even starts.
+        # Stream the original history; memory remains bounded by MAX_RECORD.
+        # File identity, EOF, record boundaries and per-record limits still hold.
         with self.open() as stream:
             require(os.fstat(stream.fileno()).st_size >= end, "native range truncated")
             if start:

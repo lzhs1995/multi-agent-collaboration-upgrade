@@ -40,7 +40,7 @@ rtk proxy git checkout upgrade/recovery-v2-20261014
 rtk proxy python3 -B scripts/test_all.py
 ```
 
-The 2026-10-15 implementation checkpoint passed **1,403 offline tests**, with
+The 2026-10-15 implementation checkpoint passed **1,404 offline tests**, with
 zero failures/errors. Tests do not send live prompts. The legacy isolated
 installer's real-process doctor failed; its sandbox was safely closed and the
 failure is preserved. See the [validation record](verification/ORCHESTRATION-VALIDATION.md).

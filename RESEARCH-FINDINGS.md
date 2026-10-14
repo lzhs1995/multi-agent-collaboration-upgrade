@@ -68,7 +68,7 @@ metric, after all nine correctness and contract checks pass.
 The old seven-node 790→600 second estimate (24.051%) and the new four-node policy
 probe (170 / 105 / 125 seconds) are both offline calculations. No artificial
 delays are used to make live outcomes reproduce them. The latest completed full
-suite is 1,403 offline tests. The nine-run real campaign and shared deployment
+suite is 1,404 offline tests. The nine-run real campaign and shared deployment
 remain separate validation stages; see
 [ORCHESTRATION-VALIDATION.md](verification/ORCHESTRATION-VALIDATION.md).
 
