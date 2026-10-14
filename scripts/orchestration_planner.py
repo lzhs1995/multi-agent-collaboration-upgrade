@@ -19,12 +19,16 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from orchestration_common import scopes_conflict
 
 
 PLAN_VERSION = 1
@@ -123,7 +127,8 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(plan)
     if normalized.get("version") != PLAN_VERSION:
         raise PlanError(f"version must be {PLAN_VERSION}")
-    _require_text(normalized.get("plan_id"), "plan_id")
+    if not ID_RE.fullmatch(_require_text(normalized.get("plan_id"), "plan_id")):
+        raise PlanError("plan_id has an invalid shape")
     _require_text(normalized.get("objective"), "objective")
 
     source = normalized.get("source")
@@ -186,10 +191,10 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         _valid_source(node.get("source"), f"{node_id}.source")
         write_scope = _require_text(node.get("write_scope"), f"{node_id}.write_scope")
         expected_seconds = node.get("expected_seconds")
-        if isinstance(expected_seconds, bool) or not isinstance(expected_seconds, (int, float)) or expected_seconds <= 0:
+        if isinstance(expected_seconds, bool) or not isinstance(expected_seconds, (int, float)) or not math.isfinite(expected_seconds) or expected_seconds <= 0:
             raise PlanError(f"{node_id}.expected_seconds must be positive")
         retry_seconds = node.get("retry_seconds", 0)
-        if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, (int, float)) or retry_seconds < 0:
+        if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, (int, float)) or not math.isfinite(retry_seconds) or retry_seconds < 0:
             raise PlanError(f"{node_id}.retry_seconds must be non-negative")
         observed_retries = node.get("observed_retries", 0)
         if isinstance(observed_retries, bool) or not isinstance(observed_retries, int) or observed_retries < 0:
@@ -234,8 +239,8 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
 def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> list[dict[str, Any]]:
     """Build bounded ready waves while preserving one writer per scope."""
     normalized = validate_plan(plan)
-    if isinstance(max_parallel_per_executor, bool) or max_parallel_per_executor < 1:
-        raise PlanError("max_parallel_per_executor must be at least 1")
+    if type(max_parallel_per_executor) is not int or max_parallel_per_executor != 1:
+        raise PlanError("max_parallel_per_executor must be 1 for each existing CLI session")
     nodes = {node["id"]: node for node in normalized["nodes"]}
     order = [node["id"] for node in normalized["nodes"]]
     remaining = set(order)
@@ -251,7 +256,7 @@ def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> 
             executor = node["executor"]
             if executor_counts[executor] >= max_parallel_per_executor:
                 continue
-            if node["write_scope"] in scopes:
+            if any(scopes_conflict(node["write_scope"], scope, normalized.get("scope_root", Path.cwd())) for scope in scopes):
                 continue
             selected.append(node_id)
             executor_counts[executor] += 1
@@ -285,8 +290,8 @@ def benchmark(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> dict[
     reduction = 0.0 if serial_seconds == 0 else (serial_seconds - scheduled_seconds) / serial_seconds * 100.0
     return {
         "plan_id": normalized["plan_id"],
-        "evidence_class": normalized.get("evidence_class", "offline_schedule_estimate"),
-        "claim": "This is an offline schedule estimate unless measured_cli_replay evidence is supplied.",
+        "evidence_class": "offline_schedule_estimate",
+        "claim": "This is always an offline schedule estimate. Measured promotion requires the separate v2 verifier.",
         "nodes": len(nodes),
         "waves": len(waves),
         "parallel_waves": sum(1 for wave in waves if wave["parallelism"] > 1),
@@ -299,11 +304,13 @@ def benchmark(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> dict[
     }
 
 
-def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path) -> dict[str, Any]:
-    task_id = f"{plan['plan_id']}--{node['id']}"
+def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path, run_id: str) -> dict[str, Any]:
+    task_id = f"{plan['plan_id']}--{run_id}--{node['id']}--a0001"
     return {
-        "seed_version": 1,
+        "seed_version": 2,
         "task_id": task_id,
+        "run_id": run_id,
+        "attempt_id": f"{run_id}:{node['id']}:a0001",
         "orchestration": {
             "plan_id": plan["plan_id"],
             "node_id": node["id"],
@@ -334,7 +341,7 @@ def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path) 
     }
 
 
-def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_executor: int = 1) -> dict[str, Any]:
+def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_executor: int = 1, *, run_id: str | None = None) -> dict[str, Any]:
     """Write a graph, schedule and task-pack seeds for later guarded dispatch."""
     normalized = validate_plan(plan)
     output_root = Path(output_root)
@@ -342,11 +349,17 @@ def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_execut
         raise PlanError(f"refuse to materialize through symlink: {output_root}")
     output_root = output_root.absolute()
     output_root.mkdir(parents=True, exist_ok=True)
+    if any(output_root.iterdir()):
+        raise PlanError("materialize requires an empty output root; preserve existing run artifacts")
+    run_id = run_id or uuid.uuid4().hex
+    if not ID_RE.fullmatch(run_id):
+        raise PlanError("run_id has an invalid shape")
     schedule = build_schedule(normalized, max_parallel_per_executor=max_parallel_per_executor)
     plan_sha = _write_json_atomic(output_root / "orchestration-plan.json", normalized)
     schedule_doc = {
         "version": 1,
         "plan_id": normalized["plan_id"],
+        "run_id": run_id,
         "created_at": _now(),
         "plan_sha256": plan_sha,
         "max_parallel_per_executor": max_parallel_per_executor,
@@ -358,10 +371,11 @@ def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_execut
     seed_hashes: dict[str, str] = {}
     for node in normalized["nodes"]:
         seed_path = seed_dir / f"{node['id']}.json"
-        seed_hashes[node["id"]] = _write_json_atomic(seed_path, _task_seed(normalized, node, output_root))
+        seed_hashes[node["id"]] = _write_json_atomic(seed_path, _task_seed(normalized, node, output_root, run_id))
     manifest = {
         "version": 1,
         "plan_id": normalized["plan_id"],
+        "run_id": run_id,
         "created_at": _now(),
         "plan_sha256": plan_sha,
         "schedule_sha256": schedule_sha,
@@ -394,7 +408,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def _cmd_materialize(args: argparse.Namespace) -> int:
-    output = materialize(_load_json(Path(args.plan)), Path(args.output_root), args.max_parallel_per_executor)
+    output = materialize(_load_json(Path(args.plan)), Path(args.output_root), args.max_parallel_per_executor, run_id=args.run_id)
     print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
@@ -408,6 +422,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         child.add_argument("--max-parallel-per-executor", type=int, default=1)
         if name == "materialize":
             child.add_argument("--output-root", required=True)
+            child.add_argument("--run-id", help="unique run identity; defaults to a new UUID")
     sub.choices["validate"].set_defaults(handler=_cmd_validate)
     sub.choices["schedule"].set_defaults(handler=_cmd_schedule)
     sub.choices["benchmark"].set_defaults(handler=_cmd_benchmark)

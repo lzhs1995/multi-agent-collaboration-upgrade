@@ -51,7 +51,47 @@ class OrchestrationPlannerTests(unittest.TestCase):
         self.assertEqual(result["scheduled_seconds"], 600.0)
         self.assertGreaterEqual(result["wall_time_reduction_percent"], 15.0)
         self.assertTrue(result["meets_fifteen_percent_target"])
-        self.assertIn("unless measured_cli_replay", result["claim"])
+        self.assertIn("offline", result["claim"].lower())
+        self.assertNotIn("unless", result["claim"])
+
+    def test_estimate_cannot_launder_an_input_evidence_label(self):
+        plan = load_fixture()
+        plan["evidence_class"] = "measured_cli_replay"
+        self.assertEqual(benchmark(plan)["evidence_class"], "offline_schedule_estimate")
+
+    def test_nonfinite_estimates_and_multiple_tasks_per_session_are_rejected(self):
+        for field in ("expected_seconds", "retry_seconds"):
+            for value in (float("nan"), float("inf"), True):
+                plan = load_fixture()
+                plan["nodes"][0][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(PlanError):
+                    validate_plan(plan)
+        with self.assertRaises(PlanError):
+            build_schedule(load_fixture(), max_parallel_per_executor=2)
+
+    def test_nested_and_symlink_alias_scopes_are_serialized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "real").mkdir()
+            (root / "alias").symlink_to(root / "real", target_is_directory=True)
+            for other in (root / "real" / "nested", root / "alias" / "nested"):
+                plan = load_fixture()
+                plan["nodes"][3]["write_scope"] = str(root / "real")
+                plan["nodes"][4]["write_scope"] = str(other)
+                self.assertEqual(build_schedule(plan)[2]["nodes"], ["implementation"])
+
+    def test_run_identity_is_unique_and_existing_artifacts_are_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = materialize(load_fixture(), root / "one")
+            second = materialize(load_fixture(), root / "two")
+            self.assertNotEqual(first["run_id"], second["run_id"])
+            seed1 = json.loads((root / "one/task-pack-seeds/intake.json").read_text())
+            seed2 = json.loads((root / "two/task-pack-seeds/intake.json").read_text())
+            self.assertNotEqual(seed1["task_id"], seed2["task_id"])
+            self.assertNotEqual(seed1["attempt_id"], seed2["attempt_id"])
+            with self.assertRaisesRegex(PlanError, "empty output root"):
+                materialize(load_fixture(), root / "one")
 
     def test_retries_are_counted_without_changing_dependency_order(self):
         plan = load_fixture()

@@ -1,83 +1,66 @@
-# Multi-Agent Collaboration
+# Multi-Agent Collaboration Upgrade
 
-Evidence-bound collaboration for Codex and Claude Code in macOS cmux.
-中文：复用完整上下文会话，明确分工，以真实报告和主动 callback 完成协作；
-压缩故障及时干预，不以重开会话、假 ACK 或反复轮询代替恢复。
+An independent, experimental orchestration and decision layer for the existing
+Codex and Claude Code sessions in macOS cmux.
 
-Current source: **0.4.7**. New messages use bounded single-line notices for pinned
-bodies; formal packs and callbacks retain their dedicated task-bound routes.
-Enter or Tab only requests submission. Reception requires the complete exact
-payload in a new record of the bound receiver's native journal. See the
-[delivery contract](references/verified-compose-delivery.md).
+中文：在现有双 Agent 协作上增加规则决策、依赖调度、持久队列与证据验收；
+复用原会话和共享协作控制器。它目前通过本地冻结的 CLI 适配器显式运行，
+尚未作为全局服务或共享技能自动启用。离线测试通过不代表已证明实测收益。
 
-## Install
+This repository is separate from
+[multi-agent-collaboration](https://github.com/lzhs1995/multi-agent-collaboration).
+Its historical transport source is retained for reproducibility. New live work
+uses a separately pinned installed immutable controller, not the old hooks in
+this checkout. Shared runtime and skill changes have their own maintainer.
 
-Requirements: Python 3.10+, macOS, cmux, and existing CLI agent sessions.
-No provider credentials or agent subscriptions are included.
+## What is implemented
 
-```sh
-git clone https://github.com/lzhs1995/multi-agent-collaboration.git
-cd multi-agent-collaboration
-git checkout main
-python3 scripts/manage_install.py install
-python3 scripts/manage_install.py install --apply
-python3 scripts/manage_install.py doctor
-```
+- `DecisionProvider`: evidence-bound allow/deny/escalate decisions, hard
+  authorization/identity/scope gates, low-confidence escalation and advisory
+  fallback. Real campaigns use rules only; `offline_mock` is test-only.
+- Three comparable scheduling policies: serial, dependency-ready `omo`, and
+  durable per-session FIFO `codeg`, with one active task per original session.
+- Frozen source/input/model/session/authorization pins; durable claims, leases,
+  lifecycle events and original-controller transport journals.
+- CLI-owned business work, an independent isolated checker, native receipt and
+  callback verification, supervisor acceptance and scoped resource release.
+- Nine-run counterbalanced validation. All runs must be correct and contract
+  valid; promotion also needs at least 15% median improvement in an approved
+  metric. No TypeSafe/Jev API call or replacement agent is involved.
 
-Install defaults to dry-run. It links this checkout into both clients' skill
-directories and merges only this project's hooks. Existing foreign skill
-directories are refused, never overwritten. Keep the checkout at its installed
-path. Complete active work before installation or upgrading; restart/reload client
-configuration only at a user-approved boundary, never replace an agent session.
+## Get the upgrade and run offline checks
 
-```sh
-python3 scripts/manage_install.py uninstall --apply
-```
-
-Uninstall removes only entries and links owned by this checkout. JSON backups
-remain beside the original configs and may contain credentials: keep them private.
-Other settings and hooks survive. Use `--home /absolute/sandbox` to test installation
-without touching real client configuration.
-
-## Use
-
-Ask the supervisor to use `$multi-agent-collaboration`, then provide the objective
-and designated existing executor. Both agents must read SKILL.md. The harness
-binds their identity and task; scripts do not log in or start a replacement agent.
+Requirements: Python 3.10+; real execution additionally needs macOS, cmux and the
+two authorized existing CLI sessions. No credentials or subscriptions are bundled.
 
 ```sh
-python3 scripts/mac_harness.py --help
-python3 scripts/mac_harness.py preflight --task-id example-review \
-  --artifact-root /absolute/path/to/example-review --executor-surface surface:7 --executor claude
+rtk proxy git clone https://github.com/lzhs1995/multi-agent-collaboration-upgrade.git
+cd multi-agent-collaboration-upgrade
+rtk proxy git checkout upgrade/recovery-v2-20261014
+rtk proxy python3 -B scripts/test_all.py
 ```
 
-Replace the example surface with a freshly verified binding. Do not paste task
-prompts manually: use the finalized task-pack and callback entrypoints described
-in [SKILL.md](SKILL.md). Public defaults preserve the current model and refuse
-unknown compose text. Machine-specific preferences belong in local task settings.
+The 2026-10-15 implementation checkpoint passed **1,403 offline tests**, with
+zero failures/errors. Tests do not send live prompts. The legacy isolated
+installer's real-process doctor failed; its sandbox was safely closed and the
+failure is preserved. See the [validation record](verification/ORCHESTRATION-VALIDATION.md).
 
-## Verification And Boundaries
+## Deploy and use the local adapter
 
-```sh
-python3 scripts/test_all.py
-```
+Follow the [v2 live runbook](docs/LIVE-REPLAY-RUNBOOK.md): authenticate the original
+pair, freeze the reviewed adapter and corpus into a private campaign directory,
+then invoke the frozen `orchestration_run.py` with its trusted campaign SHA256.
+The runner refuses the mutable checkout. It prepares tasks through the pinned
+shared controller and verifies the original native logs and independent answers.
 
-Tests use isolated files and mocked agent surfaces, without sending live prompts.
-Offline coverage is not certification of every cmux/client version. `doctor`
-proves configured hooks can execute benign payloads; a real task still needs the
-current-session handshake and current-task guards. Linux is an offline-test target,
-not a live UI transport. There is no Windows/tmux or ACP adapter in this release.
+This does not register a daemon or make unrelated tasks use the new decisions.
+Do not run this historical checkout's `manage_install.py install --apply` against
+active client settings. Shared deployment requires the designated maintainer's
+current release and separate evidence of active-client loading and live delivery.
 
-See [lessons](references/lessons.md), [security](SECURITY.md), and
-[version history](CHANGELOG.md). MIT; cmux, Codex and Claude remain separate products.
+Read [architecture and decisions](docs/ORCHESTRATION.md),
+[source research](RESEARCH-FINDINGS.md), and
+[measured validation status](verification/ORCHESTRATION-VALIDATION.md).
+Historical `validate_replay_evidence.py` results cannot promote the upgrade.
 
-## Isolated orchestration upgrade
-
-This public upgrade branch adds an experimental, CLI-owned graph adapter in
-[`scripts/orchestration_planner.py`](scripts/orchestration_planner.py). Claude
-Code or Codex can author a dependency graph; the adapter validates it, schedules
-bounded ready waves, and emits task-pack seeds for the existing
-`mac_harness.py`/`cmux_bridge` lifecycle. It never starts a replacement session
-or calls a third-party model API. See [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)
-and [`RESEARCH-FINDINGS.md`](RESEARCH-FINDINGS.md) for the evidence review and
-the limits of the offline benchmark.
+MIT. cmux, Codex, Claude Code, OmO, codeg and TypeSafe are separate projects.
