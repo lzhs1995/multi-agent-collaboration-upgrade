@@ -5,7 +5,8 @@ or shared installation is certified by this checkpoint.**
 
 | Layer | Observed result | What it establishes |
 | --- | --- | --- |
-| Full repository suite | 1,407 tests; 0 failures/errors; 127.945 s | Current implementation's offline regression coverage, including original journals larger than 64 MiB and exact GitHub organization-list provenance. |
+| Full repository suite | 1,410 tests; 0 failures/errors; 110.830 s | Current implementation's offline regression coverage, including original journals larger than 64 MiB, exact GitHub organization-list provenance and native control request bytes. |
+| Native control / coordinator / verifier suite | 53 tests; 28.972 s | Start, acceptance and settlement retain the original terminal LF; changed whitespace, markers and duplicate starts are refused. Included in the full suite. |
 | Long original journal | 65 MiB fixture passed | Streaming preserves model history and tail actions while retaining file identity, EOF, record-boundary and per-record size checks. |
 | Original corpus, isolated checker | 82 records, 48 Git sources, all eight checks passed | Offline verification of the actual research inputs, including the failed zero-byte fetch; no live business run. |
 | Initial real freeze | Failed before any input | The validator rejected a legitimate GitHub organization repository list. The failed freeze is preserved; the corrected validator requires the exact original GitHub endpoint and CLI arguments and allows this route only for metadata. |
@@ -15,7 +16,9 @@ or shared installation is certified by this checkpoint.**
 | Sandbox closeout | Passed using the absolute checkout entrypoint | Links retired with backups; foreign settings preserved; actual client config hashes unchanged during closeout. |
 | Original sandbox uninstall refusal | Preserved | Relative invocation reported a foreign skill; absolute entrypoint did not reproduce it. The exact original cause remains unproven. |
 | Original install's real-config before/after | Unmeasured | The interrupted script did not persist its original before snapshot; do not infer a retrospective pass. |
-| Successful frozen adapter / nine live runs | Not yet measured | The failed freeze and offline checks cannot stand in for execution. |
+| Corrected real freeze | `FROZEN_NOT_MEASURED` | The original pair, source and corpus were successfully frozen with zero peer input or business execution. |
+| First original native start | Rejected before run creation | The generated control script lacked the terminal LF present in the original native request (701 versus 702 bytes). That failed campaign is preserved; the generator now includes the LF, with exact matching and duplicate refusal retained. |
+| Nine live runs | Not yet measured | A successful freeze and offline checks cannot stand in for execution. |
 | Shared installation / automatic hooks | Not established by this work | Owned by the designated shared maintainer and requires separate live evidence. |
 
 The full suite uses private fixtures and real offline entrypoints. Coverage

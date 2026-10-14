@@ -48,6 +48,7 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
 
     This is returned for the supervisor to invoke, never appended to a journal by
     Python. The verifier requires the original CLI's complete custom-tool record.
+    Include its terminal LF so that the returned script is the exact native input.
     """
     argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
             str(Path(campaign["adapter"]["path"]) / "scripts" / "orchestration_run.py"),
@@ -58,7 +59,7 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
     if marker is not None:
         argv.extend(["--marker", marker])
     args = dict(cmd=shlex.join(argv), workdir=campaign["root"], login=False, max_output_tokens=1600)
-    return "text(await tools.exec_command(" + json.dumps(args, ensure_ascii=False, separators=(",", ":")) + "));"
+    return "text(await tools.exec_command(" + json.dumps(args, ensure_ascii=False, separators=(",", ":")) + "));\n"
 
 
 def native_control(reader, ref, script):

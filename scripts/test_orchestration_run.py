@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from orchestration_campaign import control_script, find_control
 from orchestration_common import ContractError, digest, file_ref, json_ref, parse_time, read_json, utc_now, write_json
 from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import failure_marker, marker_for
@@ -17,6 +18,45 @@ from orchestration_verify import finish_run
 
 class Crash(BaseException):
     pass
+
+
+class NativeControlRequestTests(unittest.TestCase):
+    def append_request(self, fixture, script):
+        return fixture.clients["codex"].append(dict(type="response_item", timestamp=utc_now(),
+            payload=dict(type="custom_tool_call", name="exec", input=script)))
+
+    def test_returned_controls_match_native_input_with_one_terminal_lf(self):
+        for action in ("start", "accept", "settle"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                f = CampaignFixture(directory)
+                kwargs = {} if action == "start" else dict(node_id="local", marker="bound-marker")
+                script = control_script(f.campaign, f.ref, action, "run-01", **kwargs)
+                # Model the measured CLI input format independently of the generator.
+                native_input = script.removesuffix("\n") + "\n"
+                ref = self.append_request(f, native_input)
+                self.assertTrue(script.endswith("));\n"))
+                self.assertEqual(find_control(f.clients["codex"].reader, script), ref)
+
+    def test_missing_extra_lf_or_changed_request_never_matches(self):
+        mutations = (lambda s: s.removesuffix("\n"), lambda s: s + "\n",
+                     lambda s: s.replace("bound-marker", "different-marker"), lambda s: " " + s)
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index), tempfile.TemporaryDirectory() as directory:
+                f = CampaignFixture(directory)
+                script = control_script(f.campaign, f.ref, "accept", "run-01",
+                                        node_id="local", marker="bound-marker")
+                self.append_request(f, mutate(script))
+                with self.assertRaisesRegex(ContractError, "duplicate/absent request"):
+                    find_control(f.clients["codex"].reader, script)
+
+    def test_duplicate_start_requests_are_not_a_recovery_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            f = CampaignFixture(directory)
+            script = control_script(f.campaign, f.ref, "start", "run-01")
+            self.append_request(f, script)
+            self.append_request(f, script)
+            with self.assertRaisesRegex(ContractError, "duplicate/absent request"):
+                find_control(f.clients["codex"].reader, script)
 
 
 class RunnerTests(unittest.TestCase):

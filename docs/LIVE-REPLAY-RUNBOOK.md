@@ -70,8 +70,9 @@ rtk proxy /absolute/pinned/python -B \
 ```
 
 Execute the returned **complete `exec_script` verbatim as a `functions.exec`
-call**. Do not wrap, regenerate, or repeat it. The native verifier compares the
-complete original control request. For lost returns, use `status`/`recover`;
+call**, including its single terminal LF. Do not wrap, regenerate, trim, or
+repeat it. The native verifier compares the complete original control request.
+For lost returns, use `status`/`recover`;
 `resume-accept` and `resume-settle` consume the existing native control record.
 
 For each ready node:
