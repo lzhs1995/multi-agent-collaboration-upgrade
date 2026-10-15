@@ -45,8 +45,10 @@ rtk proxy python3 -B scripts/test_all.py
 
 The 2026-10-15 implementation checkpoint passed **1,514 offline tests**, with
 zero failures/errors under Python 3.14. The command above runs a new check with
-your selected interpreter; reuse of the recorded result requires the same source
-and resolved interpreter bytes. Tests do not send live prompts. The legacy isolated
+your selected interpreter. The historical result records its interpreter path,
+but not the resolved executable's bytes or hash; it cannot establish unchanged
+interpreter identity. Reuse it only for its recorded source and scope, and rerun
+if interpreter identity is in question. Tests do not send live prompts. The legacy isolated
 installer's real-process doctor failed; its sandbox was safely closed and the
 failure is preserved. See the [validation record](verification/ORCHESTRATION-VALIDATION.md).
 

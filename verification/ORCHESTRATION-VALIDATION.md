@@ -11,6 +11,7 @@ or shared installation is certified by this checkpoint.**
 | Interrupted publication review (V11) | Eight subprocess crash injection points; no torn final result | Process-crash behavior, exclusive publication and preserved stages. No power-loss guarantee. |
 | Source dependency and parser reviews | Fixes and regressions included in the full suite | Deferred adapter dependencies, private parser ownership, cache refusal and conservative sender provenance. Reviewed syntax coverage is not arbitrary-code analysis. |
 | Independent deployment-document review (V21) | No blocker; three documentation findings accepted | Static review only, with no tests or documented commands executed. Follow-up documentation fixes specify the freezer/interpreter, claim-time decisions and mutating disarm. |
+| Deployment-document follow-up (V22) | No blocker; F1–F3 verified against 19 pinned files | Static review only. The remaining wording fixes record the missing historical interpreter hash, PENDING-only decisions and pre-decision exit 2, and separate test and freeze-source directories. |
 | Long original journal | 65 MiB fixture passed | Streaming preserves model history and tail actions while retaining file identity, EOF, record-boundary and per-record size checks. |
 | Original corpus, isolated checker | 82 records, 48 Git sources, all eight checks passed | Offline verification of the actual research inputs, including the failed zero-byte fetch; no live business run. |
 | Initial real freeze | Failed before any input | The validator rejected a legitimate GitHub organization repository list. The failed freeze is preserved; the corrected validator requires the exact original GitHub endpoint and CLI arguments and allows this route only for metadata. |
@@ -40,6 +41,11 @@ The full-suite private result is frozen as
 `1de9b4bdb903ee9215bdc043df7024cc854c929c45c319c89213434209a7b233`;
 its log SHA256 is
 `2ed0e0d56bf9073a0f8e8a7dac96a1e7ee7b919f54b323af99ffeda9ab766c58`.
+The result records the interpreter command path, but no resolved interpreter
+bytes or SHA256. A current executable hash cannot establish that historical
+identity. Reuse the run only for its recorded source and scope; rerun if the
+interpreter identity is in question.
+
 Public documentation updates follow that source-bound run. The earlier V19
 checkpoint passed 1,513 tests in 276.423 s. Both durations are unittest timings,
 excluding the outer evidence wrapper; the change in runtime is not a

@@ -25,10 +25,13 @@ A future adapter would need an explicit contract for any missing confidence
 field; it must not invent a score for a provider that supplies none.
 
 The frozen runner's `claim --run <run> --node <node>` is the action that requests
-a new rules decision. An allowed claim persists its gates and decision before
+a new rules decision for a `PENDING` node. An already claimed node returns its
+existing record without requesting another decision. An allowed claim persists its gates and decision before
 reserving its session and write scope. A denied or escalated decision exits 2
 with a `REJECTED` reason on stderr before writing a claim or lease; the operator
-must preserve that output separately. Later verification recomputes accepted
+must preserve that output separately. Exit 2 also covers refusals before the
+decision, such as an unready node or invalid ownership; the stderr reason must
+distinguish these from deny/escalate outcomes. Later verification recomputes accepted
 decisions from the frozen rules and checks for a match.
 
 ## How a task runs
@@ -118,7 +121,8 @@ Python executable, original sessions/models and native user authorization.
 `orchestration_run.py` refuses execution from the mutable checkout; invoke its
 frozen copy with the separately trusted campaign SHA256.
 
-Prepare the adapter from a clean source export of the reviewed revision. Keep
+Prepare the adapter from a clean source export of the reviewed revision, in a
+different directory from the checkout used for tests. Keep
 the working checkout's caches intact; exclude caches from the new export and
 verify the complete export and dependency closure before use. Python `-B` stops
 new bytecode writes but still permits existing bytecode reads. A source-only

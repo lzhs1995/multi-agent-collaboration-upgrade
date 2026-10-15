@@ -29,9 +29,11 @@ shared installation have separate owners.
 
 Run `rtk proxy /absolute/pinned/python -B /absolute/reviewed-source/scripts/test_all.py`
 with the reviewed source directory as the working directory. Check the public
-validation record for the exact tested scope; reuse an already completed,
-hash-bound result only when the source, resolved interpreter bytes and required
-checks have not changed. The recorded local checkpoint used Python 3.14.
+validation record for the exact tested source and scope before reusing a completed
+result. The recorded local checkpoint used Python 3.14, but recorded only the
+interpreter path, not the resolved executable's bytes or hash. Its historical
+interpreter identity cannot be reverified; rerun if that identity is in question.
+Keep this testing checkout separate from the fresh export used for freezing.
 The legacy installer is not a prerequisite for installing the private adapter; its empty-input doctor
 can reach real active markers even with `--home`. Do not install those old hooks
 into active clients or suppress their observed failure.
@@ -103,11 +105,14 @@ For lost returns, use `status`/`recover`;
 
 For each ready node:
 
-1. `claim --run <run> --node <node>` requests a new rules decision. Only `allow`
+1. `claim --run <run> --node <node>` requests a new rules decision only for a
+   `PENDING` node; an already claimed node returns its existing record. Only `allow`
    persists the decision gates and claim, reserves the original session/scope,
    and writes the dependency-bound `work-request.json`. `deny` or `escalate`
    returns exit 2 with a `REJECTED` reason on stderr before those writes; preserve
    that output separately because the campaign does not record the rejected claim.
+   Exit 2 can also report a gate refusal before any decision; use the stderr reason
+   to distinguish it, and do not count every exit 2 as a deny/escalate decision.
 2. For a local Codex node, the Codex CLI executes the returned `business_command`
    exactly once. For a Claude node, use `prepare`, then `dispatch`; the pinned
    harness performs preflight/ACK and finalizes the task pack. Claude reads the
