@@ -5,7 +5,8 @@ session. This procedure sends real task packs; perform it only for an authorized
 local replay. Do not start another agent, switch models, install a provider SDK,
 or modify shared runtime. Keep private transcripts and authorization outside Git.
 
-Current checkpoint (2026-10-15): 1,514 offline tests pass. The older real v4
+Current checkpoint (2026-10-15): 1,532 offline tests pass; the observer increment
+is `solo_self_review` while original-Claude review is pending. The older real v4
 campaign remains blocked at its first Claude preparation, with its original
 marker and lease intact. Its first historical diagnostic is `UNMATCHED`; a
 second, after the V20 parser repair and over the same original record interval,
@@ -30,9 +31,12 @@ shared installation have separate owners.
 Run `rtk proxy /absolute/pinned/python -B /absolute/reviewed-source/scripts/test_all.py`
 with the reviewed source directory as the working directory. Check the public
 validation record for the exact tested source and scope before reusing a completed
-result. The recorded local checkpoint used Python 3.14, but recorded only the
-interpreter path, not the resolved executable's bytes or hash. Its historical
-interpreter identity cannot be reverified; rerun if that identity is in question.
+result. The current 1,532-test checkpoint pins the resolved Python 3.14.7
+executable's bytes, hash and mode before/after the run. It does not pin the full
+standard library. The older 1,514-test result records only an interpreter path;
+its historical executable identity cannot be established retroactively. Reuse
+each result only for its recorded source and scope; rerun if the required
+interpreter identity is in question.
 Keep this testing checkout separate from the fresh export used for freezing.
 The legacy installer is not a prerequisite for installing the private adapter; its empty-input doctor
 can reach real active markers even with `--home`. Do not install those old hooks
@@ -100,8 +104,47 @@ rtk proxy /absolute/pinned/python -B \
 Execute the returned **complete `exec_script` verbatim as a `functions.exec`
 call**, including its single terminal LF. Do not wrap, regenerate, trim, or
 repeat it. The native verifier compares the complete original control request.
-For lost returns, use `status`/`recover`;
+For a recorded-evidence view without checker reruns, use `next-action` below.
+For fully revalidated lost-return diagnostics, use `status`/`recover`;
 `resume-accept` and `resume-settle` consume the existing native control record.
+
+Before dependencies finish, review the next package's fixed content with the
+same frozen prefix:
+
+```sh
+rtk proxy /absolute/pinned/python -B \
+  /absolute/private/campaign/adapter/scripts/orchestration_run.py \
+  --campaign /absolute/private/campaign/campaign.json \
+  --campaign-sha256 <campaign-sha256> drafts --run run-01-serial
+
+rtk proxy /absolute/pinned/python -B \
+  /absolute/private/campaign/adapter/scripts/orchestration_run.py \
+  --campaign /absolute/private/campaign/campaign.json \
+  --campaign-sha256 <campaign-sha256> next-action --run run-01-serial
+```
+
+Both require `--run` and emit advisory JSON without writing state or sending
+input. `drafts` works before run creation, but carries no claim nonce, reservation
+or accepted dependency output binding. `next-action` reports recorded candidates,
+per-node recommendations, original operation status and recorded timing endpoints.
+It does not rerun checkers; `status --run` does. Its suggestions do not replace
+the live identity, authorization and evidence gates on the actual action.
+On a changed-during-read refusal, read again; that permits no input retry.
+Keep native receipt/ACK, body/report reading and callback evidence separately.
+An absent or cross-boot monotonic duration stays `null`.
+
+The observer increment passed the 1,532-test offline suite with unchanged source
+and Python executable pins. Its review mode is `solo_self_review`; this does not
+establish live command latency, original-Claude review or shared hook adoption.
+The [validation record](../verification/ORCHESTRATION-VALIDATION.md) preserves the
+result and interpreter hashes separately from historical checks.
+
+Provider availability is separate from authenticated process identity. The
+current claim route does not detect a 403 or auto-route Claude work to Codex.
+For an authentication outage, preserve the original session and pending attempts,
+avoid blind retries, and continue already-authorized independent work. A SOLO
+takeover of another writer's scope requires its safe handoff; label self-review
+`solo_self_review`. Reuse the original Claude at a safe boundary after recovery.
 
 For each ready node:
 

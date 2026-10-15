@@ -82,6 +82,14 @@ class Runner:
         return dict(run=co.spec, root=str(co.root), closed=closed, states={k: s.value for k, s in states.items()},
                     ready=[] if closed else [n["id"] for n in co.ready()])
 
+    def drafts(self, run_id):
+        from orchestration_observe import package_drafts
+        return package_drafts(self.ref, self.campaign, self.spec(run_id))
+
+    def next_action(self, run_id):
+        from orchestration_observe import next_action
+        return next_action(self, run_id)
+
     def claim(self, run_id, key):
         co = self.co(run_id)
         require(key in co.nodes, "unknown frozen node")
@@ -273,7 +281,7 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "next-action", "drafts", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
     node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "accept", "resume-accept",

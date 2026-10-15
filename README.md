@@ -20,6 +20,10 @@ this checkout. Shared runtime and skill changes have their own maintainer.
   fallback. Real campaigns use rules only; `offline_mock` is test-only.
 - Three comparable scheduling policies: serial, dependency-ready `omo`, and
   durable per-session FIFO `codeg`, with one active task per original session.
+- `drafts` previews the fixed content of upcoming packages before dependencies
+  finish. `next-action` reports recorded waiting points and proposed next steps
+  without running business checkers, writing state or sending input. Both are
+  advisory; actual claims and dispatch retain their full gates.
 - Frozen source/input/model/session/authorization pins; durable claims, leases,
   lifecycle events and original-controller transport journals.
 - CLI-owned business work, an independent isolated checker, native receipt and
@@ -43,18 +47,21 @@ rtk proxy git checkout upgrade/recovery-v2-20261014
 rtk proxy python3 -B scripts/test_all.py
 ```
 
-The 2026-10-15 implementation checkpoint passed **1,514 offline tests**, with
-zero failures/errors under Python 3.14. The command above runs a new check with
-your selected interpreter. The historical result records its interpreter path,
-but not the resolved executable's bytes or hash; it cannot establish unchanged
-interpreter identity. Reuse it only for its recorded source and scope, and rerun
-if interpreter identity is in question. Tests do not send live prompts. The legacy isolated
+The 2026-10-15 observer checkpoint passed **1,532 offline tests**, with zero
+failures/errors in 499.118 seconds under Python 3.14.7. All 225 tracked/unignored
+source files and the resolved Python executable's bytes, hash and mode matched
+before/after the run. The executable pin does not cover the full standard
+library. This increment is `solo_self_review`; the original Claude's V23 review
+is pending during a provider authentication outage. The command above runs a
+new check with your selected interpreter. Tests do not send live prompts.
+The earlier 1,514-test result is preserved with its historical interpreter-pin
+limitation in the validation record. The legacy isolated
 installer's real-process doctor failed; its sandbox was safely closed and the
 failure is preserved. See the [validation record](verification/ORCHESTRATION-VALIDATION.md).
 
 | Status | Evidence at this checkpoint |
 | --- | --- |
-| Offline implementation | Full suite passes; the original Claude independently reviewed the recovery and maintenance entrypoint. |
+| Offline implementation | 1,532 tests pass. The original Claude independently reviewed earlier recovery and maintenance changes; the observer increment is SOLO-reviewed. |
 | Local deployment | Explicit frozen CLI execution is implemented. An older real campaign reached its first preparation blocker; its marker and lease remain preserved. The new maintenance adapter has no successful live closeout. |
 | Shared adoption and measured benefit | Shared 0.4.35 publication/installation, automatic use of these decisions and the nine-run efficiency comparison remain unverified. The last observed shared release is 0.4.34. |
 
@@ -67,6 +74,14 @@ The runner refuses the mutable checkout. It prepares tasks through the pinned
 shared controller and verifies the original native logs and independent answers.
 The source export must contain no adapter bytecode or cache directories; `-B`
 does not prevent Python from reading pre-existing bytecode.
+
+For handoff delays, use the frozen runner's `drafts --run <run>` to review the
+next package early and `next-action --run <run>` to distinguish dependency,
+session-lease, original-operation and acceptance waits. These commands do not
+create an automatic dispatch service. Existing CLI processes still depend on
+their model providers: a valid session identity does not prove API availability,
+and the current claim route does not automatically switch to SOLO on a 403.
+See the [waiting workflow](docs/ORCHESTRATION.md#observe-waiting-and-prepare-packages).
 
 The current older campaign is blocked on original preparation evidence. The
 first read-only historical diagnostic returned `UNMATCHED`. After fixing a

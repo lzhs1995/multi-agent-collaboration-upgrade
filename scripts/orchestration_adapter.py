@@ -23,7 +23,7 @@ MAINTENANCE_MODULES = frozenset({
     "orchestration_input_history", "orchestration_input_python",
     "orchestration_input_syntax", "orchestration_refusal", "decision_provider", "cmux_submission_inputs",
 })
-CAMPAIGN_MODULES = MAINTENANCE_MODULES | {"orchestration_run", "orchestration_checker"}
+CAMPAIGN_MODULES = MAINTENANCE_MODULES | {"orchestration_run", "orchestration_checker", "orchestration_observe"}
 # These two functions verify and load the separate immutable controller at run
 # time. No other nonliteral import_module call is admitted in the adapter.
 CONTROLLER_IMPORTS = {

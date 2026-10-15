@@ -14,7 +14,13 @@ returned decision contains `outcome` (`allow`, `deny`, `escalate`), `reason`, `c
 The rules provider first requires authorization, verified identity, valid scope,
 and verified evidence. Dangerous operations additionally require their specific
 authorization. A route can use only the assigned, available original CLI session.
-An unavailable session escalates; an advisory cannot substitute another executor.
+The standalone rules provider can escalate an unavailable-session context;
+an advisory cannot substitute another executor. The current coordinator derives
+`available_executors` from authenticated identity lanes and requires the complete
+original pair. Missing identity therefore fails a hard gate, before an
+unavailable-session escalation can be used. A running, authenticated CLI does
+not establish model-provider health: this route neither detects an API 403 nor
+automatically changes a Claude node to SOLO.
 
 An optional advisory runs only after those hard gates pass. Advisory exceptions
 fall back to rules; an allow below the confidence threshold escalates. Neither
@@ -77,6 +83,62 @@ boundary; a missing result or empty timestamp is insufficient. Native logs
 separately prove reception, tool completion, callback and acceptance. Models,
 process identity, clocks, complete trees, and artifact hashes are revalidated.
 
+## Observe waiting and prepare packages
+
+The frozen runner exposes two read-only, advisory commands:
+
+| Command | Use |
+| --- | --- |
+| `drafts --run <run>` | Preview all packages in dependency order, including original session, scope, inputs, deliverables and verification. Review the next package while current work continues. |
+| `next-action --run <run>` | Read recorded lifecycle, original operation journals, pinned evidence and session/scope leases; report each node's waiting point and proposed gated action. |
+
+Drafts are deterministic JSON previews of the frozen plan, not finalized task
+packs or an additional persistent queue. Their contents remain stable while
+dependencies run. They contain dependency IDs but no accepted dependency output
+bindings, claim nonce or reservation. At `claim`, the existing coordinator
+independently builds the actual request from accepted outputs in the same run.
+Reviewing a draft early does not authorize dispatching it.
+
+`status --run` and `ready()` replay full acceptance, including business-checker
+subprocesses. Frequent monitoring through those paths repeats that work.
+`next-action` uses recorded events instead; it checks transition shape,
+claim/decision provenance, evidence hashes and lease ownership without executing
+checkers or constructing transport. It rechecks events, leases and control-file
+publication before returning, rejecting a view that changed during the read.
+This includes a dispatch intent published before its lifecycle event.
+The view remains a point-in-time advisory, not a lock or authorization:
+`acceptance_revalidated=false`, `dispatch_authorized=false`, `input_operations=0`.
+Subsequent actions still run the full existing gates. Large evidence trees can
+still require substantial reading; no latency reduction has been measured.
+
+| Waiting case | Advice and remaining work |
+| --- | --- |
+| Current task active; next scope already known | Review a draft now. Bind accepted dependencies and claim only when its original lane and scope permit. |
+| Dependency accepted; executor idle | Propose `claim` from recorded readiness, then perform fresh live identity and dispatch checks. Nothing is sent automatically. |
+| Original operation failed, lost its result, or recorded input intent | Preserve that operation and use its original observation/reconciliation path. Do not create a second submission. |
+| Frozen candidate ready | Review and accept through the original native control; recorded readiness does not replace independent acceptance. |
+| Terminal event recorded, lease or disarm unfinished | Show release and scoped disarm separately; do not treat the executor as free solely because business work finished. |
+| Claude provider unavailable | Preserve the original session. The supervisor can continue separately authorized owned work as `solo_self_review`; this observer does not transfer task ownership or repair authentication. |
+
+Lifecycle intervals name their actual recorded endpoints. Missing endpoints
+remain `null`; monotonic durations across boots or discontinuous clocks remain
+unmeasured. Operation intent/result wall times are recorded separately. These
+intervals do not establish native reception, ACK, body reading, report freezing,
+report discovery, report reading or callback reception. They cannot by themselves
+attribute a delay to the network, model, hook, executor or supervisor.
+Those stages need their own evidence. This increment supplies preparation and
+diagnosis for cases such as callback-to-next-package waiting; a continuously
+running dispatcher, shared hook adoption and live efficiency remain pending.
+
+The observer increment has 17 focused offline tests and is included in the
+1,532-test repository pass. Tests cover incomplete publication, uncertain input,
+persisted acceptance, lease release, evidence changes during observation and
+missing timing endpoints. The source and Python executable were pinned before
+and after the suite; this increment remains `solo_self_review` while the original
+Claude's V23 review is pending. See the
+[validation record](../verification/ORCHESTRATION-VALIDATION.md) for exact pins
+and the separate live-comparison requirements.
+
 ## Interrupted preparation and recovery
 
 `orchestration_maintenance.py` supplies a separately pinned adapter for an older
@@ -135,7 +197,7 @@ updates remain the designated shared maintainer's responsibility. The legacy
 `manage_install.py` in this historical source is not the upgrade's deployment
 entrypoint and must not be used to replace current shared hooks.
 
-At the 2026-10-15 checkpoint, 1,514 offline tests pass and the real older
+At the 2026-10-15 observer checkpoint, 1,532 offline tests pass and the real older
 campaign remains blocked at its first Claude preparation. The first read-only
 original-history diagnostic returned `UNMATCHED`; after the V20 parser repair,
 a second diagnostic over the identical original record interval returned

@@ -176,9 +176,11 @@ class RunnerTests(unittest.TestCase):
     def test_public_entrypoint_rejects_offline_campaign_and_has_no_fixture_switch(self):
         argv = [sys.executable, "-B", str(Path(__file__).with_name("orchestration_run.py")),
                 "--campaign", self.f.ref["path"], "--campaign-sha256", self.f.ref["sha256"], "status"]
-        result = subprocess.run(argv, capture_output=True, text=True, check=False)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("execution class mismatch", result.stderr)
+        for suffix in (["status"], ["drafts", "--run", self.run], ["next-action", "--run", self.run]):
+            with self.subTest(action=suffix[0]):
+                result = subprocess.run(argv[:-1] + suffix, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("execution class mismatch", result.stderr)
         result = subprocess.run(argv + ["--fixtures"], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("unrecognized arguments", result.stderr)

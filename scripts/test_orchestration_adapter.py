@@ -44,6 +44,12 @@ class AdapterTests(unittest.TestCase):
                     self.check()
                 path.write_bytes(previous)
 
+    def test_campaign_requires_the_read_only_observer_even_after_rehash(self):
+        (self.root / "scripts/orchestration_observe.py").unlink()
+        with self.assertRaisesRegex(ContractError, "orchestration_observe"):
+            self.check(purpose="campaign")
+        self.check(purpose="maintenance")
+
     def test_bytecode_is_rejected_even_when_the_tree_hash_is_valid(self):
         source = self.source("orchestration_inputs", "WHO = 'bytecode'\n")
         cached = Path(py_compile.compile(str(source), doraise=True,
