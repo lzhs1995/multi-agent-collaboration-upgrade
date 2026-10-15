@@ -1,5 +1,6 @@
 """Synthetic journals for offline tests only; never used by live entrypoints."""
 import copy
+import contextlib
 import json
 import secrets
 import sys
@@ -11,6 +12,91 @@ from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import (failure_marker, make_test_result, marker_for, output_refs, pack_extension,
                                     task_identity, task_notice, task_scope, task_sources)
 from test_orchestration_native import NativeFixture
+
+
+class OfflineDisarmRuntime:
+    """Private marker/state files; never imports or calls a shared controller."""
+
+    def __init__(self, campaign, root):
+        from types import SimpleNamespace
+        from orchestration_disarm import marker_callers
+        self.campaign, self.root = campaign, Path(root).resolve()
+        self.active, self.states = self.root / "active", self.root / "states"
+        self.active.mkdir(parents=True, exist_ok=True)
+        self.states.mkdir(parents=True, exist_ok=True)
+        self.disarms, self.recoveries = [], []
+        self.marker = None
+        workspace = campaign["sessions"]["codex"]["workspace_uuid"]
+        self.disarm_harness = SimpleNamespace(_ACTIVE_DIR=self.active, _workspace_key=lambda: workspace,
+                                              disarm_task=self._remove)
+        self.lifecycle = SimpleNamespace(marker_callers=marker_callers, marker_locks=lambda marker: contextlib.nullcontext(),
+                                         apply_boundary=self._preview, task_boundary=self._release)
+        self.reask = SimpleNamespace(root=lambda: self.states,
+            state_path=lambda caller: self.states / (digest(caller.encode()) + ".json"),
+            stop_file=lambda caller: self.states / (digest(caller.encode()) + ".stop.json"))
+
+    def freeze_disarm(self, task_id):
+        from orchestration_disarm import freeze_original
+        if self.marker is None:
+            self.marker = dict(task_id=task_id,
+                collaboration_id="fixture-" + digest(task_id.encode())[:20],
+                workspace_uuid=self.campaign["sessions"]["codex"]["workspace_uuid"],
+                participants=[dict(role="supervisor" if lane == "codex" else "executor",
+                                   surface_uuid=session["surface_uuid"])
+                              for lane, session in self.campaign["sessions"].items()])
+            write_json(self.active / self.marker["workspace_uuid"] / (self.marker["collaboration_id"] + ".json"),
+                       self.marker, exclusive=True)
+        return freeze_original(self.campaign, task_id, self.disarm_harness, self.lifecycle, self.reask)
+
+    @staticmethod
+    def _preview(state, marker, boundary, now, *, publish=False):
+        assert boundary == "RELEASED" and publish is False
+        continuation = state.get("continuation", {})
+        eligible = (state.get("state") == "WAITING_REPLY" or
+                    continuation.get("enabled") is True and state.get("state") in ("ANSWERED", "CONSUMED"))
+        if not eligible:
+            return False
+        key = dict(collaboration_id=marker["collaboration_id"], task_id=marker["task_id"])
+        before = state.get("paused_tasks", [])
+        state["paused_tasks"] = [p for p in before if p != key]
+        return before != state["paused_tasks"]
+
+    def _release(self, marker, boundary):
+        from orchestration_disarm import marker_callers
+        changed = 0
+        for caller in marker_callers(marker):
+            path = self.reask.state_path(caller)
+            if path.exists():
+                state = json_ref(file_ref(path))
+                if self._preview(state, marker, boundary, 0):
+                    write_json(path, state)
+                    changed += 1
+        return changed
+
+    def _remove(self, task_id):
+        assert self.marker["task_id"] == task_id
+        self._release(self.marker, "RELEASED")
+        removed = 0
+        for path in (self.active / self.marker["workspace_uuid"] / (self.marker["collaboration_id"] + ".json"),
+                     self.active / (self.marker["workspace_uuid"] + ".json")):
+            if path.exists():
+                path.unlink()
+                removed += 1
+        return removed
+
+    def observe_disarm(self, frozen):
+        from orchestration_disarm import observe_original
+        return observe_original(self.campaign, frozen, self.disarm_harness, self.lifecycle, self.reask)
+
+    def disarm(self, frozen):
+        from orchestration_disarm import invoke_disarm
+        self.disarms.append(frozen["task_id"])
+        return invoke_disarm(self.campaign, frozen, self.disarm_harness, self.lifecycle, self.reask)
+
+    def recover_disarm(self, frozen, action):
+        from orchestration_disarm import invoke_recovery
+        self.recoveries.append(action)
+        return invoke_recovery(self.campaign, frozen, action, self.disarm_harness, self.lifecycle, self.reask)
 
 
 class CampaignFixture:
@@ -84,13 +170,8 @@ class CampaignFixture:
         return Coordinator.create(self.root / "runs" / spec["run_id"], self.ref, spec, fixtures=True)
 
     def disarm(self, co, key):
-        from types import SimpleNamespace
         from orchestration_transport import Transport
-        task = co.state()[1][key]["task_id"]
-        marker = dict(path=str(co.root / "offline-active" / (task + ".json")), marker={"task_id": task})
-        runtime = SimpleNamespace(disarm=lambda task_id: dict(task_id=task_id,
-            workspace_uuid=self.campaign["sessions"]["codex"]["workspace_uuid"],
-            removed_markers=1, before=[marker], after=[], observed_at=utc_now()))
+        runtime = OfflineDisarmRuntime(self.campaign, co.root / "offline-disarm")
         return Transport(co, key, runtime=runtime).disarm()
 
     def work(self, info, lane="codex"):
@@ -161,7 +242,8 @@ class CampaignFixture:
         completion = secrets.token_hex(12)
         report = str(Path(info["output_root"]) / node["report"])
         pack = dict(draft=False, task_id=info["task_id"], executor_uuid=client.session["surface_uuid"],
-            supervisor=sender["surface_ref"], executor=client.session["surface_ref"], callback_target=sender["surface_ref"],
+            supervisor=sender["surface_ref"], executor=client.session["surface_uuid"], callback_target=sender["surface_ref"],
+            executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=client.session["surface_uuid"])],
             orchestration=pack_extension(self.campaign, co.header, node, info), authorization_source="user_message",
             authorization_record=self.campaign["authorization"]["path"],
             required_skill=str(Path(self.campaign["controller"]["path"]) / "SKILL.md"), report=report,
@@ -212,7 +294,7 @@ class CampaignFixture:
 
     def block(self, co, key, reason="observed failure"):
         info = co.state()[1][key]
-        ref = write_json(co.root / "nodes" / key / "blocker.json", dict(task_id=info["task_id"], reason=reason))
+        ref = write_json(co.root / "nodes" / key / "blocker.json", dict(task_id=info["task_id"], reason=reason, observed_at=utc_now()))
         co.transition(key, State.BLOCKED, {"blocker": ref})
         return ref
 

@@ -9,7 +9,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from orchestration_campaign import control_script, native_control, node_output
+from orchestration_campaign import control_script, find_control, native_control, node_output
 from orchestration_common import (canonical, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
                                   read_ref, strict_json, tree_manifest, utc_now, verify_tree, within)
 from orchestration_native import (NativeReader, delivery_identity, native_text, require, verify_delivery, verify_no_input)
@@ -215,7 +215,10 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     pack = json_ref(pack_ref, "finalized task pack")
     require(pack.get("draft") is False and pack.get("task_id") == info["task_id"] and
             pack.get("executor_uuid") == receiver["surface_uuid"] and pack.get("supervisor") == sender["surface_ref"] and
-            pack.get("executor") == receiver["surface_ref"] and pack.get("callback_target") == sender["surface_ref"],
+            pack.get("executor") == receiver["surface_uuid"] and
+            pack.get("executors") == [dict(display="EXECUTOR_1", ordinal=1, provider="claude",
+                                           surface_ref=receiver["surface_uuid"])] and
+            pack.get("callback_target") == sender["surface_ref"],
             "pack task/executor/supervisor binding changed")
     require(pack.get("orchestration") == pack_extension(campaign, header, node, info), "pack differs from frozen task/input/scope")
     require(pack.get("authorization_source") == "user_message" and pack.get("authorization_record") == campaign["authorization"]["path"],
@@ -377,28 +380,63 @@ def failure_marker(info, evidence):
 def verify_failure(campaign, header, node, info, ref, *, fixtures=False):
     value = json_ref(ref, "failure settlement")
     require(ref["path"] == str(node_directory(campaign, header, node) / "settled-failure.json"), "failure path changed")
+    return verify_failure_value(campaign, header, node, info, value, fixtures=fixtures, terminal_failure=ref)
+
+
+@contract_errors("failure candidate")
+def validate_failure_candidate(campaign, header, node, info, value, *, fixtures=False, terminal_failure=None):
+    require(type(value.get("version")) is int and value["version"] == 2 and
+            value.get("evidence_class") == ("offline_fixture" if fixtures else "cli_failure_v2"),
+            "failure execution class changed")
+    base = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "blocker", "boundary", "output_tree"}
+    additions = {"no_business_input": {"no_input_attempts"}, "callback_boundary": {"report", "protocol"},
+                 "local_boundary": set(), "preparation_exited": {"preparation_exit", "maintenance"}}
+    require(value.get("boundary") in additions and set(value) == base | additions[value["boundary"]],
+            "failure boundary fields missing or changed")
+    require(all(value.get(k) == v for k, v in task_identity(campaign, header, node).items()) and
+            value.get("blocker") == info["blocker"], "failure task/blocker changed")
+    json_ref(info["blocker"])
+    require(value["output_tree"]["path"] == info["output_root"] and value["output_tree"].get("kind") == "output",
+            "failure output scope changed")
+    verify_tree(value["output_tree"])
+    if value["boundary"] == "preparation_exited":
+        from orchestration_preparation import verify_preparation_exit
+        proof = json_ref(value["preparation_exit"], "original preparation exit")
+        require(value["preparation_exit"]["path"] == str(node_directory(campaign, header, node) / "preparation-exit.json"),
+                "preparation exit path changed")
+        verify_preparation_exit(campaign, header, node, info, proof, fixtures=fixtures, terminal_failure=terminal_failure)
+        if value["maintenance"] is not None:
+            from orchestration_maintenance import validate_maintenance
+            validate_maintenance(value["maintenance"], campaign, header, node, info, value["preparation_exit"], fixtures=fixtures)
+        elif not fixtures:
+            require("scripts/orchestration_preparation.py" in campaign["adapter"]["files"],
+                    "old adapter needs a separately frozen maintenance entrypoint")
+    return value
+
+
+@contract_errors("failure settlement value")
+def verify_failure_value(campaign, header, node, info, value, *, fixtures=False, terminal_failure=None, native_end=None):
     frozen = json_ref(file_ref(node_directory(campaign, header, node) / "failure-candidate.json"), "frozen failure candidate")
     require({k: v for k, v in value.items() if k not in ("failure_native", "native_end")} == frozen,
             "failure differs from the previously frozen candidate")
-    require(type(value.get("version")) is int and value["version"] == 2 and value.get("evidence_class") == ("offline_fixture" if fixtures else "cli_failure_v2"),
-            "failure execution class changed")
-    base = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "blocker", "boundary",
-            "output_tree", "failure_native", "native_end"}
-    additions = {"no_business_input": {"no_input_attempts"}, "callback_boundary": {"report", "protocol"}, "local_boundary": set()}
-    require(value.get("boundary") in additions and set(value) == base | additions[value["boundary"]],
-            "failure boundary fields missing or changed")
-    require(all(value.get(k) == v for k, v in task_identity(campaign, header, node).items()) and value.get("blocker") == info["blocker"],
-            "failure task/blocker changed")
-    json_ref(info["blocker"])
+    require(set(value) == set(frozen) | {"failure_native", "native_end"}, "failure settlement fields changed")
+    validate_failure_candidate(campaign, header, node, info, frozen, fixtures=fixtures, terminal_failure=terminal_failure)
     readers = {k: NativeReader(s, fixtures=fixtures) for k, s in campaign["sessions"].items()}
     require(set(value["native_end"]) == set(readers), "failure native lanes missing")
-    ends = {k: r.verify_pin(value["native_end"][k]) for k, r in readers.items()}
+    fences = value["native_end"] if native_end is None else native_end
+    require(set(fences) == set(readers), "release native lanes missing")
+    ends = {k: r.verify_pin(fences[k]) for k, r in readers.items()}
+    require(all(ends[k] >= r.verify_pin(value["native_end"][k]) for k, r in readers.items()),
+            "release fences precede original settlement")
     lane = node["executor"]
     start = readers[lane].verify_pin(info["native_start"])
     require(all(ends[k] >= readers[k].verify_pin(header["native_start"][k]) for k in readers) and ends[lane] >= start,
             "failure fences precede run/claim")
     script = control_script(campaign, header["campaign"], "settle", header["run"]["run_id"],
                             node_id=node["id"], marker=failure_marker(info, value))
+    if value.get("maintenance") is not None:
+        from orchestration_maintenance import maintenance_control
+        script = maintenance_control(value["maintenance"], failure_marker(info, value))
     at = native_control(readers["codex"], value["failure_native"], script)
     require(at >= parse_time(info["started_at"]), "failure settlement precedes claim")
     require(value["failure_native"]["offset"] >= header["native_start"]["codex"]["offset"] and
@@ -406,7 +444,17 @@ def verify_failure(campaign, header, node, info, ref, *, fixtures=False):
     reason = value.get("boundary")
     require(value["output_tree"]["path"] == info["output_root"] and value["output_tree"].get("kind") == "output", "failure output scope changed")
     verify_tree(value["output_tree"])
-    if reason == "no_business_input":
+    if reason == "preparation_exited":
+        from orchestration_preparation import verify_preparation_exit
+        proof = json_ref(value["preparation_exit"])
+        require(at >= parse_time(proof["observed_at"]), "settlement precedes preparation exit observation")
+        # Count all exact controls, including any appended after an interrupted
+        # settlement. A repeated native request never creates a recovery budget.
+        require(find_control(readers["codex"], script, after=proof["native_end"]["codex"]["offset"]) == value["failure_native"],
+                "preparation settlement must use its unique original control")
+        verify_preparation_exit(campaign, header, node, info, proof, fixtures=fixtures,
+                                native_end=fences, terminal_failure=terminal_failure)
+    elif reason == "no_business_input":
         require(info["mode"] == "delegated_cli" and "delivery" not in info, "delivered work is not zero input")
         # A missing dispatch intent does not prove a possibly still-running
         # preparation has ended. Such blockers remain observation-only.

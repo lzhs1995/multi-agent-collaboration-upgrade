@@ -94,9 +94,38 @@ class CoordinatorTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "already reserved"):
                 leases.reserve("b", session, str(self.f.root / path), other)
         terminal = write_json(self.f.root / "terminal.json", dict(state="ACCEPTED", data={"verification": {"task_id": "a"}}))
-        leases.release("a", session="one", scope=str(self.f.root / "scope"), claim=claim, terminal=terminal)
+        leases.release("a", session="one", scope=str(self.f.root / "scope"), claim=claim, terminal=terminal,
+                       reserved_at=leases.read()["a"]["reserved_at"])
         leases.reserve("b", "two", str(self.f.root / "scope/child"), other)
         self.assertEqual(len(leases.read()), 2)
+
+    def test_release_requires_original_reservation_and_retries_do_not_rewrite_it(self):
+        leases = LeaseRegistry(self.f.campaign["lease_root"])
+        claim = write_json(self.f.root / "claim.json", {"task_id": "owner"})
+        scope = str(self.f.root / "reserved-scope")
+        leases.reserve("owner", "original-session", scope, claim)
+        original = leases.read()["owner"]
+        terminal = write_json(self.f.root / "terminal.json", dict(
+            state="FAILED_PRESERVED", data={"verification": {"task_id": "owner"}}))
+        arguments = dict(session="original-session", scope=scope, claim=claim, terminal=terminal)
+        path = leases.root / "leases.json"
+        before = path.read_bytes()
+        with self.assertRaises(TypeError):
+            leases.release("owner", **arguments)
+        for stale in (None, "2000-01-01T00:00:00Z", ""):
+            with self.subTest(reserved_at=stale):
+                with self.assertRaisesRegex(ContractError, "reservation identity changed"):
+                    leases.release("owner", reserved_at=stale, **arguments)
+                self.assertEqual(path.read_bytes(), before)
+        leases.release("owner", reserved_at=original["reserved_at"], **arguments)
+        released = leases.read()["owner"]
+        self.assertEqual(released["released_by"], terminal)
+        self.assertEqual(released["reserved_at"], original["reserved_at"])
+        observed = (path.stat().st_mtime_ns, path.read_bytes())
+        leases.release("owner", reserved_at=original["reserved_at"], **arguments)
+        self.assertEqual((path.stat().st_mtime_ns, path.read_bytes()), observed)
+        with self.assertRaisesRegex(ContractError, "reservation identity changed"):
+            leases.release("owner", reserved_at=None, **arguments)
 
     def test_queue_or_event_corruption_is_not_restart(self):
         co = self.f.start()

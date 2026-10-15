@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 
@@ -151,13 +152,31 @@ class LeaseRegistry:
                                 reserved_at=utc_now(), released_at=None, released_by=None)
             write_json(path, value)
 
-    def release(self, owner, *, session, scope, claim, terminal):
+    def verify_original(self, owner, original):
+        """Read-only reservation comparison; never replay run/failure history.
+
+        The snapshot records the unreleased reservation. Only released_at and
+        released_by may advance; callers independently verify the terminal event.
+        A release retains the exact original reserved_at, session, scope and claim.
+        """
+        fields = {"session_id", "scope", "claim", "reserved_at", "released_at", "released_by"}
+        require(isinstance(original, dict) and set(original) == fields and
+                original["released_at"] is None and original["released_by"] is None,
+                "maintenance requires its original unreleased lease snapshot")
+        current = self.read().get(owner)
+        require(current is not None and all(current[k] == original[k] for k in
+                fields - {"released_at", "released_by"}), "original lease reservation identity changed")
+        return current
+
+    def release(self, owner, *, session, scope, claim, terminal, reserved_at):
         with exclusive_lock(self.root / "registry.lock"):
             path = self.root / "leases.json"
             value = self.read()
             require(owner in value, "original lease missing")
             require(all(value[owner][k] == v for k, v in dict(session_id=session, scope=scope, claim=claim).items()),
                     "original lease ownership/session/scope/claim changed")
+            require(value[owner]["reserved_at"] == reserved_at,
+                    "original lease reservation identity changed before release")
             event = json_ref(terminal, "verified terminal event")
             require(event.get("state") in (State.ACCEPTED, State.FAILED_PRESERVED) and
                     event.get("data", {}).get("verification", {}).get("task_id") == owner,
@@ -308,8 +327,12 @@ class Coordinator:
                     require(lease["released_at"] is None, "active/uncertain lease was prematurely released")
                 elif lease["released_at"] is not None:
                     event = next(e for e in reversed(self.events()) if e["node_id"] == key)
-                    require(lease["released_by"] == file_ref(self.root / "events" / f"{event['seq']:06d}.json"),
+                    terminal = file_ref(self.root / "events" / f"{event['seq']:06d}.json")
+                    require(lease["released_by"] == terminal,
                             "terminal lease released by a different event")
+                    if states[key] == State.FAILED_PRESERVED and json_ref(info["failure"])["boundary"] == "preparation_exited":
+                        from orchestration_preparation import verify_release_check
+                        verify_release_check(self, key, info, terminal, lease)
         return states, data
 
     @staticmethod
@@ -388,6 +411,16 @@ class Coordinator:
                 lease["scope"] == info["output_root"] and lease["claim"] == file_ref(self.root / "claims" / (key + ".json")),
                 "original lease ownership/session/scope/claim changed")
         require(parse_time(lease["reserved_at"]) >= parse_time(info["started_at"]), "lease predates claim")
+        # Do not call validate_maintenance/state here: terminal replay already
+        # verifies that manifest through the failure evidence. This leaf check
+        # also protects BLOCKED state before a failure candidate has been written.
+        path = self.root / "nodes" / key / "maintenance/manifest.json"
+        if path.exists() or path.is_symlink():
+            manifest = json_ref(file_ref(path))
+            require(manifest["campaign"] == self.campaign_ref and manifest["run_id"] == self.spec["run_id"] and
+                    manifest["node_id"] == key and manifest["claim"] == lease["claim"],
+                    "maintenance lease belongs to another original claim")
+            lease = self.leases.verify_original(info["task_id"], manifest["lease"])
         return lease
 
     def _check_transition(self, key, target, extra, info):
@@ -514,33 +547,69 @@ class Coordinator:
             return result
 
     def _release(self, key, info, terminal):
+        lease = self._lease(key, info)
         self.leases.release(info["task_id"], session=self.campaign["sessions"][self.nodes[key]["executor"]]["session_id"],
-                            scope=info["output_root"], claim=file_ref(self.root / "claims" / (key + ".json")), terminal=terminal)
+                            scope=info["output_root"], claim=file_ref(self.root / "claims" / (key + ".json")), terminal=terminal,
+                            reserved_at=lease["reserved_at"])
+
+    @contextmanager
+    def node_locks(self, key):
+        """Own runner → transport → coordinator locks for one synchronous action.
+
+        Nonblocking and nonreentrant; lock files are persistent and must never
+        be replaced/unlinked. A fork-only child can prolong the inherited lock;
+        a surviving fork/exec descendant can outlive this ownership.
+        Internal recovery helpers consume this ownership without reacquiring it.
+        """
+        require(key in self.nodes, "unknown frozen node")
+        root = self.root / "nodes" / key
+        with exclusive_lock(root / "runner.lock"), exclusive_lock(root / "transport.lock"), \
+                exclusive_lock(self.root / "coordinator.lock"):
+            yield
+
+    def _repair_release_locked(self, key, info, terminal):
+        if self._lease(key, info)["released_at"] is not None:
+            return False
+        event = json_ref(terminal)
+        if event["state"] == State.FAILED_PRESERVED and json_ref(event["data"]["failure"])["boundary"] == "preparation_exited":
+            from orchestration_preparation import check_fresh_release
+            check_fresh_release(self, key, info, event["data"]["failure"], terminal)
+        self._release(key, info, terminal)
+        return True
 
     def repair_releases(self):
         """Repair only a validated terminal-event/lease crash window; never send."""
-        with exclusive_lock(self.root / "coordinator.lock"):
-            if not self.fixtures:
-                require_live_identity(self.campaign)
-            states, data = self.state()
-            repaired = []
-            for event in self.events():
-                key = event["node_id"]
-                if event["state"] in (State.ACCEPTED, State.FAILED_PRESERVED) and self._lease(key, data[key])["released_at"] is None:
-                    self._release(key, data[key], file_ref(self.root / "events" / f"{event['seq']:06d}.json"))
-                    repaired.append(key)
-            return repaired
+        repaired = []
+        for key in self.nodes:
+            with self.node_locks(key):
+                if not self.fixtures:
+                    require_live_identity(self.campaign)
+                states, data = self.state()
+                if states[key] in (State.ACCEPTED, State.FAILED_PRESERVED):
+                    event = next(e for e in reversed(self.events()) if e["node_id"] == key)
+                    terminal = file_ref(self.root / "events" / f"{event['seq']:06d}.json")
+                    if self._repair_release_locked(key, data[key], terminal):
+                        repaired.append(key)
+        return repaired
 
     def settle_failure(self, node_id, failure_ref):
+        with self.node_locks(node_id):
+            return self._settle_failure_locked(node_id, failure_ref)
+
+    def _settle_failure_locked(self, node_id, failure_ref):
         from orchestration_evidence import verify_failure
-        with exclusive_lock(self.root / "coordinator.lock"):
-            self._gate()
-            states, data = self.state()
-            require(states.get(node_id) == State.BLOCKED, "only a preserved blocker can be settled")
-            result = verify_failure(self.campaign, self.header, self.nodes[node_id], data[node_id], failure_ref, fixtures=self.fixtures)
+        self._gate()
+        states, data = self.state()
+        require(states.get(node_id) in (State.BLOCKED, State.FAILED_PRESERVED), "only a preserved blocker can be settled")
+        result = verify_failure(self.campaign, self.header, self.nodes[node_id], data[node_id], failure_ref, fixtures=self.fixtures)
+        if states[node_id] == State.BLOCKED:
             terminal = self._append(node_id, State.FAILED_PRESERVED, dict(failure=failure_ref, verification=result))
-            self._release(node_id, data[node_id], terminal)
-            return result
+        else:
+            require(data[node_id]["failure"] == failure_ref, "original terminal failure changed")
+            event = next(e for e in reversed(self.events()) if e["node_id"] == node_id)
+            terminal = file_ref(self.root / "events" / f"{event['seq']:06d}.json")
+        self._repair_release_locked(node_id, data[node_id], terminal)
+        return result
 
     def recover(self):
         """Discovery only. This method has no transport, timeout reset or resend."""

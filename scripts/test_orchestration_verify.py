@@ -12,7 +12,8 @@ from orchestration_common import ContractError, digest, file_ref, json_ref, pars
 from orchestration_coordinator import Coordinator, State, strategy_probe
 from orchestration_evidence import verify_node
 from orchestration_native import delivery_identity
-from orchestration_test_support import CampaignFixture
+from orchestration_test_support import CampaignFixture, OfflineDisarmRuntime
+from orchestration_transport import Transport
 from orchestration_verify import derive_run, finish_run, select_promotion, verify_campaign, verify_run
 
 
@@ -128,6 +129,43 @@ class LifecycleTests(unittest.TestCase):
         self.f.disarm(co, "review")
         self.assertEqual(len(finish_run(co)["disarms"]), 1)
 
+    def assert_disarm_closeout(self, co, proof_kind):
+        result = finish_run(co)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(len(result["disarms"]), 1)
+        disarm = json_ref(result["disarms"][0])
+        self.assertEqual(disarm["proof_kind"], proof_kind)
+        terminal_at = co.events()[-1]["at"]
+        self.assertLess(parse_time(terminal_at), parse_time(disarm["proof"]["observed_at"]))
+        path = co.root / "finish.json"
+        original_ref, original = file_ref(path), read_json(path)
+        write_json(path, dict(original, closed_at=terminal_at))
+        with self.assertRaisesRegex(ContractError, "closeout precedes scoped disarm"):
+            verify_run(self.f.ref, co.spec["run_id"], fixtures=True)
+        write_json(path, original)
+        self.assertEqual(file_ref(path), original_ref)
+        self.assertEqual(verify_run(self.f.ref, co.spec["run_id"], fixtures=True)["status"], "PASS")
+
+    def test_original_return_closeout_uses_verified_observation(self):
+        self.only("review")
+        co = self.f.start()
+        self.delegated(co)
+        self.assert_disarm_closeout(co, "ORIGINAL_RETURN")
+
+    def test_bounded_recovery_closeout_uses_verified_observation(self):
+        self.only("review")
+        co = self.f.start()
+        with patch.object(self.f, "disarm"):
+            self.delegated(co)
+        runtime = OfflineDisarmRuntime(self.f.campaign, co.root / "offline-disarm")
+        with patch.object(runtime, "disarm", side_effect=RuntimeError("simulated original refusal")):
+            ref = Transport(co, "review", runtime=runtime).disarm()
+        operation = json_ref(ref)["operation_result"]
+        self.assertEqual(json_ref(operation)["status"], "ERROR")
+        self.assertEqual(runtime.recoveries, ["DISARM"])
+        self.assert_disarm_closeout(co, "BOUNDED_RECOVERY")
+        self.assertEqual(file_ref(operation["path"]), operation)
+
     def test_disarm_postcondition_and_original_intent_are_required(self):
         self.only("review")
         co = self.f.start()
@@ -136,16 +174,17 @@ class LifecycleTests(unittest.TestCase):
         operation = root / "operations/scoped-disarm/result.json"
         original = read_json(operation)
         original_record = read_json(root / "disarm.json")
-        for mutation in (lambda v: v["value"].update(after=v["value"]["before"]),
-                         lambda v: v["value"].update(workspace_uuid="wrong-workspace"),
-                         lambda v: v["value"].update(removed_markers=0),
-                         lambda v: v["value"].update(observed_at="2000-01-01T00:00:00Z")):
-            with self.subTest(mutation=mutation):
+        for mutation, reason in (
+                (lambda v: v["value"].update(after=v["value"]["before"]), "original marker/reservation release unproven"),
+                (lambda v: v["value"].update(workspace_uuid="wrong-workspace"), "invalid scoped disarm result"),
+                (lambda v: v["value"].update(removed_markers=0), "scoped disarm removal count changed"),
+                (lambda v: v["value"].update(observed_at="2000-01-01T00:00:00Z"), "disarm observation chronology changed")):
+            with self.subTest(reason=reason):
                 value = copy.deepcopy(original)
                 mutation(value)
                 result_ref = write_json(operation, value)
-                write_json(root / "disarm.json", dict(original_record, operation_result=result_ref, result=value["value"]))
-                with self.assertRaises(ContractError):
+                write_json(root / "disarm.json", dict(original_record, operation_result=result_ref, proof=value["value"]))
+                with self.assertRaisesRegex(ContractError, reason):
                     finish_run(co)
         write_json(operation, original)
         write_json(root / "disarm.json", original_record)

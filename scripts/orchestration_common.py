@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
 import tempfile
 import contextlib
@@ -156,8 +157,9 @@ def read_regular(path: str | Path, limit: int = 64 * 1024 * 1024) -> bytes:
                 raise ContractError(f"regular bounded file required: {path}")
             raw = stream.read(limit + 1)
             after = os.fstat(stream.fileno())
-            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
-                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            current = path.lstat()
+            signature = lambda st: (st.st_dev, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+            if signature(before) != signature(after) or signature(after) != signature(current):
                 raise ContractError(f"file changed during read: {path}")
             if len(raw) != before.st_size:
                 raise ContractError(f"incomplete read: {path}")
@@ -188,33 +190,54 @@ def json_ref(ref: Any, label: str = "proof") -> dict:
     return value
 
 
-def write_json(path: str | Path, value: Any, *, exclusive: bool = False) -> dict:
+def _publish_bytes(path: str | Path, raw: bytes, *, exclusive: bool) -> dict:
+    """Publish only complete, fsynced bytes; a crash never exposes a torn final file.
+
+    Same-directory hard links implement exclusive publication without replacing
+    an existing destination. Staging files cannot match a JSON evidence glob.
+    A killed writer may leave a staging file, which is never evidence itself.
+    """
     path = checked_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    raw = canonical(value)
-    if exclusive:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    temporary = path.parent / f".{path.name}.stage-{uuid.uuid4().hex}.tmp"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-    else:
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(raw)
-                stream.flush()
-                os.fsync(stream.fileno())
+        if exclusive:
+            os.link(temporary, path, follow_symlinks=False)
+        else:
             os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-    directory = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory)
     finally:
-        os.close(directory)
+        if temporary.exists():
+            temporary.unlink()
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     return {"path": str(path), "sha256": digest(raw), "bytes": len(raw)}
+
+
+def evidence_names(directory: str | Path, destinations) -> set[str]:
+    """Ignore only owned regular staging remnants for explicitly allowed names."""
+    names = set()
+    allowed = set(destinations)
+    for path in checked_path(directory).iterdir():
+        match = re.fullmatch(r"\.(.+)\.stage-[0-9a-f]{32}\.tmp", path.name)
+        if match and match[1] in allowed:
+            st = path.lstat()
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+                raise ContractError(f"invalid evidence staging remnant: {path}")
+        else:
+            names.add(path.name)
+    return names
+
+
+def write_json(path: str | Path, value: Any, *, exclusive: bool = False) -> dict:
+    return _publish_bytes(path, canonical(value), exclusive=exclusive)
 
 
 def write_bytes_once(path: str | Path, raw: bytes) -> dict:
@@ -224,17 +247,11 @@ def write_bytes_once(path: str | Path, raw: bytes) -> dict:
         if read_regular(path) != raw:
             raise ContractError(f"existing immutable bytes differ: {path}")
         return file_ref(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(raw)
-        stream.flush()
-        os.fsync(stream.fileno())
-    directory = os.open(path.parent, os.O_RDONLY)
     try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+        _publish_bytes(path, raw, exclusive=True)
+    except FileExistsError:
+        if read_regular(path) != raw:
+            raise ContractError(f"existing immutable bytes differ: {path}")
     return file_ref(path)
 
 

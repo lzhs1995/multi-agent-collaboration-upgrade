@@ -8,9 +8,9 @@ from unittest.mock import Mock, patch
 from orchestration_common import (ContractError, digest, file_ref, json_ref, read_json,
                                   utc_now, write_bytes_once, write_json)
 from orchestration_coordinator import Coordinator, State
-from orchestration_evidence import task_notice
-from orchestration_test_support import CampaignFixture
-from orchestration_transport import OperationJournal, PendingOperation, Transport, exact_native, journal_bundle
+from orchestration_evidence import task_notice, verify_prepared
+from orchestration_test_support import CampaignFixture, OfflineDisarmRuntime
+from orchestration_transport import OperationJournal, PendingOperation, PinnedRuntime, Transport, exact_native, journal_bundle
 
 
 class Crash(BaseException):
@@ -74,8 +74,9 @@ class JournalTests(unittest.TestCase):
             write_bytes_once(path, b"exact")
 
 
-class FakeRuntime:
+class FakeRuntime(OfflineDisarmRuntime):
     def __init__(self, fixture, co):
+        super().__init__(fixture.campaign, co.root / "offline-disarm")
         self.f, self.co = fixture, co
         self.calls = []
         self.fail_submit = False
@@ -85,13 +86,14 @@ class FakeRuntime:
         self.dispatch_root = co.root / "dispatch-original"
         self.callback_settlements = []
         self.disarms = []
+        self.executor_selector = self.f.clients["claude"].session["surface_uuid"]
 
     def harness_argv(self, phase, task_id, artifact_root):
-        return ["offline-fixture-harness", phase, task_id, str(artifact_root)]
+        return PinnedRuntime(self.f.campaign).harness_argv(phase, task_id, artifact_root)
 
     def harness(self, argv, operation_root):
-        _, phase, task, root = argv
-        root = Path(root)
+        phase, task = argv[3], argv[argv.index("--task-id") + 1]
+        root = Path(argv[argv.index("--artifact-root") + 1])
         self.calls.append(phase)
         if phase == "preflight":
             root.mkdir()
@@ -108,16 +110,19 @@ class FakeRuntime:
         elif phase == "task-pack":
             write_json(root / "task-pack.json", dict(task_id=task, draft=True,
                 executor_uuid=self.f.clients["claude"].session["surface_uuid"],
-                supervisor="surface:1", executor="surface:2", callback_target="surface:1",
+                supervisor="surface:1", executor=self.executor_selector, callback_target="surface:1",
+                executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=self.executor_selector)],
                 required_skill=str(Path(self.f.campaign["controller"]["path"]) / "SKILL.md"),
                 identity_gate=str(root / "identity-gate.json"), validation_evidence=str(root / "validation.json"),
                 completion_receipt=str(root / "completion-callback-receipt.json"),
                 completion_delivery=dict(transport="cmux_bridge.submit_completion_callback", require_confirmed=True)))
         elif phase == "finalize-pack":
             value = read_json(root / "task-pack.json")
-            value.update(draft=False, finalized_at=utc_now())
+            value.update(draft=False, finalized_at=utc_now(), source_entries=[
+                dict(path=str(p).rstrip("。，、；;,.)）]】"), exists=True) for p in value["source"] if str(p).startswith("/")])
             write_json(root / "task-pack.json", value)
-        return {"returncode": 0}
+        return dict(returncode=0, stdout=write_bytes_once(operation_root / "stdout.txt", b"fixture harness returned\n"),
+                    stderr=write_bytes_once(operation_root / "stderr.txt", b""))
 
     def notice(self, pack):
         self.calls.append("notice")
@@ -145,13 +150,6 @@ class FakeRuntime:
         write_json(value["completion_receipt"], self.saved_callback)
         return {"confirmed": True}
 
-    def disarm(self, task_id):
-        self.disarms.append(task_id)
-        return dict(task_id=task_id, workspace_uuid=self.f.campaign["sessions"]["codex"]["workspace_uuid"],
-            removed_markers=1, before=[dict(path=str(self.co.root / "offline-marker.json"), marker={"task_id": task_id})],
-            after=[], observed_at=utc_now())
-
-
 class TransportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -172,12 +170,42 @@ class TransportTests(unittest.TestCase):
 
     def test_prepare_and_dispatch_are_idempotent_without_rehandshake_or_resend(self):
         proof = self.transport.prepare()
+        self.assertEqual(json_ref(proof["pack"])["executor"], self.f.clients["claude"].session["surface_uuid"])
         self.assertEqual(self.transport.prepare(), proof)
         self.assertEqual(self.runtime.calls, ["preflight", "task-pack", "finalize-pack", "notice"])
         delivered = self.transport.dispatch()
         self.assertEqual(self.transport.dispatch(), delivered)
         self.assertEqual(self.runtime.calls.count(("submit", False)), 1)
         self.assertEqual(self.co.state()[0]["review"], State.DISPATCHED)
+
+    def test_ref_cannot_replace_the_original_uuid_harness_selector(self):
+        self.runtime.executor_selector = self.f.clients["claude"].session["surface_ref"]
+        with self.assertRaisesRegex(ContractError, "binding changed"):
+            self.transport.prepare()
+        self.assertEqual(self.co.state()[0]["review"], State.PREPARING)
+        self.assertFalse((self.transport.root / "dispatch-intent.json").exists())
+
+    def test_selector_alias_does_not_relax_uuid_role_or_original_session_binding(self):
+        proof = self.transport.prepare()
+        pack = json_ref(proof["pack"])
+        gate = json_ref(proof["identity_gate"])
+        for field, value in (("executor", "surface:999"), ("executor", "other-uuid"),
+                             ("executor_uuid", "other-uuid"), ("supervisor", "surface:2"),
+                             ("callback_target", "surface:2")):
+            with self.subTest(field=field, value=value):
+                changed = dict(pack, **{field: value})
+                mutated = dict(proof, pack=write_json(proof["pack"]["path"], changed))
+                Path(proof["notice"]["path"]).write_text(task_notice(mutated["pack"], changed))
+                mutated["notice"] = file_ref(proof["notice"]["path"])
+                with self.assertRaisesRegex(ContractError, "binding changed"):
+                    verify_prepared(self.f.campaign, self.co.header, self.co.nodes["review"], self.info, mutated, fixtures=True)
+        write_json(proof["pack"]["path"], pack)
+        Path(proof["notice"]["path"]).write_text(task_notice(proof["pack"], pack))
+        changed = copy.deepcopy(gate)
+        changed["native_participants"][1]["native_session_id"] = "another-session"
+        mutated = dict(proof, identity_gate=write_json(proof["identity_gate"]["path"], changed))
+        with self.assertRaisesRegex(ContractError, "both original native sessions"):
+            verify_prepared(self.f.campaign, self.co.header, self.co.nodes["review"], self.info, mutated, fixtures=True)
 
     def test_unknown_submit_and_restart_never_send_again(self):
         self.transport.prepare()

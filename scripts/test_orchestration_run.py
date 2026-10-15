@@ -148,7 +148,7 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "original supervisor control"):
             self.r.settle(self.run, "local", resume=True)
         self.f.control("settle", self.run, node_id="local", marker=marker)
-        with patch.object(Coordinator, "settle_failure", side_effect=Crash()), self.assertRaises(Crash):
+        with patch.object(Coordinator, "_settle_failure_locked", side_effect=Crash()), self.assertRaises(Crash):
             self.r.settle(self.run, "local", marker)
         ref = file_ref(self.co.root / "nodes/local/settled-failure.json")
         self.assertEqual(self.r.settle(self.run, "local", resume=True)["status"], "FAILED_PRESERVED")

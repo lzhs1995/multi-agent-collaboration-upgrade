@@ -9,9 +9,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from orchestration_adapter import CAMPAIGN_MODULES
 from orchestration_campaign import ORDER, anchored_ref, validate_campaign
 from orchestration_common import ContractError, canonical, digest, file_ref, read_json, tree_manifest, verify_tree, write_json
-from orchestration_freeze import capture_sessions, freeze_campaign
+from orchestration_freeze import capture_sessions, corpus_plan, freeze_campaign
+from orchestration_planner import ID_RE
 from orchestration_native import NativeReader
 from test_orchestration_native import NativeFixture
 from test_orchestration_workload import CorpusFixture
@@ -22,11 +24,9 @@ class FreezeFixture:
         self.base = Path(base).resolve()
         self.source = self.base / "source"
         (self.source / "scripts").mkdir(parents=True)
-        for name in ("orchestration_run.py", "orchestration_workload.py", "orchestration_checker.py"):
+        for name in (name + ".py" for name in CAMPAIGN_MODULES):
             (self.source / "scripts" / name).write_text("# offline frozen entrypoint\n")
         (self.source / ".hidden").write_bytes(b"hidden runtime bytes\n")
-        (self.source / "scripts" / "__pycache__").mkdir()
-        (self.source / "scripts" / "__pycache__" / "existing.pyc").write_bytes(b"existing bytecode must be pinned")
         (self.source / "empty").mkdir()
         (self.source / ".git").mkdir()
         (self.source / ".git" / "HEAD").write_text("fixture metadata is not runtime\n")
@@ -34,6 +34,10 @@ class FreezeFixture:
         self.controller = self.base / "controller"
         self.controller.mkdir()
         (self.controller / "SKILL.md").write_text("offline controller fixture\n")
+        # Controller trees retain all original bytes. Only the new adapter is
+        # source-only; preserving historical controller bytecode is separate.
+        (self.controller / "__pycache__").mkdir()
+        (self.controller / "__pycache__" / "existing.pyc").write_bytes(b"original controller bytecode")
         self.corpus = CorpusFixture(self.base / "data")
         self.clients, self.hints = {}, {}
         for lane in ("codex", "claude"):
@@ -73,6 +77,20 @@ class FreezeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.fx = FreezeFixture(self.tmp.name)
 
+    def test_campaign_task_namespace_is_stable_bounded_and_never_reuses_legacy_id(self):
+        first = corpus_plan(self.fx.root / "inputs", "revision")
+        self.assertEqual(first, corpus_plan(self.fx.root / "inputs", "revision"))
+        second = corpus_plan(self.fx.base / "other-campaign" / "inputs", "revision")
+        self.assertNotEqual(first["plan_id"], second["plan_id"])
+        self.assertNotEqual(first["plan_id"], "orchestration-corpus-v2")
+        self.assertIsNotNone(ID_RE.fullmatch(first["plan_id"]))
+        self.assertEqual(first["plan_id"], corpus_plan(self.fx.root / "inputs", "new-revision")["plan_id"])
+        # A campaign's shared plan, node ordering and workload are identical
+        # for all nine strategies; only its namespace differs from another.
+        left = [{k: v for k, v in n.items() if k != "source"} for n in first["nodes"]]
+        right = [{k: v for k, v in n.items() if k != "source"} for n in second["nodes"]]
+        self.assertEqual(left, right)
+
     def test_complete_private_freeze_preserves_bytes_modes_failed_fetch_and_all_policies(self):
         before = {k: c.path.read_bytes() for k, c in self.fx.clients.items()}
         result = self.fx.freeze()
@@ -83,7 +101,8 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual(value["controller"]["path"], str(self.fx.controller))
         self.assertEqual(value["adapter"]["files"], tree_manifest(self.fx.source)["files"])
         self.assertIn("empty", value["adapter"]["directories"])
-        self.assertIn("scripts/__pycache__/existing.pyc", value["adapter"]["files"])
+        self.assertNotIn("scripts/__pycache__", value["adapter"]["directories"])
+        self.assertIn("__pycache__/existing.pyc", value["controller"]["files"])
         self.assertNotIn(".git", value["adapter"]["directories"])
         self.assertEqual(value["input_tree"]["files"]["fetched/tssdkpy-head.json"]["bytes"], 0)
         self.assertEqual(len(value["inputs"]), 6)
@@ -111,6 +130,17 @@ class FreezeTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "latest native model"):
             self.fx.freeze()
         self.assertFalse(self.fx.root.exists())
+
+    def test_adapter_bytecode_is_refused_before_freeze_intent(self):
+        cache = self.fx.source / "scripts" / "__pycache__"
+        cache.mkdir()
+        for empty in (True, False):
+            with self.subTest(empty=empty):
+                if not empty:
+                    (cache / "existing.pyc").write_bytes(b"untrusted adapter bytecode")
+                with self.assertRaisesRegex(ContractError, "bytecode/cache"):
+                    self.fx.freeze()
+                self.assertFalse(self.fx.root.exists())
 
     def test_original_endpoint_authorization_and_live_identity_cannot_be_substituted(self):
         actual = self.fx.observe(None)
@@ -217,7 +247,7 @@ class FrozenCampaignTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "tree changed"):
                 verify_tree(self.value["adapter"])
             restore()
-        pyc = root / "scripts/__pycache__/existing.pyc"
+        pyc = Path(self.value["controller"]["path"]) / "__pycache__/existing.pyc"
         pyc.write_bytes(b"replacement bytecode")
         with self.assertRaisesRegex(ContractError, "tree changed"):
             validate_campaign(self.ref, fixtures=True)

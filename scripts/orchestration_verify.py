@@ -135,7 +135,7 @@ def verify_run(campaign_ref, run_id, *, fixtures=False):
             "complete final event history changed")
     require(parse_time(finish["closed_at"]) >= parse_time(co.events()[-1]["at"]), "closeout precedes terminal event")
     result = derive_run(co, finish["native_end"])
-    require(all(parse_time(json_ref(ref)["result"]["observed_at"]) <= parse_time(finish["closed_at"])
+    require(all(parse_time(json_ref(ref)["proof"]["observed_at"]) <= parse_time(finish["closed_at"])
                 for ref in result["disarms"]), "closeout precedes scoped disarm")
     require(finish["summary"] == result, "stored metrics differ from original evidence")
     return dict(result, evidence_class="offline_fixture" if fixtures else "verified_cli_run_v2", finish=file_ref(root / "finish.json"))

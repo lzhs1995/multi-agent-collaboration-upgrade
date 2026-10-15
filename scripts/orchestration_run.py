@@ -19,7 +19,8 @@ from orchestration_common import (ContractError, exclusive_lock, file_ref, json_
                                   tree_manifest, utc_now, write_json)
 from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import (dispatch_journal, failure_marker, make_test_result, marker_for,
-                                    node_directory, output_refs, task_identity, validate_candidate, verify_node)
+                                    node_directory, output_refs, task_identity, validate_candidate, validate_failure_candidate,
+                                    verify_failure_value, verify_node)
 from orchestration_native import NativeReader, require
 from orchestration_transport import PendingOperation, Transport
 from orchestration_verify import finish_run, verify_campaign, verify_run
@@ -184,6 +185,18 @@ class Runner:
         co = self.co(run_id)
         require(key in co.nodes, "unknown frozen node")
         directory = node_directory(self.campaign, co.header, co.nodes[key])
+        if boundary == "preparation_exited":
+            from orchestration_preparation import freeze_failure_candidate_locked, freeze_preparation_proof_locked
+            require(self.fixtures or Path(__file__).resolve() == Path(self.campaign["adapter"]["path"]) / "scripts/orchestration_run.py",
+                    "old adapter needs its separately frozen maintenance entrypoint")
+            with co.node_locks(key):
+                co._gate()
+                states, data = co.state()
+                require(states[key] == State.BLOCKED, "failure candidate requires an original blocker")
+                proof_ref = freeze_preparation_proof_locked(self.transport(co, key), data[key])
+                ref = freeze_failure_candidate_locked(co, key, proof_ref)
+                return dict(candidate=ref, boundary=boundary, exec_script=control_script(
+                    self.campaign, self.ref, "settle", run_id, node_id=key, marker=failure_marker(data[key], json_ref(ref))))
         with exclusive_lock(directory / "runner.lock"):
             states, data = co.state()
             info, node = data[key], co.nodes[key]
@@ -206,6 +219,7 @@ class Runner:
                             "no proven preparation exit; preserve the lease")
                     value["no_input_attempts"] = [file_ref(p) for p in sorted(dispatch_journal(self.campaign, info).glob("attempt-*.json"))]
                     require(value["no_input_attempts"], "no original zero-input attempts; preserve the lease")
+                validate_failure_candidate(self.campaign, co.header, node, info, value, fixtures=self.fixtures)
                 write_json(path, value, exclusive=True)
             value = read_json(path)
             require(value.get("boundary") == boundary and value.get("blocker") == info["blocker"], "frozen failure candidate changed")
@@ -216,7 +230,7 @@ class Runner:
         co = self.co(run_id)
         require(key in co.nodes, "unknown frozen node")
         directory = node_directory(self.campaign, co.header, co.nodes[key])
-        with exclusive_lock(directory / "runner.lock"):
+        with co.node_locks(key):
             states, data = co.state()
             require(states[key] in (State.BLOCKED, State.FAILED_PRESERVED), "no original blocker to settle")
             info = data[key]
@@ -230,14 +244,12 @@ class Runner:
             if not path.exists():
                 co._gate()
                 require(states[key] == State.BLOCKED, "original failure evidence is missing")
-                write_json(path, dict(candidate, failure_native=native, native_end=self._snapshots()), exclusive=True)
+                value = dict(candidate, failure_native=native, native_end=self._snapshots())
+                verify_failure_value(self.campaign, co.header, co.nodes[key], info, value, fixtures=self.fixtures)
+                write_json(path, value, exclusive=True)
             ref = file_ref(path)
             require(json_ref(ref).get("failure_native") == native, "recovery must use original native failure settlement")
-            if states[key] == State.FAILED_PRESERVED:
-                from orchestration_evidence import verify_failure
-                require(info["failure"] == ref, "original failure evidence pin changed")
-                return verify_failure(self.campaign, co.header, co.nodes[key], info, ref, fixtures=self.fixtures)
-            return co.settle_failure(key, ref)
+            return co._settle_failure_locked(key, ref)
 
     def recover(self, run_id):
         co = self.co(run_id)
@@ -277,7 +289,7 @@ def main(argv=None):
         if action == "block":
             sub.add_argument("--reason", required=True)
         if action == "failure-candidate":
-            sub.add_argument("--boundary", required=True, choices=("local_boundary", "callback_boundary", "no_business_input"))
+            sub.add_argument("--boundary", required=True, choices=("local_boundary", "callback_boundary", "no_business_input", "preparation_exited"))
     args = parser.parse_args(argv)
     try:
         ref = anchored_ref(args.campaign, args.campaign_sha256)
@@ -310,8 +322,11 @@ def main(argv=None):
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
         return 3 if isinstance(result, dict) and result.get("status") == "UNCERTAIN" else 0
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
-        print(json.dumps(dict(status="PENDING_OR_BLOCKED" if isinstance(exc, PendingOperation) else "REJECTED",
-                              error=str(exc), input_retry_authorized=False), ensure_ascii=False), file=sys.stderr)
+        result = dict(status="PENDING_OR_BLOCKED" if isinstance(exc, PendingOperation) else "REJECTED",
+                      error=str(exc), input_retry_authorized=False)
+        if getattr(exc, "diagnostic", None) is not None:
+            result["diagnostic"] = exc.diagnostic
+        print(json.dumps(result, ensure_ascii=False, allow_nan=False), file=sys.stderr)
         return 3 if isinstance(exc, PendingOperation) else 2
 
 

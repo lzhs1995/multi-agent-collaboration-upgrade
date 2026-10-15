@@ -13,8 +13,9 @@ import os
 import sys
 from pathlib import Path
 
+from orchestration_adapter import validate_adapter
 from orchestration_campaign import METRICS, ORDER, anchored_ref, collect_live_sessions, validate_campaign
-from orchestration_common import (ContractError, checked_path, file_ref, json_ref, read_ref, strict_json,
+from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref, read_ref, strict_json,
                                   tree_manifest, utc_now, verify_tree, write_bytes_once, write_json)
 from orchestration_coordinator import strategy_probe
 from orchestration_native import NativeReader, native_text, require
@@ -22,12 +23,16 @@ from orchestration_planner import ID_RE, validate_plan
 
 
 def corpus_plan(input_root, revision):
+    # The immutable absolute input root is unique to a campaign. Run/node/attempt
+    # names are deliberately identical across policies, but must never reuse a
+    # retired campaign's lease owner or shared dispatch journal key.
+    namespace = digest(str(checked_path(input_root)).encode())[:32]
     specs = (("dependent_local", "codex", ["inventory"], 30,
               "Consume this run's accepted inventory and derive a consistency summary"),
              ("inventory", "claude", [], 60, "Inventory and classify the frozen research corpus"),
              ("independent_local", "codex", [], 35, "Independently recompute Git blob hashes from the original bytes"),
              ("verify_inputs", "claude", [], 45, "Verify source URLs, commit references, fetch outcomes and pins"))
-    plan = dict(version=1, plan_id="orchestration-corpus-v2", objective="Audit the accepted research corpus through the original CLI sessions",
+    plan = dict(version=1, plan_id=f"orchestration-corpus-v2-{namespace}", objective="Audit the accepted research corpus through the original CLI sessions",
                 source=dict(generated_by="supervisor", revision=revision), decision_provider="rules",
                 api_policy=dict(third_party_api=False, model_call_owners=["codex_cli", "claude_code_cli"]), nodes=[])
     for key, lane, deps, estimate, objective in specs:
@@ -102,8 +107,7 @@ def freeze_campaign(request_ref, *, fixtures=False, observer=None):
             "private campaign must be separate from its source/corpus/controller")
     require(lease_root != root and root not in lease_root.parents, "use a separate cross-run lease registry")
     source_tree, controller = tree_manifest(source), tree_manifest(controller_path)
-    required = {"scripts/orchestration_run.py", "scripts/orchestration_workload.py", "scripts/orchestration_checker.py"}
-    require(required <= set(source_tree["files"]), "complete adapter entrypoints missing")
+    validate_adapter(source_tree, purpose="campaign")
     require("SKILL.md" in controller["files"], "original collaboration controller missing")
     sessions = capture_sessions(request["sessions"], controller, fixtures=fixtures, observer=observer)
     auth_records = copy.deepcopy(request["native_authorizations"])
@@ -129,6 +133,7 @@ def freeze_campaign(request_ref, *, fixtures=False, observer=None):
                source=source_tree, controller=controller, input_sources=input_refs, sessions=sessions), exclusive=True)
     try:
         adapter = copy_runtime(source_tree, root / "adapter")
+        validate_adapter(adapter, purpose="campaign")
         for name, ref in input_refs.items():
             write_bytes_once(root / "inputs" / name, read_ref(ref))
         input_tree = tree_manifest(root / "inputs", kind="output")

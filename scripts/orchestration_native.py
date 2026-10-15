@@ -120,6 +120,57 @@ def native_text(record, provider, role):
     return texts[0] if len(texts) == 1 else None
 
 
+def queued_texts(record):
+    """Inspect client queue input only; tool results/reasoning are never input."""
+    if record.get("type") == "queue-operation":
+        content = record.get("content")
+        return [content] if isinstance(content, str) else []
+    attachment = record.get("attachment")
+    if record.get("type") == "attachment" and isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+        return [attachment[key] for key in ("prompt", "content") if isinstance(attachment.get(key), str)]
+    return []
+
+
+def tool_invocations(record, provider):
+    """Keep the actual invocation name; a report's quoted code is only data."""
+    if provider == "codex" and record.get("type") == "response_item":
+        payload = record.get("payload", {})
+        if payload.get("type") in ("function_call", "custom_tool_call"):
+            return [(payload.get("name"), payload.get("arguments", payload.get("input")))]
+    if provider == "claude" and record.get("type") == "assistant":
+        content = record.get("message", {}).get("content", [])
+        if isinstance(content, list):
+            return [(block.get("name"), block.get("input")) for block in content
+                    if isinstance(block, dict) and block.get("type") == "tool_use"]
+    return []
+
+
+def user_input_texts(record, provider):
+    """Absence checks inspect every user text block, even beside nontext data.
+
+    This is intentionally broader than native_text's exact receipt contract.
+    Tool results, assistant examples and reasoning still cannot become inputs.
+    """
+    if provider == "codex":
+        message = record.get("payload", {})
+        if record.get("type") != "response_item" or message.get("type") != "message":
+            return []
+    else:
+        if record.get("type") != "user" or record.get("isSidechain") is True:
+            return []
+        message = record.get("message", {})
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return []
+    content = message.get("content")
+    if isinstance(content, str) and provider == "claude":
+        return [content]
+    if not isinstance(content, list):
+        return []
+    kind = "input_text" if provider == "codex" else "text"
+    return [block["text"] for block in content if isinstance(block, dict) and
+            block.get("type") == kind and isinstance(block.get("text"), str)]
+
+
 class NativeReader:
     @contract_errors("native session")
     def __init__(self, session, *, fixtures=False):
@@ -238,6 +289,26 @@ class NativeReader:
         records = list(self.records(offset, offset + length))
         require(len(records) == 1 and records[0][0]["sha256"] == ref.get("sha256"), "native record hash/length mismatch")
         return records[0][1]
+
+    @contract_errors("undispatched native input")
+    def require_no_task_input(self, start, end, *, task_id, pack, notice, receiver, sender, state_root=None, refusal_context=None):
+        """Separate actual inbound text and supervisor sender calls from reports."""
+        from orchestration_inputs import input_texts
+        from orchestration_input_history import sender_history
+        marker = "TASK_PACK_V2 TASK=" + json.dumps(task_id, ensure_ascii=False)
+        targets = (notice, marker, pack["sha256"], pack["path"])
+        inbound = (self.provider, self.session["session_id"]) == (receiver["provider"], receiver["session_id"])
+        outbound = (self.provider, self.session["session_id"]) == (sender["provider"], sender["session_id"])
+        require(inbound != outbound, "original sender/receiver lane required")
+        if outbound:
+            return sender_history(self, start, end, receiver, sender, targets,
+                                  state_root=state_root, refusal_context=refusal_context)
+        for _, record in self.records(start, end):
+            if inbound:
+                for text in user_input_texts(record, self.provider) + queued_texts(record):
+                    require(not any(token in value for value in input_texts(text) for token in targets),
+                            "original business notice/pack exists in native or queued input")
+        return dict(version=1, start=start, end=end, cached_reads=[], sender_calls=[])
 
     @contract_errors("native actions")
     def action_summary(self, start, end, *, task_id, output_root, allow_empty=False):
