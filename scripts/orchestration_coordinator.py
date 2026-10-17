@@ -142,7 +142,7 @@ class LeaseRegistry:
         return value
 
     def reserve(self, owner, session, scope, claim):
-        with exclusive_lock(self.root / "registry.lock"):
+        with exclusive_lock(self.root / "registry.lock", wait_seconds=5):
             path = self.root / "leases.json"
             checked_path(scope)
             read_ref(claim, "original claim")
@@ -173,7 +173,7 @@ class LeaseRegistry:
         return current
 
     def release(self, owner, *, session, scope, claim, terminal, reserved_at):
-        with exclusive_lock(self.root / "registry.lock"):
+        with exclusive_lock(self.root / "registry.lock", wait_seconds=5):
             path = self.root / "leases.json"
             value = self.read()
             require(owner in value, "original lease missing")

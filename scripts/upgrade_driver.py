@@ -15,12 +15,13 @@ from pathlib import Path
 
 from orchestration_campaign import anchored_ref, validate_campaign
 from orchestration_common import (ContractError, boot_id, exclusive_lock, file_ref, json_ref,
-    read_ref, require, utc_now, verify_tree, write_json)
+    parse_time, read_ref, require, utc_now, verify_tree, write_json)
 from orchestration_freeze_v3 import authorize, freeze_campaign
 from orchestration_permit import elapsed, read_permit, require_running
 from upgrade_benchmark import group_registration, validate_registration
 from upgrade_live_control import control, publish_bootstrap
 from upgrade_live_runtime import validate_adoption, validate_live_runtime
+from upgrade_failure_watch import CodexFailureWatch
 import upgrade_schedule as schedule
 from upgrade_supervisor_instructions import publish as publish_instructions
 
@@ -68,6 +69,7 @@ class Driver:
         self.registration = validate_registration(self.registration_ref)
         require(set(self.config["runtimes"]) == set(self.registration["groups"]), "driver runtime groups changed")
         self.root = Path(self.registration["root"]) / "driver"
+        self.failure_watches = {}
         require(ref["path"] == str(self.root / "config.json"), "driver location changed")
 
     def once(self, key, action, operation, recover=None):
@@ -156,6 +158,31 @@ class Driver:
         return elapsed(dict(started_at=stamp[key], created_at=stamp[key],
             started_monotonic_ns=stamp["monotonic_ns"], boot_id=stamp["boot_id"], launch_start=None))
 
+    def supervisor_failure(self, campaign_ref, campaign):
+        key = campaign_ref["sha256"]
+        if key not in self.failure_watches:
+            self.failure_watches[key] = CodexFailureWatch(campaign["sessions"]["codex"])
+        watch = self.failure_watches[key]
+        failure = watch.observe()
+        if failure is None:
+            if watch.pending:
+                return dict(status="WAITING_NATIVE_OBSERVATION", input_operations=0)
+            return None
+        path = self.root / "faults" / ("native-" + key + ".json")
+        if os.path.lexists(path):
+            ref = file_ref(path)
+            saved = json_ref(ref)
+            require(saved.get("campaign") == campaign_ref and saved.get("config") == self.ref,
+                    "original native failure belongs to another campaign/configuration")
+            parse_time(saved.get("observed_at"))
+            watch.verify_saved({k: v for k, v in saved.items()
+                                if k not in ("campaign", "config", "observed_at")})
+        else:
+            ref = write_json(path, dict(campaign=campaign_ref, config=self.ref,
+                observed_at=utc_now(), **failure), exclusive=True)
+        return self.halt("Original Codex turn terminated with a native error; no replay: "
+                         + failure["turn_id"], "FAILED", [ref])
+
     def _tick(self):
         state = schedule.status(self.registration_ref)
         if state["status"] in TERMINAL:
@@ -231,8 +258,11 @@ class Driver:
             return dict(self._bootstrap(group, runtime_ref, spec, campaign_ref), step=step)
         # Validate the immutable publication, including a crash with no result.
         self._bootstrap(group, runtime_ref, spec, campaign_ref)
+        failure = self.supervisor_failure(campaign_ref, campaign)
+        if failure is not None and failure["status"] != "WAITING_NATIVE_OBSERVATION":
+            return failure
         run_root = Path(campaign["root"]) / "runs" / step["run_id"]
-        if (run_root / "finish.json").exists():
+        if failure is None and (run_root / "finish.json").exists():
             def observed_close():
                 path = Path(self.registration["root"]) / "schedule/closures" / f"{ordinal:04d}.json"
                 if not path.exists():
@@ -265,6 +295,8 @@ class Driver:
             return self.halt("Original run/watchdog clock is unknown", "UNKNOWN", [clock_ref])
         if timing["seconds"] > self.registration["contract"]["run_timeout_seconds"]:
             return self.halt("Original registered run exceeded 1800 seconds without complete closeout", "TIMEOUT", [clock_ref])
+        if failure is not None:
+            return dict(failure, step=step, elapsed_seconds=timing["seconds"])
         return dict(status="WAITING_ORIGINAL_SUPERVISOR", step=step, elapsed_seconds=timing["seconds"], input_operations=0)
 
     def tick(self):

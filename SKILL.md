@@ -20,6 +20,30 @@ campaigns retain their original controller and evidence; v3 is a separate format
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
+Current measured results and open live-validation gaps are recorded in the
+[2026-10-18 validation report](docs/VALIDATION-20261018.md).
+
+For v3, automatic workflow hooks run through the pinned advisory wrapper.
+Unresolved callbacks, reservation, reask or review state do not block ordinary
+tools or Stop. Legacy gate descriptions below are explicit diagnostics, never a
+global session lock. This does not relax the sender's identity, original-attempt,
+native reception or input safeguards. Verify actual automatic invocation in
+each live client separately from configuration and manual hook tests.
+
+Pressure acceptance requires both safety and successful independent work.
+Report every attempted reservation, semantic conflict and registry-lock timeout;
+zero double owners alone is insufficient. Only short registry transactions may
+wait up to five seconds for their lock. Action locks remain fail-fast, and no
+dispatch or callback is retried by this wait. See [pressure and experience
+controls](references/lessons.md#pressure-and-field-experience).
+
+Native readiness is only a startup result. A later original Codex
+`event_msg/task_complete` with an error must halt the experiment with its pinned
+native record, preserving sessions, completed measurements and every registered
+slot. The driver observes at most 256 records per tick; unread or partial records
+hold advancement without extending the registered watchdog. A crash reuses the
+first failure evidence, never retries input. See [native failure closeout](
+docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).
 
 For zero-input identity refusals, read [native caller inventory failures](references/native-caller-inventory.md).
 Repair discovery before retrying a handshake; retain kernel/UUID authentication
@@ -154,13 +178,13 @@ Use [efficiency and task closeout](references/efficiency-and-closeout.md) to
 choose zero, one or two executors, apply phase-specific handshake budgets,
 attribute delivery failures, and close accepted work without repeated reviews.
 
-Use [executor closeout enforcement](references/executor-closeout-enforcement.md):
-the PreToolUse guard freezes the report, task pack and original attempt after the
+The legacy [executor closeout diagnostic](references/executor-closeout-enforcement.md)
+freezes the report, task pack and original attempt after the
 bound callback returns. Strict task-bound read-only diagnostics and original-controller
-reconciliation remain available. Stop accepts an ordinary honest waiting statement
-as WAITING_SUPERVISOR (continue:false, suppressOutput:true); no exact STATUS template
-is required. It preserves task/receipt state and rejects unsupported confirmation or
-consensus claims. Missing/in-flight/changed evidence cannot use this boundary.
+reconciliation remain available. In v3 its automatic advisory wrapper permits
+ordinary tools and an honest waiting turn-end; do not apply the legacy
+continue:false output as a conversation gate. Waiting does not confirm reception,
+release resources or establish consensus.
 
 After a proven sole `attempt-0001` with `NO_INPUT` and `events=[]`, closeout also
 admits the exact synchronous original callback CLI once. The frozen pack chooses

@@ -1,5 +1,9 @@
 # 多 agent 协作提效报告
 
+执行进度已由 [2026-10-18 压力与真实协作验证](VALIDATION-20261018.md) 更新。
+下文 r4 状态保留为历史记录；当前 r8 三端 adoption 已通过，但原生 400 导致
+pilot 0/3、pairs 0/15，尚未证明提效。平台架构分析与其原始证据日期不变。
+
 更新日期：2026-10-18。用户已授权的 r4 已启动一次，双 Claude 完成原生 readiness，Codex 的物理 socket 已创建；Codex CLI 因重复 trust 参数退出，工作区 ref 解析也出现误判。r4 已封存为 HALTED/FAILED，当前修复进入完整离线验证。平台源码、Issue、PR 结论仍沿用 2026-10-16 的固定 gh CLI 证据，不代表重新核查后的线上状态。
 
 **建议继续完善 upgrade 的调度闭环，以 Orca 为任务编排的主要架构参考，吸收 Paseo 的主动 callback，通过 MAC 复用原 Codex/Claude 会话。cmux 承载终端，CCC 承担运行维护，thesis-refiner 承担学术工作流与验收。**

@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import tempfile
+import time
 import contextlib
 import fcntl
 import functools
@@ -307,7 +308,14 @@ def verify_tree(manifest: dict) -> None:
 
 
 @contextlib.contextmanager
-def exclusive_lock(path: str | Path):
+def exclusive_lock(path: str | Path, *, wait_seconds: float = 0):
+    """Default fail-fast action lock; bounded waiting is opt-in for short transactions.
+
+    Only lock acquisition is retried. The body is entered at most once, and an
+    abandoned/replaced lock path can never authorize a writer on an old inode.
+    """
+    wait_seconds = finite(wait_seconds, "lock wait")
+    require(0 <= wait_seconds <= 5, "lock wait must be between zero and five seconds")
     path = checked_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
@@ -315,10 +323,28 @@ def exclusive_lock(path: str | Path):
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             raise ContractError("lock owner/type mismatch")
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if wait_seconds == 0:
+                    raise ContractError("coordinator is already active; observe the original run") from exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ContractError("registry lock acquisition timed out; preserve the original evidence") from exc
+                time.sleep(min(0.01, remaining))
+                if time.monotonic() >= deadline:
+                    raise ContractError("registry lock acquisition timed out; preserve the original evidence") from exc
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ContractError("coordinator is already active; observe the original run") from exc
+            checked_path(path)
+            current = path.lstat()
+        except (OSError, ContractError) as exc:
+            raise ContractError("lock path changed during acquisition") from exc
+        if ((current.st_dev, current.st_ino, current.st_mode, current.st_uid) !=
+                (st.st_dev, st.st_ino, st.st_mode, st.st_uid)):
+            raise ContractError("lock path changed during acquisition")
         yield
     finally:
         os.close(fd)

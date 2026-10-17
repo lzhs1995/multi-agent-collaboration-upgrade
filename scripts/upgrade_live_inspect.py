@@ -217,15 +217,66 @@ def hook_matches(value, call, session, lane, spec, launches):
     return value.get("command") == expected and registered.count(expected) == 1
 
 
+def nested_readiness_command(records, call, result_ref, session, command, spec):
+    """Bind a nested Bash hook to its native CommandExecution, never by text alone.
+
+    Unified exec emits its own ID inside the outer functions.exec call/result
+    interval. The exact one-command wrapper, one native completion, same thread
+    and turn, and successful probe output jointly establish this mapping.
+    """
+    if call["name"].split(".")[-1] != "exec" or not call.get("turn_id"):
+        return None
+    # command_in_tool also admits a direct JSON tool argument; that is not a
+    # JavaScript wrapper and cannot establish a nested execution relationship.
+    args = call["arguments"]
+    if not isinstance(args, str) or re.fullmatch(
+            r"\s*text\(\s*await\s+tools\.exec_command\((\{.*\})\)\s*\);?\s*",
+            args, re.DOTALL) is None:
+        return None
+    inside = [(ref, row) for ref, row in records
+              if call["record"]["offset"] < ref["offset"] < result_ref["offset"]]
+    if any(row.get("type") == "response_item" and row.get("payload", {}).get("type")
+           in ("function_call", "custom_tool_call") for _, row in inside):
+        return None
+    completions = [(ref, row["payload"]) for ref, row in inside
+                   if row.get("type") == "event_msg"
+                   and row.get("payload", {}).get("type") == "item_completed"
+                   and row["payload"].get("item", {}).get("type") == "CommandExecution"]
+    if len(completions) != 1:
+        return None
+    ref, event = completions[0]
+    item = event["item"]
+    argv = item.get("command")
+    if (event.get("thread_id") != session["session_id"]
+            or event.get("turn_id") != call["turn_id"]
+            or item.get("source") != "unified_exec_startup"
+            or item.get("status") != "completed"
+            or type(item.get("exit_code")) is not int or item["exit_code"] != 0
+            or not isinstance(item.get("id"), str) or not item["id"].startswith("exec-")
+            or not isinstance(argv, list) or len(argv) != 3
+            or argv[0] not in ("/bin/zsh", "/bin/bash", "/bin/sh")
+            or argv[1:] != ["-c", command]
+            or not completed_probe(item.get("aggregated_output"), "codex", spec)):
+        return None
+    return dict(id=item["id"], name="Bash", arguments={"command": command},
+                startup=call["startup"], record=ref, turn_id=call["turn_id"])
+
+
 def readiness_evidence(native, session, lane, spec, startup_ref, binding, launches):
     command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
                                 spec["pins"]["rtk"]["path"], lane)
     prompt = readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],
                               spec["pins"]["rtk"]["path"], lane)
-    calls, results, model_records, prompts = {}, {}, [], []
+    calls, results, model_records, prompts, execution_records = {}, {}, [], [], []
+    call_count = 0
     for ref, record in native_records(native, session):
         if lane == "codex":
             payload = record.get("payload", {})
+            # Retain execution structure only, not reasoning or large tool output.
+            if (record.get("type") == "event_msg" and payload.get("type") == "item_completed"
+                    or record.get("type") == "response_item" and payload.get("type")
+                    in ("function_call", "custom_tool_call")):
+                execution_records.append((ref, record))
             if record.get("type") == "turn_context" and payload.get("model"):
                 model_records.append((ref, payload["model"]))
             if record.get("type") != "response_item":
@@ -239,8 +290,10 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                 args = payload.get("arguments", payload.get("input"))
                 name = payload.get("name", "")
                 if name.split(".")[-1] in ("exec", "exec_command") and command_in_tool(args, command):
+                    call_count += 1
                     calls[payload["call_id"]] = dict(id=payload["call_id"], name=name,
-                        arguments=args, record=ref, startup=startup_ref)
+                        arguments=args, record=ref, startup=startup_ref,
+                        turn_id=payload.get("internal_chat_message_metadata_passthrough", {}).get("turn_id"))
             if payload.get("type") in ("function_call_output", "custom_tool_call_output"):
                 results.setdefault(payload.get("call_id"), []).append((ref, payload.get("output")))
         else:
@@ -258,31 +311,43 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                     continue
                 if (record.get("type") == "assistant" and block.get("type") == "tool_use"
                         and block.get("name") == "Bash" and command_in_tool(block.get("input"), command)):
+                    call_count += 1
                     calls[block["id"]] = dict(id=block["id"], name="Bash", arguments=block["input"],
                                               record=ref, startup=startup_ref)
                 if record.get("type") == "user" and block.get("type") == "tool_result":
                     if block.get("is_error") is not True:
                         results.setdefault(block.get("tool_use_id"), []).append((ref, block.get("content")))
     require(len(prompts) == 1, "ORIGINAL_STARTUP_PROMPT_NOT_OBSERVED")
-    require(len(calls) == 1, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED")
+    require(len(calls) == call_count == 1, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED")
     call = next(iter(calls.values()))
     completed = [(ref, value) for ref, value in results.get(call["id"], [])
                  if completed_probe(value, lane, spec)
                  and ref["offset"] > call["record"]["offset"]]
-    require(len(completed) == 1, "READINESS_TOOL_RESULT_NOT_OBSERVED")
+    require(len(completed) == len(results.get(call["id"], [])) == 1, "READINESS_TOOL_RESULT_NOT_OBSERVED")
     require(prompts[0]["offset"] < call["record"]["offset"], "READINESS_PRECEDES_STARTUP_INPUT")
     models = [(ref, model) for ref, model in model_records if ref["offset"] <= completed[0][0]["offset"]]
     require(models and len({model for _, model in models}) == 1, "STARTUP_MODEL_UNCONFIRMED_OR_CHANGED")
+    nested = (nested_readiness_command(execution_records, call, completed[0][0], session, command, spec)
+              if lane == "codex" else None)
     matched = {"PreToolUse": [], "PostToolUse": []}
+    nested_matched = {"PreToolUse": [], "PostToolUse": []}
     directory = Path(binding["state_root"]) / "hook-observations" / lane
     for path in sorted(directory.glob("*.json")):
         ref = file_ref(path)
         value = json_ref(ref, "automatic hook observation")
         if hook_matches(value, call, session, lane, spec, launches):
             matched[value["payload"]["hook_event_name"]].append(ref)
+        if nested is not None and hook_matches(value, nested, session, lane, spec, launches):
+            nested_matched[value["payload"]["hook_event_name"]].append(ref)
+    used_nested = not all(matched.values()) and all(nested_matched.values())
+    if used_nested:
+        matched = nested_matched
     require(all(matched.values()), "AUTOMATIC_PRE_POST_HOOKS_NOT_CORRELATED")
-    return dict(prompt=prompts[0], call=call["record"], result=completed[0][0],
-                call_id=call["id"], hooks=matched, model=models[-1][1], model_record=models[-1][0])
+    proof = dict(prompt=prompts[0], call=call["record"], result=completed[0][0],
+                 call_id=call["id"], hooks=matched, model=models[-1][1], model_record=models[-1][0])
+    if used_nested:
+        proof["native_command"] = {key: nested[key] for key in ("id", "record", "turn_id")}
+    return proof
 
 
 def inspect(startup_ref, spec, binding):

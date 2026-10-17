@@ -135,6 +135,89 @@ class ReadinessTests(unittest.TestCase):
                 subject.readiness_evidence(None, session, "claude_a", self.spec,
                                            self.startup, self.binding, launches)
 
+    def nested_fixture(self):
+        session, rows, call, hooks, launches, probe = self.fixture("codex")
+        command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", "codex")
+        turn = str(uuid.uuid4())
+        rows[0][1]["payload"].update(turn_id=turn)
+        rows[2][1]["payload"]["internal_chat_message_metadata_passthrough"] = {"turn_id": turn}
+        item = dict(type="CommandExecution", id="exec-native-command", source="unified_exec_startup",
+                    command=["/bin/zsh", "-c", command], status="completed", exit_code=0,
+                    stdout=json.dumps(probe), stderr="", aggregated_output=json.dumps(probe))
+        event = dict(type="event_msg", payload=dict(type="item_completed",
+                     thread_id=session["session_id"], turn_id=turn, item=item))
+        rows.insert(3, (dict(rows[2][0], offset=250, length=10), event))
+        for path, value in hooks:
+            value["payload"].update(tool_use_id=item["id"], tool_name="Bash", tool_input={"command": command})
+            write_json(path, value)
+        return session, rows, call, hooks, launches, probe
+
+    def check_nested(self, fixture):
+        session, rows, _, _, launches, _ = fixture
+        with patch.object(subject, "native_records", return_value=iter(rows)):
+            return subject.readiness_evidence(None, session, "codex", self.spec,
+                                              self.startup, self.binding, launches)
+
+    def test_nested_native_command_correlates_automatic_bash_hooks(self):
+        fixture = self.nested_fixture()
+        result = self.check_nested(fixture)
+        self.assertEqual(result["call_id"], "readiness-call")
+        self.assertEqual(result["native_command"]["id"], "exec-native-command")
+        self.assertEqual(result["native_command"]["record"], fixture[1][3][0])
+        self.assertEqual(len(result["hooks"]["PreToolUse"]), 1)
+        self.assertEqual(len(result["hooks"]["PostToolUse"]), 1)
+
+    def test_nested_command_rejects_wrong_identity_failure_and_ambiguous_execution(self):
+        mutations = {
+            "wrong_thread": lambda r: r[3][1]["payload"].update(thread_id=str(uuid.uuid4())),
+            "wrong_turn": lambda r: r[3][1]["payload"].update(turn_id=str(uuid.uuid4())),
+            "missing_outer_turn": lambda r: r[2][1]["payload"].pop("internal_chat_message_metadata_passthrough"),
+            "wrong_name": lambda r: r[3][1]["payload"]["item"].update(type="Other"),
+            "wrong_source": lambda r: r[3][1]["payload"]["item"].update(source="manual"),
+            "wrong_id": lambda r: r[3][1]["payload"]["item"].update(id="exec-other"),
+            "wrong_command": lambda r: r[3][1]["payload"]["item"].update(command=["/bin/zsh", "-c", "echo READY"]),
+            "extra_shell_arg": lambda r: r[3][1]["payload"]["item"]["command"].append("extra"),
+            "wrong_shell": lambda r: r[3][1]["payload"]["item"]["command"].__setitem__(0, "/tmp/zsh"),
+            "pending": lambda r: r[3][1]["payload"]["item"].update(status="inProgress"),
+            "failed": lambda r: r[3][1]["payload"]["item"].update(exit_code=1),
+            "boolean_exit": lambda r: r[3][1]["payload"]["item"].update(exit_code=False),
+            "missing_exit": lambda r: r[3][1]["payload"]["item"].pop("exit_code"),
+            "wrong_result": lambda r: r[3][1]["payload"]["item"].update(aggregated_output="READY"),
+            "before_call": lambda r: r[3][0].update(offset=150),
+            "after_result": lambda r: r[3][0].update(offset=350),
+            "duplicate_item": lambda r: r.insert(4, copy.deepcopy(r[3])),
+            "duplicate_call": lambda r: r.insert(3, copy.deepcopy(r[2])),
+            "duplicate_result": lambda r: r.append(copy.deepcopy(r[-1])),
+            "missing_item": lambda r: r.pop(3),
+            "interleaved_call": lambda r: r.insert(3, (dict(r[2][0], offset=225), {
+                "type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec",
+                "input": "text('unrelated');", "call_id": "concurrent-call"}})),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                fixture = self.nested_fixture()
+                mutate(fixture[1])
+                with self.assertRaises(ContractError):
+                    self.check_nested(fixture)
+
+    def test_nested_hooks_still_require_original_parent_input_and_pre_post(self):
+        mutations = {
+            "manual": lambda v: v.update(direct_client=None),
+            "wrong_pid": lambda v: v["parents"][-1].update(pid=99),
+            "wrong_birth": lambda v: v["parents"][-1].update(birth=[9, 9]),
+            "wrong_input": lambda v: v["payload"].update(tool_input={"command": "echo READY"}),
+            "wrong_config": lambda v: v.update(configuration={"path": "/global/hooks.json"}),
+            "wrong_hook_name": lambda v: v["payload"].update(tool_name="exec"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                fixture = self.nested_fixture()
+                path, value = fixture[3][1]
+                mutate(value)
+                write_json(path, value)
+                with self.assertRaises(ContractError):
+                    self.check_nested(fixture)
+
     def test_replaced_or_partial_native_log_rejected(self):
         session, _, _, _, _, _ = self.fixture("claude_a")
         path = Path(session["transcript"]["path"])

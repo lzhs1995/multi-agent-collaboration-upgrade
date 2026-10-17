@@ -1,5 +1,38 @@
 # Isolated native-client upgrade experiment
 
+## Pressure and experience acceptance
+
+Before freezing a repaired controller, run real multi-process filesystem
+contention and the complete unchanged-source suite. The pressure matrix has
+24 simultaneous callers, 100 rounds each of shared session, overlapping scope
+and independent scopes. Require exactly one owner for each conflicting round
+and all 24 owners for every independent round. Record semantic refusals and lock
+busy/timeouts separately. Check retained original claims, rejection of UNCERTAIN
+and foreign-owner release, and idempotent terminal release. Never label this
+synthetic component test as a live model callback or a paired speed result.
+
+The first matrix's safety PASS omitted independent admission: only 389/2400
+succeeded. Preserve it and its correction. Registry transactions now explicitly
+wait up to five seconds for the OS lock, then revalidate its original inode;
+other action locks retain fail-fast semantics. This wait never retries dispatch.
+
+Use fresh evidence directories for each validation. Stream each failure and
+record source hashes before/after; if a complete suite times out, keep that
+failure and diagnose the affected modules before rerunning the full suite.
+Do not skip cases or change their internal timeouts to obtain a PASS.
+
+Incorporate field lessons with their evidence class. A file inquiry, hook
+exposure, complete-body reading, native receipt, callback and acceptance are
+separate facts. Pending consultation does not stop independent work and does not
+transfer shared runtime ownership. Current automatic workflow hooks are advisory;
+historical closeout/reask state never creates a global session lock.
+
+After verified source freeze, run the registered real Codex/dual-Claude pilot
+three times on the same sessions, then all 12 warm and three cold pairs. Keep all
+33 slots and failed denominators. Require correctness plus at least 15% median
+warm improvement, at most 5% median degradation per workload, and disclose cost
+growth above 10%. Until measured, improvement remains unproven.
+
 This runbook operates the independent `multi-agent-collaboration-upgrade`.
 Production MAC, global client configuration/hooks, existing sessions, CCC,
 thesis-refiner and dissertation state stay outside the experiment's write scope.
@@ -290,3 +323,38 @@ checks the original system-ps denial and rejects writes to the helper and an
 outside sentinel. These are local fixtures, not model clients or adoption proof.
 Provider readiness remains a separate live condition. Any subsequent candidate
 must be frozen and reviewed before requesting its new-client authorization.
+
+## r8 native provider failure and bounded closeout
+
+r8 launched one Codex and two Claude clients and verified all three native
+readiness records, automatic hooks and adoption. The frozen campaign and its
+bootstrap were published, and the original Codex read the bootstrap. Its next
+native `task_complete` record reported HTTP 400 `invalid_encrypted_content`.
+Preserve that exact provider error; neither startup success nor this error
+establishes the upstream cause. In particular, do not label it missing peers or
+bad credentials without evidence.
+
+The original frozen v7 controller closed r8 as HALTED/FAILED using the pinned
+terminal record. It retained one permit, zero business dispatches, zero of 33
+closures, pilot 0/3 and pairs 0/15. `/Users/lzhs/u8/driver/final-report.json`
+reports INSUFFICIENT_EVIDENCE. Keep its clients, original schedule, configuration,
+native journals and frozen controller. Do not restart prepare/configure/driver
+or revise the original result with a later detector.
+
+Newly validated source includes `upgrade_failure_watch.py`. After original
+bootstrap verification, the driver reads only the original frozen Codex session
+and authenticates its file identity, freeze fence and prior cursor record. Only
+native terminal error events qualify; each tick consumes at most 256 records.
+Unread records or a partial trailing record hold closeout/next-permit progression,
+while the original 1800-second watchdog still applies. Native failure evidence
+is written exclusively, reused unchanged after a crash and passed to the
+original schedule halt. Already finished measurements survive in the report;
+later errors stop progression without erasing them. No model input, session
+replacement, provider-setting change or business replay belongs to this observer.
+
+Validate with `test_upgrade_failure_watch` and `test_upgrade_driver`, covering
+real-format terminal events, pre-freeze and quoted negatives, partial appends,
+cursor budget, changed file/pins, crash recovery and full-denominator reporting.
+Then run the complete unchanged-source suite. Keep live original-log readback,
+offline regressions and component contention results distinct. Passing all
+three does not replace the still-unfinished live pilot and paired experiment.

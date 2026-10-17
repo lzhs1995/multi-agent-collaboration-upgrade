@@ -46,6 +46,11 @@ class DriverTests(unittest.TestCase):
             mocked = patch.object(module, name, side_effect=effect)
             mocked.start()
             self.addCleanup(mocked.stop)
+        watcher = patch.object(driver, "CodexFailureWatch")
+        self.watch = watcher.start().return_value
+        self.watch.observe.return_value = None
+        self.watch.pending = False
+        self.addCleanup(watcher.stop)
         request = write_json(self.root / "request.json", dict(schema="upgrade-driver-request-v1",
             registration=self.case.ref, runtimes=self.case.runtimes, source=tree_manifest(self.root / "source"),
             corpus=tree_manifest(self.root / "corpus"), revision="offline-only",
@@ -103,6 +108,8 @@ class DriverTests(unittest.TestCase):
         finish = write_json(Path(json_ref(ref)["root"]) / "runs" / step["run_id"] / "finish.json", {"synthetic": True})
         self.case.rows[(ref["path"], step["run_id"])] = dict(**step,
             arm=self.case.registration["groups"][step["group"]]["arm"], status="PASS", contract_pass=True,
+            workload_class=self.case.registration["groups"][step["group"]]["workload_class"],
+            usage=dict(tokens=None, cost=None),
             within_cap=True, human_interventions=0, elapsed_seconds=10,
             evidence_class="registered_live_measurement_v1", campaign=ref, finish=finish)
 
@@ -200,6 +207,59 @@ class DriverTests(unittest.TestCase):
         (self.root / "source/pinned.txt").write_text("unregistered source drift")
         self.assertEqual(self.driver.tick()["status"], "HALTED")
         self.assertEqual(self.actions, [])
+
+    def test_native_supervisor_error_halts_without_waiting_or_replaying(self):
+        self.started()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_FAILED",
+            turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        self.assertEqual(self.driver.tick()["status"], "HALTED")
+        report = json_ref(self.driver.tick()["report"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual(report["runs"][0]["status"], "FAILED")
+        self.assertEqual(self.actions, [(a, "pilot-B") for a in ("launch", "adopt", "freeze", "bootstrap")])
+
+    def test_unread_native_records_hold_finished_run_before_next_permit(self):
+        self.started()
+        self.finish(1)
+        self.watch.pending = True
+        self.assertEqual(self.driver.tick()["status"], "WAITING_NATIVE_OBSERVATION")
+        state = driver.schedule.status(self.case.ref)
+        self.assertEqual((state["permits"], state["closures"]), (1, 0))
+        self.watch.pending = False
+        self.assertEqual(self.driver.tick()["status"], "CLOSED")
+
+    def test_crash_after_native_evidence_reuses_exact_first_file(self):
+        self.started()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_FAILED",
+            turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        with patch.object(self.driver, "halt", side_effect=SystemExit("crash after evidence")):
+            with self.assertRaises(SystemExit):
+                self.driver.tick()
+        evidence = next((self.driver.root / "faults").glob("native-*.json"))
+        original = file_ref(evidence)
+        result = driver.Driver(self.ref).tick()
+        self.assertEqual(result["classification"], "FAILED")
+        self.assertEqual(file_ref(evidence), original)
+        self.watch.verify_saved.assert_called_once_with(self.watch.observe.return_value)
+        self.assertEqual(json_ref(result["halt"])["evidence"], [original])
+
+    def test_pending_native_reader_still_enforces_registered_timeout(self):
+        self.started()
+        self.watch.pending = True
+        with patch.object(self.driver, "_clock", return_value={"seconds": 1801}):
+            self.assertEqual(self.driver.tick()["classification"], "TIMEOUT")
+
+    def test_failure_does_not_erase_finished_measurement_or_allow_next_run(self):
+        self.started()
+        self.finish(1)
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_FAILED",
+            turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        self.assertEqual(self.driver.tick()["classification"], "FAILED")
+        report = json_ref(self.driver.tick()["report"])
+        self.assertEqual(report["runs"][0]["status"], "PASS")
+        self.assertEqual(len(report["runs"]), 33)
+        state = driver.schedule.status(self.case.ref)
+        self.assertEqual((state["permits"], state["closures"]), (1, 0))
 
     def test_original_supervisor_instructions_are_bounded_and_arm_specific(self):
         a = instructions.render(self.case.campaigns["uneven_successor-A1"])
