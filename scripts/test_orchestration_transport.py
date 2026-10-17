@@ -75,8 +75,9 @@ class JournalTests(unittest.TestCase):
 
 
 class FakeRuntime(OfflineDisarmRuntime):
-    def __init__(self, fixture, co):
-        super().__init__(fixture.campaign, co.root / "offline-disarm")
+    def __init__(self, fixture, co, *, node_id="review"):
+        self.lane = co.nodes[node_id]["executor"]
+        super().__init__(fixture.campaign, co.root / "offline-disarm", executor_id=self.lane)
         self.f, self.co = fixture, co
         self.calls = []
         self.fail_submit = False
@@ -86,10 +87,10 @@ class FakeRuntime(OfflineDisarmRuntime):
         self.dispatch_root = co.root / "dispatch-original"
         self.callback_settlements = []
         self.disarms = []
-        self.executor_selector = self.f.clients["claude"].session["surface_uuid"]
+        self.executor_selector = self.f.clients[self.lane].session["surface_uuid"]
 
-    def harness_argv(self, phase, task_id, artifact_root):
-        return PinnedRuntime(self.f.campaign).harness_argv(phase, task_id, artifact_root)
+    def harness_argv(self, phase, task_id, artifact_root, **kwargs):
+        return PinnedRuntime(self.f.campaign).harness_argv(phase, task_id, artifact_root, **kwargs)
 
     def harness(self, argv, operation_root):
         phase, task = argv[3], argv[argv.index("--task-id") + 1]
@@ -98,18 +99,18 @@ class FakeRuntime(OfflineDisarmRuntime):
         if phase == "preflight":
             root.mkdir()
             ack = f"PREFLIGHT_ACK|{task}|claude:identity|READY|INLINE|1234abcd"
-            self.f.clients["claude"].delivery("PREFLIGHT " + ack, sender=self.f.clients["codex"].session,
+            self.f.clients[self.lane].delivery("PREFLIGHT " + ack, sender=self.f.clients["codex"].session,
                 journal=self.handshake_root, at=utc_now())
-            self.f.clients["claude"].append(self.f.clients["claude"].message("assistant", ack, at=utc_now()))
+            self.f.clients[self.lane].append(self.f.clients[self.lane].message("assistant", ack, at=utc_now()))
             write_json(root / "handshake-receipt.json", dict(task_id=task, status="PASS", executor_ack=True,
                 ack_nonce="1234abcd", ack_line=ack))
             write_json(root / "identity-gate.json", dict(task_id=task, status="PASS", native_participants=[
-                dict(provider=k, surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
-                for k, c in self.f.clients.items()]))
+                dict(provider=c.session["provider"], surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
+                for k, c in self.f.clients.items() if k in ("codex", self.lane)]))
             write_json(root / "validation.json", dict(task_id=task, status="PASS"))
         elif phase == "task-pack":
             write_json(root / "task-pack.json", dict(task_id=task, draft=True,
-                executor_uuid=self.f.clients["claude"].session["surface_uuid"],
+                executor_uuid=self.f.clients[self.lane].session["surface_uuid"],
                 supervisor="surface:1", executor=self.executor_selector, callback_target="surface:1",
                 executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=self.executor_selector)],
                 required_skill=str(Path(self.f.campaign["controller"]["path"]) / "SKILL.md"),
@@ -136,7 +137,7 @@ class FakeRuntime(OfflineDisarmRuntime):
         if self.fail_submit:
             raise RuntimeError("simulated original unknown outcome")
         value = read_json(pack)
-        bundle = self.f.clients["claude"].delivery(notice, sender=self.f.clients["codex"].session,
+        bundle = self.f.clients[self.lane].delivery(notice, sender=self.f.clients["codex"].session,
             journal=self.dispatch_root, at=utc_now(), task_id=value["task_id"], marker=value["task_id"],
             task_pack_sha256=file_ref(pack)["sha256"], payload_sha256=digest(notice.encode()))
         self.saved_receipt = json_ref(bundle["receipt"])

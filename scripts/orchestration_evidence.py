@@ -10,7 +10,8 @@ import subprocess
 from pathlib import Path
 
 from orchestration_campaign import control_script, find_control, native_control, node_output
-from orchestration_common import (canonical, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
+from orchestration_contracts import campaign_version, evidence_class, state_root
+from orchestration_common import (canonical, checked_path, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
                                   read_ref, strict_json, tree_manifest, utc_now, verify_tree, within)
 from orchestration_native import (NativeReader, delivery_identity, native_text, require, verify_delivery, verify_no_input)
 
@@ -83,9 +84,12 @@ def task_sources(campaign, header, node, info):
 
 
 def pack_extension(campaign, header, node, info):
-    return dict(version=2, campaign_sha256=header["campaign"]["sha256"], **task_identity(campaign, header, node),
+    extension = dict(version=campaign_version(campaign), campaign_sha256=header["campaign"]["sha256"], **task_identity(campaign, header, node),
                 output_root=info["output_root"], deliverables=node["deliverables"], inputs=campaign["inputs"],
                 dependencies=verify_dependencies(campaign, header, node, info), work_request=info["work_request"])
+    if campaign_version(campaign) == 3:
+        extension["executor_id"] = node["executor"]
+    return extension
 
 
 def task_notice(pack_ref, pack):
@@ -119,7 +123,7 @@ def task_scope(campaign, header, node, info):
 
 def dispatch_journal(campaign, info):
     key = digest(json.dumps([campaign["sessions"]["codex"]["surface_uuid"], info["task_id"]]).encode())
-    return Path.home() / ".local/state/multi-agent-collaboration/task-dispatch-v1" / key
+    return state_root(campaign) / "task-dispatch-v1" / key
 
 
 def output_refs(campaign, header, node, info):
@@ -206,7 +210,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
             "complete prepared-task evidence required")
     directory = node_directory(campaign, header, node)
-    receiver, sender = campaign["sessions"]["claude"], campaign["sessions"]["codex"]
+    receiver, sender = campaign["sessions"][node["executor"]], campaign["sessions"]["codex"]
     reader = NativeReader(receiver, fixtures=fixtures)
     receiver_end = reader.snapshot()["offset"]
     pack_ref = proof["pack"]
@@ -260,7 +264,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     validation = json_ref(proof["validation"], "harness validation")
     require(proof["identity_gate"]["path"] == str(directory / "preflight" / "identity-gate.json") and
             proof["validation"]["path"] == str(directory / "preflight" / "validation.json"), "preflight paths changed")
-    expected_participants = {(lane, s["surface_uuid"], s["session_id"]) for lane, s in campaign["sessions"].items()}
+    expected_participants = {(s["provider"], s["surface_uuid"], s["session_id"]) for s in (sender, receiver)}
     observed = {(p.get("provider"), p.get("surface_uuid"), p.get("native_session_id")) for p in gate.get("native_participants", [])}
     require(gate.get("task_id") == info["task_id"] and gate.get("status") == "PASS" and observed == expected_participants,
             "identity gate does not bind both original native sessions")
@@ -276,15 +280,20 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
 
 @contract_errors("dispatch intent")
 def verify_dispatch_intent(campaign, header, node, info, ref, *, fixtures=False):
+    prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
+    return _dispatch_intent(campaign, header, node, info, ref, prepared, fixtures=fixtures)
+
+
+def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
+    """Internal step after preparation verification, avoiding a second scan."""
     value = json_ref(ref, "dispatch intent")
     require(ref["path"] == str(node_directory(campaign, header, node) / "dispatch-intent.json"), "dispatch intent path changed")
     expected = dict(version=2, operation="submit_task_pack", **task_identity(campaign, header, node),
                     prepared=info["prepared"], controller_sha256=object_sha(campaign["controller"]))
     require(set(value) == set(expected) | {"created_at", "native_fence"} and
             all(value.get(k) == v for k, v in expected.items()), "dispatch intent binding changed")
-    prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     require(parse_time(value["created_at"]) >= parse_time(prepared["pack"]["finalized_at"]), "dispatch intent predates finalization")
-    reader = NativeReader(campaign["sessions"]["claude"], fixtures=fixtures)
+    reader = NativeReader(campaign["sessions"][node["executor"]], fixtures=fixtures)
     require(reader.verify_pin(value["native_fence"]) >= info["native_start"]["offset"], "dispatch fence predates claim")
     return value
 
@@ -292,8 +301,8 @@ def verify_dispatch_intent(campaign, header, node, info, ref, *, fixtures=False)
 @contract_errors("task delivery")
 def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
-    intent = verify_dispatch_intent(campaign, header, node, info, info["dispatch_intent"], fixtures=fixtures)
-    delivered = verify_delivery(bundle, campaign["sessions"]["claude"], campaign["sessions"]["codex"],
+    intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
+    delivered = verify_delivery(bundle, campaign["sessions"][node["executor"]], campaign["sessions"]["codex"],
                                 prepared["notice"], fixtures=fixtures)
     binding = delivered["attempt"]["binding"]
     require(binding.get("task_id") == info["task_id"] and binding.get("marker") == info["task_id"] and
@@ -304,19 +313,19 @@ def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
     require(delivered["attempt"]["native_binding"]["bound_at_epoch"] >= parse_time(intent["created_at"]).timestamp(),
             "dispatch operation preceded its durable intent")
     require(delivered["native_proof"]["offset"] >= intent["native_fence"]["offset"], "delivery predates dispatch intent fence")
-    return delivered
+    return dict(delivered, preparation=prepared, dispatch_intent=intent)
 
 
 def verify_protocol(campaign, header, node, info, evidence, receiver_end, supervisor_end, *, fixtures=False):
     proof = evidence["protocol"]
     require(set(proof) == {"prepared", "delivery", "callback"} and proof["prepared"] == info["prepared"] and
             proof["delivery"] == info["delivery"], "candidate protocol differs from original lifecycle")
-    preparation = verify_prepared(campaign, header, node, info, proof["prepared"], fixtures=fixtures)
+    delivered = verify_dispatched(campaign, header, node, info, proof["delivery"], fixtures=fixtures)
+    preparation = delivered["preparation"]
     pack, pack_ref = preparation["pack"], proof["prepared"]["pack"]
-    receiver, sender = campaign["sessions"]["claude"], campaign["sessions"]["codex"]
+    receiver, sender = campaign["sessions"][node["executor"]], campaign["sessions"]["codex"]
     nonce, callback = pack["completion_nonce"], pack["completion_callback"]
     require(pack["report"] == evidence["report"]["path"], "callback report path changed")
-    delivered = verify_dispatched(campaign, header, node, info, proof["delivery"], fixtures=fixtures)
     returned = verify_delivery(proof["callback"], sender, receiver, callback, fixtures=fixtures)
     cb = returned["attempt"]["binding"]
     expected_callback = dict(task_id=info["task_id"], completion_nonce=nonce, completion_callback=callback,
@@ -337,7 +346,29 @@ def verify_protocol(campaign, header, node, info, evidence, receiver_end, superv
     return dict(delivery_at=delivery_at, callback_at=callback_at,
                 transport_retries=sum(x["transport_retries"] for x in (preparation["handshake_delivery"], delivered, returned)),
                 notices=[preparation["handshake_notice"], preparation["notice"]], callback=callback,
-                delivery_record=delivered["native_proof"], callback_record=returned["native_proof"])
+                delivery_record=delivered["native_proof"], callback_record=returned["native_proof"],
+                preparation=preparation, delivery=delivered, callback_delivery=returned)
+
+
+def original_callback_evidence(campaign, header, node, info):
+    """Inspect the original receipt only; never settle, send or infer reception.
+
+    The caller must run verify_protocol before using this evidence. No receipt
+    means no callback observation, even if an unconfirmed native line exists.
+    """
+    require("prepared" in info and "delivery" in info, "original task delivery required")
+    pack = json_ref(info["prepared"]["pack"])
+    directory = node_directory(campaign, header, node)
+    receipt = checked_path(directory / "preflight/completion-callback-receipt.json")
+    require(pack["completion_receipt"] == str(receipt) and
+            pack["report"] == str(Path(info["output_root"]) / node["report"]), "original callback paths changed")
+    if not receipt.exists():
+        return None
+    attempts = receipt.with_name(receipt.stem + "-attempts")
+    bundle = dict(receipt=file_ref(receipt), attempts=[file_ref(checked_path(p))
+                  for p in sorted(attempts.glob("attempt-*.json"))])
+    return dict(protocol=dict(prepared=info["prepared"], delivery=info["delivery"], callback=bundle),
+                report=file_ref(checked_path(pack["report"])))
 
 
 @contract_errors("candidate")
@@ -346,10 +377,10 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False):
     evidence = json_ref(ref, "frozen candidate")
     expected = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "execution_kind",
                 "output_tree", "output_files", "report", "tests", "candidate_native_end"}
-    delegated = node["executor"] == "claude"
+    delegated = campaign["sessions"][node["executor"]]["provider"] == "claude"
     require(set(evidence) == expected | ({"protocol"} if delegated else {"review_kind"}), "candidate fields incomplete or changed")
-    require(type(evidence["version"]) is int and evidence["version"] == 2 and evidence["evidence_class"] ==
-            ("offline_fixture" if fixtures else "cli_node_v2"), "candidate execution class changed")
+    require(type(evidence["version"]) is int and evidence["version"] == campaign_version(campaign) and
+            evidence["evidence_class"] == evidence_class(campaign, "cli_node", fixtures), "candidate execution class changed")
     require(all(evidence.get(k) == v for k, v in task_identity(campaign, header, node).items()) and
             evidence["execution_kind"] == info["mode"], "candidate task ownership changed")
     manifest, outputs, report = output_refs(campaign, header, node, info)
@@ -362,7 +393,7 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False):
     ends = {k: r.verify_pin(evidence["candidate_native_end"][k]) for k, r in readers.items()}
     lower = info["native_start"]["offset"]
     if delegated:
-        protocol = verify_protocol(campaign, header, node, info, evidence, ends["claude"], ends["codex"], fixtures=fixtures)
+        protocol = verify_protocol(campaign, header, node, info, evidence, ends[node["executor"]], ends["codex"], fixtures=fixtures)
         require(protocol["callback_at"] <= checks["started_at"], "tests precede callback")
         lower = protocol["delivery_record"]["offset"]
     else:
@@ -385,8 +416,8 @@ def verify_failure(campaign, header, node, info, ref, *, fixtures=False):
 
 @contract_errors("failure candidate")
 def validate_failure_candidate(campaign, header, node, info, value, *, fixtures=False, terminal_failure=None):
-    require(type(value.get("version")) is int and value["version"] == 2 and
-            value.get("evidence_class") == ("offline_fixture" if fixtures else "cli_failure_v2"),
+    require(type(value.get("version")) is int and value["version"] == campaign_version(campaign) and
+            value.get("evidence_class") == evidence_class(campaign, "cli_failure", fixtures),
             "failure execution class changed")
     base = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "blocker", "boundary", "output_tree"}
     additions = {"no_business_input": {"no_input_attempts"}, "callback_boundary": {"report", "protocol"},
@@ -467,14 +498,14 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         notice = read_ref(info["prepared"]["notice"]).decode()
         expected = dict(task_id=info["task_id"], marker=info["task_id"], payload_sha256=digest(notice.encode()),
                         task_pack_sha256=info["prepared"]["pack"]["sha256"],
-                        identity=delivery_identity(campaign["sessions"]["claude"], campaign["sessions"]["codex"]))
-        original = verify_no_input(refs, campaign["sessions"]["claude"], campaign["sessions"]["codex"], notice, expected,
+                        identity=delivery_identity(campaign["sessions"][lane], campaign["sessions"]["codex"]))
+        original = verify_no_input(refs, campaign["sessions"][lane], campaign["sessions"]["codex"], notice, expected,
                                    not_before=parse_time(intent["created_at"]).timestamp(), not_after=at.timestamp(), fixtures=fixtures)
-        require(intent["native_fence"]["offset"] <= original["native_offset"] <= ends["claude"],
+        require(intent["native_fence"]["offset"] <= original["native_offset"] <= ends[lane],
                 "zero-input attempt is outside settlement fence")
         # Handshake is not business dispatch. No useful task call may exist at
         # this boundary, even when the transport claims it did not send input.
-        observation = readers["claude"].action_summary(info["native_start"]["offset"], ends["claude"],
+        observation = readers[lane].action_summary(info["native_start"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
         require(observation["attempted_task_calls"] == 0, "business action contradicts zero-input claim")
         require(not value["output_tree"]["files"] and not value["output_tree"]["directories"],
@@ -482,9 +513,9 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
     elif reason == "callback_boundary":
         require(info["mode"] == "delegated_cli" and "delivery" in info, "callback boundary requires original delivery")
         read_ref(value["report"])
-        protocol = verify_protocol(campaign, header, node, info, value, ends["claude"], ends["codex"], fixtures=fixtures)
+        protocol = verify_protocol(campaign, header, node, info, value, ends[lane], ends["codex"], fixtures=fixtures)
         require(protocol["callback_at"] <= at, "failure settlement precedes original callback")
-        observation = readers["claude"].action_summary(protocol["delivery_record"]["offset"], ends["claude"],
+        observation = readers[lane].action_summary(protocol["delivery_record"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
         require(observation["last_action_at"] is None or parse_time(observation["last_action_at"]) <= protocol["callback_at"],
                 "output work continued after callback")
@@ -492,14 +523,15 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         require(reason == "local_boundary" and info["mode"] == "local_cli", "no proven terminal write boundary")
         readers["codex"].action_summary(info["native_start"]["offset"], value["failure_native"]["offset"],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
-    return dict(status="FAILED_PRESERVED", evidence_class="offline_fixture" if fixtures else "verified_cli_failure_v2",
+    return dict(status="FAILED_PRESERVED", evidence_class=evidence_class(campaign, "verified_cli_failure", fixtures),
                 **task_identity(campaign, header, node), settled_at=at.isoformat(), boundary=reason)
 
 
 @contract_errors("node evidence")
 def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun=True):
-    require(evidence.get("version") == 2 and evidence.get("evidence_class") ==
-            ("offline_fixture" if fixtures else "cli_node_v2"), "node evidence execution class mismatch")
+    require(type(evidence.get("version")) is int and evidence["version"] == campaign_version(campaign) and
+            evidence.get("evidence_class") == evidence_class(campaign, "cli_node", fixtures),
+            "node evidence execution class mismatch")
     candidate = validate_candidate(campaign, header, node, info, info["candidate"], fixtures=fixtures)
     require(set(evidence) == set(candidate) | {"acceptance_native", "native_end"}, "accepted evidence fields changed")
     require({k: v for k, v in evidence.items() if k not in ("acceptance_native", "native_end")} == candidate,
@@ -508,7 +540,7 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
     require(all(evidence.get(k) == v for k, v in identity.items()) and
             all(info.get(k) == identity[k] for k in ("task_id", "attempt_id")), "node/run/task/attempt identity changed")
     lane = node["executor"]
-    mode = "local_cli" if lane == "codex" else "delegated_cli"
+    mode = "local_cli" if campaign["sessions"][lane]["provider"] == "codex" else "delegated_cli"
     require(info.get("mode") == mode and evidence.get("execution_kind") == mode, "execution ownership changed")
     manifest, outputs, report = output_refs(campaign, header, node, info)
     require(evidence.get("output_tree") == manifest and evidence.get("output_files") == outputs and evidence.get("report") == report,
@@ -542,7 +574,7 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
     if protocol:
         require(protocol["delivery_at"] <= first <= protocol["callback_at"], "task action precedes delivery or follows callback")
         require(parse_time(action["last_action_at"]) <= protocol["callback_at"], "task writes continued after callback")
-    return dict(status="ACCEPTED", evidence_class="offline_fixture" if fixtures else "verified_cli_node_v2",
+    return dict(status="ACCEPTED", evidence_class=evidence_class(campaign, "verified_cli_node", fixtures),
                 **identity, checks=checks["checks"], accepted_at=accepted_at.isoformat(),
                 first_action_at=action["first_action_at"], completed_task_calls=action["completed_task_calls"],
                 failed_api_attempts=action["failed_api_attempts"],

@@ -14,6 +14,7 @@ from orchestration_common import (canonical, contract_errors, digest, evidence_n
 from orchestration_evidence import (dispatch_journal, node_directory, pack_extension, task_scope,
                                     task_sources, verify_prepared)
 from orchestration_native import NativeReader, require
+from orchestration_contracts import campaign_version, evidence_class, state_root
 
 STAGES = ("preflight", "task-pack", "fill-pack", "finalize-pack", "task-notice")
 HARNESS_STAGES = {"preflight", "task-pack", "finalize-pack"}
@@ -84,7 +85,7 @@ def freeze_failure_candidate_locked(co, key, proof_ref, maintenance=None):
     states, data = co.state()
     require(states[key].value == "BLOCKED", "preparation failure candidate requires its original blocker")
     info, node = data[key], co.nodes[key]
-    value = dict(version=2, evidence_class="offline_fixture" if co.fixtures else "cli_failure_v2",
+    value = dict(version=campaign_version(co.campaign), evidence_class=evidence_class(co.campaign, "cli_failure", co.fixtures),
                  **task_identity(co.campaign, co.header, node), blocker=info["blocker"], boundary="preparation_exited",
                  output_tree=tree_manifest(info["output_root"], kind="output"), preparation_exit=proof_ref, maintenance=maintenance)
     validate_failure_candidate(co.campaign, co.header, node, info, value, fixtures=co.fixtures)
@@ -97,7 +98,7 @@ def freeze_failure_candidate_locked(co, key, proof_ref, maintenance=None):
 
 
 def verify_history(campaign, header, node, info, proof, terminal_failure):
-    """Bind the complete old prefix; at most its own verified failure may follow."""
+    """Bind the old prefix and this task's suffix; v3 permits other lanes to progress."""
     run_root = Path(campaign["root"]) / "runs" / header["run"]["run_id"]
     history = proof["history"]
     require(set(history) == {"run", "claim", "events"}, "preparation history fields changed")
@@ -113,19 +114,25 @@ def verify_history(campaign, header, node, info, proof, terminal_failure):
             "preparation event prefix is not complete and contiguous")
     events = [json_ref(ref) for ref in refs]
     task_events = [e for e in events if e["node_id"] == node["id"]]
+    legacy = campaign_version(campaign) == 2
     require([e["state"] for e in task_events] == ["PREPARING", "BLOCKED"] and
             task_events[0]["data"] == claim and task_events[1]["data"] == {"blocker": info["blocker"]} and
-            events[-1] == task_events[-1], "preparation prefix must end at its original PREPARING-to-BLOCKED boundary")
+            (not legacy or events[-1] == task_events[-1]),
+            "preparation prefix must contain its original PREPARING-to-BLOCKED boundary")
     actual = sorted((run_root / "events").glob("*.json"))
-    require(actual[:len(refs)] == [Path(ref["path"]) for ref in refs] and len(actual) in (len(refs), len(refs) + 1),
+    require(actual[:len(refs)] == [Path(ref["path"]) for ref in refs] and
+            (not legacy or len(actual) in (len(refs), len(refs) + 1)) and
+            [p.name for p in actual] == [f"{i:06d}.json" for i in range(1, len(actual) + 1)],
             "preparation event history omitted or extended")
     terminal = None
-    if len(actual) > len(refs):
-        terminal = file_ref(actual[-1])
-        event = json_ref(terminal)
-        require(terminal_failure is not None and event["state"] == "FAILED_PRESERVED" and
-                event["node_id"] == node["id"] and set(event["data"]) == {"failure", "verification"} and
-                event["data"]["failure"] == terminal_failure, "preparation suffix is not its verified terminal failure")
+    for path in actual[len(refs):]:
+        ref = file_ref(path)
+        event = json_ref(ref)
+        if legacy or event["node_id"] == node["id"]:
+            require(terminal is None and terminal_failure is not None and event["state"] == "FAILED_PRESERVED" and
+                    event["node_id"] == node["id"] and set(event["data"]) == {"failure", "verification"} and
+                    event["data"]["failure"] == terminal_failure, "preparation suffix is not its verified terminal failure")
+            terminal = ref
         events.append(event)
     previous, last_at = object_sha(header), parse_time(header["created_at"])
     last_clock, last_boot = header["started_monotonic_ns"], header["boot_id"]
@@ -150,7 +157,7 @@ def verify_history(campaign, header, node, info, proof, terminal_failure):
 def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=False, native_end=None, terminal_failure=None):
     from orchestration_transport import PinnedRuntime, disarm_sources
 
-    require(info["mode"] == "delegated_cli" and node["executor"] == "claude" and
+    require(info["mode"] == "delegated_cli" and campaign["sessions"][node["executor"]]["provider"] == "claude" and
             not {"prepared", "dispatch_intent", "delivery", "uncertainty", "candidate"} & set(info),
             "preparation exit requires an undispatched original Claude task")
     require(set(proof) == {"version", "operations", "transport", "scaffold", "prepared", "history", "native_end", "observed_at"}
@@ -183,7 +190,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     pack = checked["pack"]
     require(pack["completion_nonce"] == config["completion_nonce"], "final pack transport nonce changed")
     scaffold = json_ref(proof["scaffold"])
-    receiver = campaign["sessions"]["claude"]
+    receiver = campaign["sessions"][node["executor"]]
     require(scaffold.get("executor") == scaffold.get("executor_uuid") == receiver["surface_uuid"] and
             scaffold.get("executors") == pack["executors"], "original scaffold executor identity changed")
     handshake = json_ref(prepared["handshake"]["receipt"])
@@ -204,7 +211,8 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         for part in ("intent", "result"):
             require(refs[part]["path"] == str(stage_root / (part + ".json")), "original stage path changed")
         intent, result = json_ref(refs["intent"]), json_ref(refs["result"])
-        arguments = ({"argv": runtime.harness_argv(name, info["task_id"], root / "preflight")}
+        lane_argument = {"executor_id": node["executor"]} if campaign_version(campaign) == 3 else {}
+        arguments = ({"argv": runtime.harness_argv(name, info["task_id"], root / "preflight", **lane_argument)}
                      if name in HARNESS_STAGES else {"transport": proof["transport"]}
                      if name == "fill-pack" else {"pack": prepared["pack"]})
         expected = dict(version=2, campaign=header["campaign"], task_id=info["task_id"],
@@ -245,14 +253,16 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     require(set(ends) == set(campaign["sessions"]), "settlement native lanes missing")
     for lane, session in campaign["sessions"].items():
         reader = NativeReader(session, fixtures=fixtures)
-        start = reader.verify_pin(info["native_start"] if lane == "claude" else header["native_start"][lane])
+        start = reader.verify_pin(info["native_start"] if lane == node["executor"] else header["native_start"][lane])
         end = reader.verify_pin(ends[lane])
         require(start <= reader.verify_pin(proof["native_end"][lane]) <= end, "preparation native fences changed")
         actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
         require(actions["attempted_task_calls"] == 0, "business action contradicts preparation exit")
-        reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],
-                                     receiver=campaign["sessions"]["claude"], sender=campaign["sessions"]["codex"],
-                                     refusal_context=dict(controller=campaign["controller"], python=campaign["python"]))
+        if lane in ("codex", node["executor"]):
+            reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],
+                                         receiver=receiver, sender=campaign["sessions"]["codex"],
+                                         refusal_context=dict(controller=campaign["controller"], python=campaign["python"]),
+                                         **({"state_root": state_root(campaign)} if campaign_version(campaign) == 3 else {}))
     return dict(completed_at=previous.isoformat(), observed_at=proof["observed_at"])
 
 

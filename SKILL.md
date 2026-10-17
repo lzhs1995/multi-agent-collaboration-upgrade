@@ -1,9 +1,25 @@
 ---
-name: multi-agent-collaboration
-description: Coordinate context-bearing CLI agents in macOS cmux using scoped task packs, authenticated acknowledgements, evidence-bound callbacks, review gates, and bounded failure recovery. Requires cmux; not a general-purpose parallel-agent launcher.
+name: multi-agent-collaboration-upgrade
+description: Independently test dependency scheduling and durable callbacks for existing Codex and Claude Code sessions in a dedicated cmux experiment. Requires an explicit private experiment context; never installs over production multi-agent-collaboration.
 ---
 
-# Multi-Agent Collaboration
+# Multi-Agent Collaboration Upgrade
+
+This is an independent experimental skill. The installed
+`multi-agent-collaboration` and its active sessions are separately owned.
+Start with `scripts/upgrade_experiment.py`; every v3 campaign must pin its private
+context, controller, configuration, state and exact permitted sessions. No shared
+MAC path is a fallback. Do not run the inherited installer against a real account.
+Do not edit global hooks, use production executors, migrate old attempts or change
+HOME. The user has authorized private CODEX_HOME / CLAUDE_CONFIG_DIR values only
+for newly created experimental clients. Existing processes and global environment
+remain unchanged. Actual automatic hook adoption must be verified before live input.
+
+The inherited transport contract below remains a compatibility reference. v2
+campaigns retain their original controller and evidence; v3 is a separate format.
+Offline estimates, replay and passing tests do not prove live efficiency. Report
+the paired benchmark and correctness results before considering production use.
+See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 
 For zero-input identity refusals, read [native caller inventory failures](references/native-caller-inventory.md).
 Repair discovery before retrying a handshake; retain kernel/UUID authentication
@@ -74,7 +90,8 @@ because a target is unavailable. The scope narrows access and cannot permit
 cross-workspace input. Resource coordination across workspaces uses existing
 file/queue receipts, not executor-handshake transport or a STATUS-prefix exemption.
 
-Install via `scripts/manage_install.py`; it registers the guard for both clients.
+The production MAC installer registers the guard for both clients. This upgrade
+does not use that installation route; it materializes a pinned private controller.
 Run the installed hook with a cross-workspace/raw-input negative case and verify
 exit 2 and zero input before claiming enforcement. Client settings registration,
 active hook execution and imported Python modules are separate states; a process
@@ -176,10 +193,11 @@ current evidence for authorized follow-up; never ask the user to relay to a boun
   process/session/transcript and a fresh EOF fence at the original PASTE_INTENT.
   Only a new whole native user record after that fence, exactly equal to the
   payload including whitespace, yields NATIVE_RECEIVED. Claude queued_command
-  remains pending. Paste once, wait for the full stable draft, then submit once:
-  use Tab directly for busy Codex displaying the verified tab-to-queue hint,
-  otherwise Enter in a clear supported state. All recovery paths share at most
-  one additional key under the original controller; no separate Enter/Tab budget.
+  remains pending. For Codex, use its bound native control socket once with the
+  current expected turn identity; never inspect its composer, paste or press keys.
+  For Claude, paste once, verify the full stable draft, then submit once with Enter.
+  An uncertain native input permits original-log observation only. Historical
+  terminal recovery retains only its original controller's single-key budget.
 - `submit_completion_callback` writes an exclusive attempt journal before
   input, binding task pack SHA, report SHA, nonce and live workspace identities.
   A submitted attempt refuses repeat delivery; `--reconcile-only` is the explicit
@@ -264,10 +282,11 @@ Internal `action/results` objects are not valid top-level Codex hook output.
 Validate the wire format against the official schema and then observe automatic
 execution in the active client; a manual script exit is a separate offline check.
 
-- Install guards on both clients through `scripts/manage_install.py`; `doctor`
-  checks configuration and benign execution. Installation is not proof that an
-  already-running client reloaded its configuration. Run harness `guard-check`
-  after client settings changes and at task close.
+- Materialize the pinned controller and both client configurations through
+  `scripts/upgrade_live_materialize.py` inside the explicit private context.
+  Do not run the inherited production installer. Configuration checks are separate
+  from active-client adoption: verify actual automatic hooks, kernel isolation,
+  original session identities and native input capability before business input.
 - Require semantic positive and negative tests through real hook entrypoints,
   not only helper definitions or source-string counts. Missing/null/boolean-as-
   count, stale evidence, changed pins and malformed receipts must fail closed.

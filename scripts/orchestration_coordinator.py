@@ -15,10 +15,11 @@ from decision_provider import Decision, Outcome, decide
 from orchestration_common import (ContractError, boot_id, checked_path, contract_errors, count, exclusive_lock, file_ref,
                                   json_ref, object_sha, parse_time, read_json, read_ref, scopes_conflict,
                                   utc_now, verify_tree, write_json)
-from orchestration_campaign import (control_script, find_control, native_control, node_output,
+from orchestration_campaign import (control_script, find_control, native_control, node_output, node_write_scope,
                                     require_live_identity, validate_campaign)
+from orchestration_contracts import campaign_version, evidence_class
 from orchestration_native import NativeReader, require
-from orchestration_planner import ID_RE, validate_plan
+from orchestration_planner import ID_RE, executor_providers, validate_plan
 
 STRATEGIES = ("serial", "omo", "codeg")
 
@@ -65,7 +66,8 @@ def topological_nodes(plan):
 
 
 def select_ready(plan, states, strategy, scope_root, queues):
-    require(strategy in STRATEGIES, "unsupported strategy")
+    require(strategy in STRATEGIES or plan.get("version") == 2 and strategy == "mac_native",
+            "unsupported strategy")
     nodes = topological_nodes(validate_plan(plan))
     accepted = {key for key, value in states.items() if value == State.ACCEPTED}
     busy = [n for n in nodes if states[n["id"]] in ACTIVE]
@@ -84,7 +86,9 @@ def select_ready(plan, states, strategy, scope_root, queues):
     for node in pending:
         if not set(node["depends_on"]) <= accepted:
             continue
-        occupied = busy + selected
+        # A1 exposes all individually eligible choices to the native supervisor.
+        # Its next actual claim rechecks the updated state and lease registry.
+        occupied = busy if strategy == "mac_native" else busy + selected
         if any(other["executor"] == node["executor"] or
                scopes_conflict(other["write_scope"], node["write_scope"], scope_root) for other in occupied):
             continue
@@ -96,7 +100,7 @@ def strategy_probe(plan):
     """Exercise the actual selection algorithm with estimates, never live time."""
     result = {}
     queues = {lane: [n["id"] for n in topological_nodes(plan) if n["executor"] == lane]
-              for lane in ("codex", "claude")}
+              for lane in executor_providers(plan)}
     for strategy in STRATEGIES:
         states = {n["id"]: State.PENDING for n in plan["nodes"]}
         now, active, trace = 0.0, {}, []
@@ -196,17 +200,29 @@ class Coordinator:
         self.campaign_ref = campaign_ref
         self.campaign = validate_campaign(campaign_ref, fixtures=fixtures)
         self.fixtures = fixtures
-        require(self.campaign.get("evidence_class") == ("offline_fixture" if fixtures else "cli_campaign_v2"), "campaign execution class mismatch")
+        require(self.campaign.get("evidence_class") == evidence_class(self.campaign, "cli_campaign", fixtures),
+                "campaign execution class mismatch")
         self.plan = validate_plan(json_ref(self.campaign["plan"], "frozen plan"))
         self.nodes = {n["id"]: n for n in self.plan["nodes"]}
         self.header = read_json(self.root / "run.json")
+        live_v3 = campaign_version(self.campaign) == 3 and not fixtures
         require(set(self.header) == {"version", "campaign", "run", "queues", "started_at",
-                                    "created_at", "started_monotonic_ns", "boot_id", "native_start", "start_native"},
+                                    "created_at", "started_monotonic_ns", "boot_id", "native_start", "start_native"}
+                                    | ({"run_permit", "launch_start"} if live_v3 else set()),
                 "run header fields changed")
-        require(type(self.header["version"]) is int and self.header["version"] == 2 and
+        require(type(self.header["version"]) is int and self.header["version"] == campaign_version(self.campaign) and
                 self.header["campaign"] == campaign_ref, "run belongs to another frozen campaign")
         require(self.header["run"] in self.campaign["runs"], "run is not in frozen order")
         self.spec = self.header["run"]
+        if live_v3:
+            from orchestration_permit import campaign_permit, launch_start
+            _, permit = campaign_permit(self.campaign, self.spec["run_id"], ref=self.header["run_permit"])
+            require(parse_time(self.header["started_at"]) >= parse_time(permit["issued_at"]),
+                    "native run started before its registered permit")
+            require(self.header["launch_start"] == launch_start(self.campaign, permit), "cold launch clock changed")
+            if self.header["launch_start"] is not None:
+                require(parse_time(json_ref(self.header["launch_start"])["requested_at"]) <=
+                        parse_time(self.header["started_at"]), "cold launch follows native run start")
         require(self.root == Path(self.campaign["root"]) / "runs" / self.spec["run_id"], "run root changed")
         queues = {lane: [n["id"] for n in topological_nodes(self.plan) if n["executor"] == lane]
                   for lane in self.campaign["sessions"]}
@@ -229,9 +245,19 @@ class Coordinator:
                 "native start call outside campaign/run fences")
         self.leases = LeaseRegistry(self.campaign["lease_root"])
 
-    def _gate(self):
+    def _work_budget(self):
+        if campaign_version(self.campaign) == 3 and not self.fixtures:
+            from orchestration_permit import work_budget
+            work_budget(self.campaign, self.header)
+
+    def _gate(self, *, new_work=False):
         validate_campaign(self.campaign_ref, fixtures=self.fixtures)
         require(not (self.root / "finish.json").exists(), "run is closed; original evidence is immutable")
+        if campaign_version(self.campaign) == 3 and not self.fixtures:
+            from orchestration_permit import campaign_permit
+            campaign_permit(self.campaign, self.spec["run_id"], ref=self.header["run_permit"], active=True)
+        if new_work:
+            self._work_budget()
         if not self.fixtures:
             return require_live_identity(self.campaign)
         return self.campaign["sessions"]
@@ -243,14 +269,23 @@ class Coordinator:
         campaign = validate_campaign(campaign_ref, fixtures=fixtures)
         require(spec in campaign["runs"] and ID_RE.fullmatch(spec["run_id"]) is not None, "unknown run")
         plan = validate_plan(json_ref(campaign["plan"]))
-        require(spec["strategy"] in STRATEGIES, "invalid strategy")
+        require(spec["strategy"] in STRATEGIES or campaign_version(campaign) == 3 and
+                spec["strategy"] == "mac_native", "invalid strategy")
         require(root == Path(campaign["root"]) / "runs" / spec["run_id"], "run must use its frozen directory")
         if not fixtures:
             require_live_identity(campaign)
+        permit_fields = {}
+        if campaign_version(campaign) == 3 and not fixtures:
+            from orchestration_permit import campaign_permit, launch_start, require_running
+            require_running(campaign["registration"])
+            permit_ref, permit = campaign_permit(campaign, spec["run_id"], active=True)
+            permit_fields = dict(run_permit=permit_ref, launch_start=launch_start(campaign, permit))
         reader = NativeReader(campaign["sessions"]["codex"], fixtures=fixtures)
         script = control_script(campaign, campaign_ref, "start", spec["run_id"])
         proof = find_control(reader, script, after=campaign["sessions"]["codex"]["freeze_fence"]["offset"])
         started_at = native_control(reader, proof, script).isoformat()
+        if permit_fields:
+            require(parse_time(started_at) >= parse_time(permit["issued_at"]), "native start predates registered permit")
         with exclusive_lock(Path(campaign["root"]) / "campaign.lock"):
             for previous in campaign["runs"][:campaign["runs"].index(spec)]:
                 path = Path(campaign["root"]) / "runs" / previous["run_id"] / "finish.json"
@@ -261,9 +296,9 @@ class Coordinator:
             ordered = topological_nodes(plan)
             queues = {lane: [n["id"] for n in ordered if n["executor"] == lane] for lane in campaign["sessions"]}
             starts = {lane: NativeReader(session, fixtures=fixtures).snapshot() for lane, session in campaign["sessions"].items()}
-            header = dict(version=2, campaign=campaign_ref, run=spec, queues=queues, started_at=started_at,
+            header = dict(version=campaign_version(campaign), campaign=campaign_ref, run=spec, queues=queues, started_at=started_at,
                           created_at=utc_now(), started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), native_start=starts,
-                          start_native=proof)
+                          start_native=proof, **permit_fields)
             write_json(root / "run.json", header, exclusive=True)
         return cls(root, campaign_ref, fixtures=fixtures)
 
@@ -395,7 +430,7 @@ class Coordinator:
         identity = gates["identity"]
         ready = select_ready(self.plan, {k: State(v) for k, v in gates["states"].items()},
                              self.spec["strategy"], self.root / "work", self.header["queues"])
-        return dict(purpose="route", executor=self.nodes[key]["executor"], available_executors=sorted(identity),
+        context = dict(purpose="route", executor=self.nodes[key]["executor"], available_executors=sorted(identity),
                     authorized=authorization.get("approved_root") == self.campaign["root"],
                     identity_verified=set(identity) == set(self.campaign["sessions"]) and all(
                         all(self.campaign["sessions"][lane].get(k) == v for k, v in actual.items())
@@ -404,11 +439,16 @@ class Coordinator:
                     evidence_verified=gates["inputs"] == self.campaign["inputs"] and gates["campaign"] == self.campaign_ref,
                     evidence_refs=[gates["campaign"]["path"] + "#" + gates["campaign"]["sha256"],
                                    gates["authorization"]["path"] + "#" + gates["authorization"]["sha256"]])
+        # Historical v2 decisions retain their exact recorded context.
+        if campaign_version(self.campaign) == 3:
+            context["executor_providers"] = executor_providers(self.plan)
+        return context
 
     def _lease(self, key, info):
         lease = self.leases.read().get(info["task_id"])
         require(lease is not None and lease["session_id"] == self.campaign["sessions"][self.nodes[key]["executor"]]["session_id"] and
-                lease["scope"] == info["output_root"] and lease["claim"] == file_ref(self.root / "claims" / (key + ".json")),
+                lease["scope"] == str(node_write_scope(self.root, self.nodes[key])) and
+                lease["claim"] == file_ref(self.root / "claims" / (key + ".json")),
                 "original lease ownership/session/scope/claim changed")
         require(parse_time(lease["reserved_at"]) >= parse_time(info["started_at"]), "lease predates claim")
         # Do not call validate_maintenance/state here: terminal replay already
@@ -487,12 +527,13 @@ class Coordinator:
 
     def claim(self, node_id, *, provider=None):
         with exclusive_lock(self.root / "coordinator.lock"):
-            identity = self._gate()
+            identity = self._gate(new_work=True)
             node = next((n for n in self.ready() if n["id"] == node_id), None)
             require(node is not None, "node is not ready; preserve active attempts")
             lane = node["executor"]
             mode = node["execution_kind"]
-            require((mode, lane) in (("local_cli", "codex"), ("delegated_cli", "claude")), "unsupported execution ownership")
+            require((mode, executor_providers(self.plan)[lane]) in
+                    (("local_cli", "codex"), ("delegated_cli", "claude")), "unsupported execution ownership")
             require(self.fixtures or provider is None, "live campaigns use the frozen rules provider")
             output = node_output(self.root, node)
             require(not output.exists(), "existing node output must be preserved")
@@ -520,7 +561,8 @@ class Coordinator:
             # Intent precedes lease/output mutation. A crash never creates a
             # new nonce, task id or automatic second dispatch on restart.
             claim = write_json(self.root / "claims" / (node_id + ".json"), info, exclusive=True)
-            self.leases.reserve(task_id, self.campaign["sessions"][lane]["session_id"], str(output), claim)
+            self.leases.reserve(task_id, self.campaign["sessions"][lane]["session_id"],
+                                str(node_write_scope(self.root, node)), claim)
             output.mkdir(parents=True)
             self._append(node_id, target, info)
             return info
@@ -549,7 +591,8 @@ class Coordinator:
     def _release(self, key, info, terminal):
         lease = self._lease(key, info)
         self.leases.release(info["task_id"], session=self.campaign["sessions"][self.nodes[key]["executor"]]["session_id"],
-                            scope=info["output_root"], claim=file_ref(self.root / "claims" / (key + ".json")), terminal=terminal,
+                            scope=str(node_write_scope(self.root, self.nodes[key])),
+                            claim=file_ref(self.root / "claims" / (key + ".json")), terminal=terminal,
                             reserved_at=lease["reserved_at"])
 
     @contextmanager

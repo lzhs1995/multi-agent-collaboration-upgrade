@@ -21,12 +21,12 @@ class Crash(BaseException):
     pass
 
 
-class ObservationTests(unittest.TestCase):
+class ReadOnlyObservationFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
-        self.f = CampaignFixture(self.base)
+        self.f = CampaignFixture(self.base, version=getattr(self, "campaign_version", 2))
         self.r = Runner(self.f.ref, fixtures=True)
         self.run = "run-01"
 
@@ -69,6 +69,8 @@ class ObservationTests(unittest.TestCase):
         self.f.control("accept", self.run, node_id="local", marker=marker)
         return marker
 
+
+class ObservationTests(ReadOnlyObservationFixture):
     def test_drafts_exist_before_dependencies_and_do_not_create_claims(self):
         before = self.snapshot()
         first = self.r.drafts(self.run)

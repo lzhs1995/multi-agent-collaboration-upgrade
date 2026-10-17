@@ -18,6 +18,7 @@ from orchestration_campaign import anchored_ref, control_script, find_control, v
 from orchestration_common import (ContractError, exclusive_lock, file_ref, json_ref, read_json,
                                   tree_manifest, utc_now, write_json)
 from orchestration_coordinator import Coordinator, State
+from orchestration_contracts import campaign_version, evidence_class
 from orchestration_evidence import (dispatch_journal, failure_marker, make_test_result, marker_for,
                                     node_directory, output_refs, task_identity, validate_candidate, validate_failure_candidate,
                                     verify_failure_value, verify_node)
@@ -61,6 +62,12 @@ class Runner:
                 "original run exists; use status/recover, never repeat its start call")
         return dict(exec_script=control_script(self.campaign, self.ref, "start", run_id))
 
+    def wait_permit(self, run_id, timeout_seconds=45):
+        self.spec(run_id)
+        require(campaign_version(self.campaign) == 3, "registered permit waits require a v3 campaign")
+        from orchestration_permit import wait_permit
+        return wait_permit(self.campaign, run_id, timeout_seconds)
+
     def start(self, run_id):
         spec = self.spec(run_id)
         root = Path(self.campaign["root"]) / "runs" / run_id
@@ -83,12 +90,32 @@ class Runner:
                     ready=[] if closed else [n["id"] for n in co.ready()])
 
     def drafts(self, run_id):
+        self._upgrade_features()
         from orchestration_observe import package_drafts
         return package_drafts(self.ref, self.campaign, self.spec(run_id))
 
+    def publish_drafts(self, run_id):
+        self._upgrade_features()
+        from orchestration_drafts import publish_drafts
+        return publish_drafts(self, run_id)
+
     def next_action(self, run_id):
+        self._upgrade_features()
         from orchestration_observe import next_action
         return next_action(self, run_id)
+
+    def publish_continuation(self, run_id, key):
+        self._upgrade_features()
+        from orchestration_continuation import publish_continuation_locked
+        co = self.co(run_id)
+        require(key in co.nodes, "unknown frozen node")
+        with exclusive_lock(node_directory(self.campaign, co.header, co.nodes[key]) / "runner.lock"):
+            _, data = co.state()
+            return publish_continuation_locked(co, key, data[key])
+
+    def _upgrade_features(self):
+        require(campaign_version(self.campaign) != 3 or self.campaign["arm"] == "B",
+                "A1 uses native supervisor scheduling; upgrade drafts/advice/continuation are B-only")
 
     def claim(self, run_id, key):
         co = self.co(run_id)
@@ -120,11 +147,14 @@ class Runner:
                 co._gate()
                 require(states[key] in (State.LOCAL_RUNNING, State.DISPATCHED), "persisted candidate is missing")
                 protocol = self._protocol(co, key, info) if info["mode"] == "delegated_cli" else None
+                if protocol is not None and campaign_version(self.campaign) == 3 and self.campaign["arm"] == "B":
+                    from orchestration_continuation import publish_continuation_locked
+                    publish_continuation_locked(co, key, info, protocol=protocol)
                 manifest, outputs, report = output_refs(self.campaign, co.header, node, info)
                 tests = directory / "tests.json"
                 if not tests.exists():
                     write_json(tests, make_test_result(self.campaign, co.header, node, info, outputs), exclusive=True)
-                value = dict(version=2, evidence_class="offline_fixture" if self.fixtures else "cli_node_v2",
+                value = dict(version=campaign_version(self.campaign), evidence_class=evidence_class(self.campaign, "cli_node", self.fixtures),
                     **task_identity(self.campaign, co.header, node), execution_kind=info["mode"],
                     output_tree=manifest, output_files=outputs, report=report, tests=file_ref(tests),
                     candidate_native_end=self._snapshots())
@@ -212,7 +242,7 @@ class Runner:
             path = directory / "failure-candidate.json"
             if not path.exists():
                 co._gate()
-                value = dict(version=2, evidence_class="offline_fixture" if self.fixtures else "cli_failure_v2",
+                value = dict(version=campaign_version(self.campaign), evidence_class=evidence_class(self.campaign, "cli_failure", self.fixtures),
                     **task_identity(self.campaign, co.header, node), blocker=info["blocker"], boundary=boundary,
                     output_tree=tree_manifest(info["output_root"], kind="output"))
                 if boundary == "local_boundary":
@@ -266,12 +296,12 @@ class Runner:
         for key, state in states.items():
             directory = node_directory(self.campaign, co.header, co.nodes[key])
             files = {name: file_ref(directory / name) for name in (
-                "tests.json", "candidate.json", "accepted-evidence.json", "failure-candidate.json", "settled-failure.json")
+                "tests.json", "candidate.json", "accepted-evidence.json", "failure-candidate.json", "settled-failure.json", "continuation.json")
                 if (directory / name).is_file()}
             if files:
                 observations.append(dict(node_id=key, state="PERSISTED_EVIDENCE", files=files,
                     action="validate_original_files; candidate/resume-accept/resume-settle; never repeat native control"))
-            if co.nodes[key]["executor"] == "claude" and state in (State.ACCEPTED, State.FAILED_PRESERVED) and not (directory / "disarm.json").exists():
+            if co.campaign["sessions"][co.nodes[key]["executor"]]["provider"] == "claude" and state in (State.ACCEPTED, State.FAILED_PRESERVED) and not (directory / "disarm.json").exists():
                 observations.append(dict(node_id=key, state="TERMINAL_DISARM_PENDING", action="disarm_original_task"))
         return dict(status=self.status(run_id), observations=observations, input_operations=0)
 
@@ -281,10 +311,10 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "next-action", "drafts", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "wait-permit", "next-action", "drafts", "publish-drafts", "publish-continuation", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
-    node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "accept", "resume-accept",
+    node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "accept", "resume-accept",
                     "block", "failure-candidate", "settle", "resume-settle", "disarm"}
     for action in actions:
         sub = commands.add_parser(action)
@@ -298,6 +328,8 @@ def main(argv=None):
             sub.add_argument("--reason", required=True)
         if action == "failure-candidate":
             sub.add_argument("--boundary", required=True, choices=("local_boundary", "callback_boundary", "no_business_input", "preparation_exited"))
+        if action == "wait-permit":
+            sub.add_argument("--timeout-seconds", type=int, default=45)
     args = parser.parse_args(argv)
     try:
         ref = anchored_ref(args.campaign, args.campaign_sha256)
@@ -315,6 +347,8 @@ def main(argv=None):
             result = finish_run(runner.co(args.run))
         elif action == "repair-releases":
             result = dict(repaired=runner.co(args.run).repair_releases())
+        elif action == "wait-permit":
+            result = runner.wait_permit(args.run, args.timeout_seconds)
         elif action in ("accept", "settle"):
             result = getattr(runner, action)(args.run, args.node, args.marker)
         elif action.startswith("resume-"):
@@ -324,7 +358,7 @@ def main(argv=None):
         elif action == "failure-candidate":
             result = runner.failure_candidate(args.run, args.node, args.boundary)
         elif action in node_actions:
-            result = getattr(runner, action)(args.run, args.node)
+            result = getattr(runner, action.replace("-", "_"))(args.run, args.node)
         else:
             result = getattr(runner, action.replace("-", "_"))(args.run)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))

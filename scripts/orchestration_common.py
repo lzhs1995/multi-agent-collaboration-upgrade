@@ -23,6 +23,11 @@ class ContractError(ValueError):
     pass
 
 
+def require(value, message):
+    if not value:
+        raise ContractError(message)
+
+
 def contract_errors(label):
     """Keep malformed external evidence on the same fail-closed error path."""
     def decorate(function):

@@ -135,6 +135,99 @@ def dependent_summary(request, rows, raw):
                 bytes_by_category=byte_counts, failed_fetches=expected["failed_fetches"], consistent=True)
 
 
+def source_index(blobs, raw):
+    """Literal ASCII identifiers, including comments/strings; no semantic claim."""
+    verified = verify_blobs(blobs, raw)
+    pattern = r"[A-Za-z_][A-Za-z_0-9]*"
+    totals, coverage, files = Counter(), Counter(), []
+    for row in verified["rows"]:
+        source = raw["fetched/" + row["file"]].decode("utf-8")
+        identifiers = Counter(re.findall(pattern, source))
+        totals.update(identifiers)
+        coverage.update(identifiers.keys())
+        files.append(dict(file=row["file"], repo_path=row["repo_path"], bytes=row["bytes"],
+            sha256=row["sha256"], lines=len(source.splitlines()), identifier_tokens=sum(identifiers.values()),
+            distinct_identifiers=len(identifiers), top_identifiers=[dict(identifier=name, count=n)
+                for name, n in sorted(identifiers.items(), key=lambda item: (-item[1], item[0]))[:20]]))
+    return dict(method="lexical_identifier_inventory_v1", pattern=pattern, top_limit=20,
+        source_files=len(files), source_bytes=sum(row["bytes"] for row in files),
+        lines=sum(row["lines"] for row in files), identifier_tokens=sum(totals.values()), files=files,
+        identifiers=[dict(identifier=name, count=totals[name], files=coverage[name]) for name in sorted(totals)])
+
+
+def dependency_set(request, expected):
+    deps = request["dependencies"]
+    require(len(deps) == len(expected) and {dep["node_id"] for dep in deps} == set(expected),
+            "exact unique accepted dependencies required")
+    require(len({dep["task_id"] for dep in deps}) == len(deps) and
+            len({dep["attempt_id"] for dep in deps}) == len(deps), "duplicate dependency identity")
+
+
+def accepted_result(request, node, expected, rows):
+    matches = [dep for dep in request["dependencies"] if dep["node_id"] == node]
+    require(len(matches) == 1, "one accepted dependency required: " + node)
+    dep = matches[0]
+    accepted = json_ref(dep["accepted_evidence"], "dependency acceptance")
+    identity = dict(run_id=request["run_id"], node_id=node, task_id=dep["task_id"], attempt_id=dep["attempt_id"])
+    require(all(accepted.get(k) == v for k, v in identity.items()) and
+            isinstance(accepted.get("acceptance_native"), dict) and bool(accepted["acceptance_native"]),
+            "foreign or unaccepted dependency: " + node)
+    require(accepted["output_tree"] == dep["output_tree"] and accepted["output_files"] == dep["output_files"],
+            "dependency outputs differ from acceptance")
+    tree = dep["output_tree"]
+    require(tree["kind"] == "output" and tree["directories"] == [] and
+            set(tree["files"]) == {"result.json", "report.md"}, "dependency deliverables differ")
+    verify_tree(tree)
+    base = checked_path(tree["path"])
+    refs = dep["output_files"]
+    require(len(refs) == 2 and {ref["path"] for ref in refs} ==
+            {str(base / name) for name in tree["files"]}, "dependency output pins differ from tree")
+    contents = {Path(ref["path"]).name: (ref, read_ref(ref, "accepted output")) for ref in refs}
+    ref, raw = contents["result.json"]
+    require(strict_json(raw, "accepted result") == dict(schema="orchestration-corpus-result-v2", **identity, data=expected),
+            "accepted answer disagrees with frozen corpus: " + node)
+    failures = ", ".join(sorted(row["name"] for row in rows if row["exit_code"])) or "none"
+    report = (f"Task: {dep['task_id']}\nRun: {request['run_id']}\nNode: {node}\nResult: PASS\n"
+              f"Records: {len(rows)}\nFailed fetches retained: {failures}\n")
+    require(contents["report.md"][1].decode("utf-8") == report, "accepted dependency report differs")
+    return dict(node_id=node, task_id=dep["task_id"], result_sha256=ref["sha256"],
+                accepted_evidence_sha256=dep["accepted_evidence"]["sha256"])
+
+
+def inventory_successor(request, rows, raw):
+    expected = inventory(rows, raw)
+    source = accepted_result(request, "inventory", expected, rows)
+    totals = {group: sum(row["bytes"] for row in expected["records"] if row["category"] == group)
+              for group in ("git_source", "documentation", "metadata")}
+    return dict(inventory_task_id=source["task_id"], inventory_sha256=source["result_sha256"],
+        accepted_evidence_sha256=source["accepted_evidence_sha256"], counts=expected["counts"],
+        bytes_by_category=totals, failed_fetches=expected["failed_fetches"], consistent=True)
+
+
+def merge_checks(request, rows, blobs, raw):
+    inv, sources = inventory(rows, raw), verify_sources(rows, blobs, raw)
+    receipts = [accepted_result(request, "inventory", inv, rows),
+                accepted_result(request, "verify_inputs", sources, rows)]
+    by_name = {row["name"]: row for row in sources["sources"]}
+    require(set(by_name) == {row["name"] for row in inv["records"]}, "inventory/provenance coverage differs")
+    joined = [dict(**row, source_kind=by_name[row["name"]]["source_kind"],
+                   git_ref=by_name[row["name"]]["git_ref"]) for row in inv["records"]]
+    return dict(dependencies=receipts, counts=inv["counts"], verified_files=sources["verified_files"],
+                failed_fetches=inv["failed_fetches"], joined_sources=joined, consistent=True)
+
+
+def merge_uneven(request, rows, blobs, raw):
+    inv, successor, index = inventory(rows, raw), inventory_successor(request, rows, raw), source_index(blobs, raw)
+    receipts = [accepted_result(request, "inventory", inv, rows),
+                accepted_result(request, "inventory_successor", successor, rows),
+                accepted_result(request, "source_index", index, rows)]
+    require(index["source_files"] == inv["counts"]["git_source"] and
+            index["source_bytes"] == successor["bytes_by_category"]["git_source"], "source index/inventory coverage differs")
+    return dict(dependencies=receipts, counts=inv["counts"], bytes_by_category=successor["bytes_by_category"],
+        indexed_source_files=index["source_files"], identifier_tokens=index["identifier_tokens"],
+        failed_fetches=inv["failed_fetches"], consistent=True)
+
+
 def execute(request_ref, output_root):
     request = json_ref(request_ref, "work request")
     require(request.get("schema") == "orchestration-work-request-v2", "work request version mismatch")
@@ -144,7 +237,11 @@ def execute(request_ref, output_root):
     require(all(isinstance(request.get(k), str) and request[k] for k in IDENTITY), "complete task identity required")
     rows, blobs, raw = load_corpus(request)
     key = request["node_id"]
-    if key != "dependent_local":
+    new_dependencies = {"inventory_successor": {"inventory"}, "merge_checks": {"inventory", "verify_inputs"},
+                        "merge_uneven": {"inventory", "inventory_successor", "source_index"}}
+    if key in new_dependencies:
+        dependency_set(request, new_dependencies[key])
+    elif key != "dependent_local":
         require(request["dependencies"] == [], "unexpected dependency")
     if key == "inventory":
         data = inventory(rows, raw)
@@ -152,6 +249,14 @@ def execute(request_ref, output_root):
         data = verify_blobs(blobs, raw)
     elif key == "verify_inputs":
         data = verify_sources(rows, blobs, raw)
+    elif key == "source_index":
+        data = source_index(blobs, raw)
+    elif key == "inventory_successor":
+        data = inventory_successor(request, rows, raw)
+    elif key == "merge_checks":
+        data = merge_checks(request, rows, blobs, raw)
+    elif key == "merge_uneven":
+        data = merge_uneven(request, rows, blobs, raw)
     else:
         require(key == "dependent_local", "unknown frozen corpus node")
         data = dependent_summary(request, rows, raw)

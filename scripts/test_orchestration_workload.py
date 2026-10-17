@@ -61,17 +61,20 @@ class CorpusFixture:
         return request
 
     def inventory_dependency(self):
-        ref = self.request("inventory")
+        return [self.dependency("inventory")]
+
+    def dependency(self, node, dependencies=None):
+        ref = self.request(node, dependencies)
         request = read_json(ref["path"])
         execute(ref, request["output_root"])
         check(self.check_request(ref))
         tree = tree_manifest(request["output_root"], kind="output")
         outputs = [file_ref(Path(request["output_root"]) / n) for n in sorted(tree["files"])]
-        accepted = write_json(self.root / "offline-inventory-acceptance.json", dict(
-            task_id=request["task_id"], attempt_id=request["attempt_id"], node_id="inventory", run_id="run-01",
+        accepted = write_json(self.root / ("offline-" + node + "-acceptance.json"), dict(
+            task_id=request["task_id"], attempt_id=request["attempt_id"], node_id=node, run_id="run-01",
             acceptance_native={"offline_fixture": True}, output_tree=tree, output_files=outputs))
-        return [dict(node_id="inventory", task_id=request["task_id"], attempt_id=request["attempt_id"],
-                     accepted_evidence=accepted, output_tree=tree, output_files=outputs)]
+        return dict(node_id=node, task_id=request["task_id"], attempt_id=request["attempt_id"],
+                    accepted_evidence=accepted, output_tree=tree, output_files=outputs)
 
 
 class WorkloadTests(unittest.TestCase):
@@ -216,6 +219,106 @@ class WorkloadTests(unittest.TestCase):
         report.write_text(report.read_text().replace("tssdkpy-head.json", "none"))
         with self.assertRaisesRegex(ValueError, "report identity"):
             check(self.fx.check_request(ref))
+
+
+class V3WorkloadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.fx = CorpusFixture(self.temp.name)
+
+    def test_three_lane_graph_answers_pass_the_standalone_checker(self):
+        inventory = self.fx.dependency("inventory")
+        sources = self.fx.dependency("source_index")
+        successor = self.fx.dependency("inventory_successor", [inventory])
+        provenance = self.fx.dependency("verify_inputs")
+        for node, deps in (("merge_checks", [inventory, provenance]),
+                           ("merge_uneven", [inventory, successor, sources])):
+            ref = self.fx.request(node, deps)
+            execute(ref, read_json(ref["path"])["output_root"])
+            result = subprocess.run([sys.executable, "-I", "-B", str(Path(__file__).with_name("orchestration_checker.py"))],
+                input=canonical(self.fx.check_request(ref)), capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["records"], 4)
+        data = read_json(Path(sources["output_tree"]["path"]) / "result.json")["data"]
+        self.assertEqual(data["method"], "lexical_identifier_inventory_v1")
+        self.assertEqual(data["identifiers"], [{"identifier": "print", "count": 1, "files": 1}])
+
+    def reject_dependency(self, mutate, expression):
+        inventory = self.fx.dependency("inventory")
+        provenance = self.fx.dependency("verify_inputs")
+        ref = self.fx.request("merge_checks", [inventory, provenance])
+        request = read_json(ref["path"])
+        execute(ref, request["output_root"])
+        # Preserve genuine result bytes to ensure the checker rejects the input
+        # defect before accepting an otherwise previously correct business answer.
+        saved = {p.name: p.read_bytes() for p in Path(request["output_root"]).iterdir()}
+        mutate(request)
+        ref = write_json(ref["path"], request)
+        checked = self.fx.check_request(ref)
+        with self.assertRaisesRegex((ValueError, KeyError), expression):
+            check(checked)
+        for name in saved:
+            (Path(request["output_root"]) / name).unlink()
+        with self.assertRaisesRegex((ContractError, KeyError), expression):
+            execute(ref, request["output_root"])
+        self.assertEqual(list(Path(request["output_root"]).iterdir()), [])
+
+    def test_wrong_dependency_hash_is_rejected_by_work_and_checker(self):
+        self.reject_dependency(lambda request: request["dependencies"][0]["accepted_evidence"].update(sha256="0" * 64),
+                               "pin|hash|changed")
+
+    def test_unaccepted_cross_run_or_wrong_node_dependency_is_rejected(self):
+        for field, value in (("acceptance_native", {}), ("run_id", "foreign"), ("node_id", "verify_inputs")):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as folder:
+                self.fx = CorpusFixture(folder)
+                def mutate(request):
+                    dep = request["dependencies"][0]
+                    accepted = read_json(dep["accepted_evidence"]["path"])
+                    accepted[field] = value
+                    dep["accepted_evidence"] = write_json(dep["accepted_evidence"]["path"], accepted)
+                self.reject_dependency(mutate, "foreign|unaccepted")
+
+    def test_missing_duplicate_or_extra_dependency_is_rejected(self):
+        for case in ("missing", "duplicate", "extra"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
+                self.fx = CorpusFixture(folder)
+                def mutate(request):
+                    deps = request["dependencies"]
+                    if case == "missing":
+                        deps.pop()
+                    elif case == "duplicate":
+                        deps[1] = copy.deepcopy(deps[0])
+                    else:
+                        deps.append(copy.deepcopy(deps[0]))
+                self.reject_dependency(mutate, "unique accepted dependencies")
+
+    def test_rehashed_wrong_accepted_answer_does_not_make_a_merge_valid(self):
+        def mutate(request):
+            dep = request["dependencies"][1]
+            root = Path(dep["output_tree"]["path"])
+            result = read_json(root / "result.json")
+            result["data"]["verified_files"] += 1
+            write_json(root / "result.json", result)
+            dep["output_tree"] = tree_manifest(root, kind="output")
+            dep["output_files"] = [file_ref(root / n) for n in sorted(dep["output_tree"]["files"])]
+            accepted = read_json(dep["accepted_evidence"]["path"])
+            accepted.update(output_tree=dep["output_tree"], output_files=dep["output_files"])
+            dep["accepted_evidence"] = write_json(dep["accepted_evidence"]["path"], accepted)
+        self.reject_dependency(mutate, "accepted answer")
+
+    def test_dependency_result_pin_cannot_escape_its_accepted_tree(self):
+        def mutate(request):
+            dep = request["dependencies"][0]
+            root = Path(dep["output_tree"]["path"])
+            foreign = self.fx.root / "other/result.json"
+            foreign.parent.mkdir()
+            foreign.write_bytes((root / "result.json").read_bytes())
+            dep["output_files"] = [file_ref(foreign), file_ref(root / "report.md")]
+            accepted = read_json(dep["accepted_evidence"]["path"])
+            accepted["output_files"] = dep["output_files"]
+            dep["accepted_evidence"] = write_json(dep["accepted_evidence"]["path"], accepted)
+        self.reject_dependency(mutate, "pins differ from tree")
 
 
 if __name__ == "__main__":

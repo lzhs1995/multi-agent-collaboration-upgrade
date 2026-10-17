@@ -131,6 +131,137 @@ def inspect_corpus(request):
     return contents, ordered, blob_doc, inventory
 
 
+def calculate_blobs(contents, blobs):
+    verified = []
+    for row in sorted(blobs["rows"], key=lambda value: value["file"]):
+        data = contents["fetched/" + row["file"]]
+        hasher = hashlib.sha1()
+        hasher.update(f"blob {len(data)}\x00".encode("ascii"))
+        hasher.update(data)
+        value = hasher.hexdigest()
+        must(row["match"] is True and row["git_blob_sha1"] == value == row["tree_blob_sha1"] and
+             row["bytes"] == len(data) and row["sha256"] == sha(data), "Git blob/tree mismatch")
+        verified.append(dict(file=row["file"], repo_path=row["repo_path"], bytes=len(data), sha256=sha(data),
+                             git_blob_sha1=value, tree_blob_sha1=value, match=True))
+    must(blobs["checked"] == len(verified) == blobs["matched"], "Git summary mismatch")
+    return dict(checked=len(verified), matched=len(verified), rows=verified)
+
+
+def calculate_sources(contents, rows, blobs):
+    sources = []
+    for row in rows:
+        url = urlsplit(row["url"])
+        must(url.scheme == "https" and url.fragment == "" and url.username is None and url.port is None, "invalid source URL")
+        commit = None
+        if classify(row["name"]) == "documentation":
+            must(url.netloc == "docs.typesafe.ai" and row["gh_api_args"] == ["CURL", row["url"]], "document source mismatch")
+            source_kind = "documentation"
+        else:
+            endpoint = url.path[1:] + ("?" + url.query if url.query else "")
+            parts = url.path.split("/")
+            organization_listing = (classify(row["name"]) == "metadata" and len(parts) == 4 and
+                parts[1] == "orgs" and parts[3] == "repos" and re.fullmatch(r"[A-Za-z0-9-]+", parts[2]) is not None)
+            must(url.netloc == "api.github.com" and (endpoint.startswith("repos/") or organization_listing) and
+                 endpoint in row["gh_api_args"], "GitHub source mismatch")
+            source_kind = "github_api_metadata"
+            if classify(row["name"]) == "git_source":
+                query = parse_qs(url.query)
+                must(set(query) == {"ref"} and len(query["ref"]) == 1 and "/contents/" in url.path,
+                     "source commit reference missing")
+                commit = query["ref"][0]
+                must(re.fullmatch(r"[0-9a-f]{40}", commit) and
+                     row["name"].split("@", 1)[1].startswith(commit[:12] + "__"), "source commit differs")
+                source_kind = "github_commit_content"
+        sources.append(dict(name=row["name"], url=row["url"], source_kind=source_kind, git_ref=commit))
+    return dict(verified_files=len(contents), manifest_records=len(rows), blob_records=len(blobs["rows"]),
+        successful_fetches=sum(1 for r in rows if r["exit_code"] == 0),
+        failed_fetches=[{k: r[k] for k in ("name", "exit_code", "bytes", "sha256", "stderr")} for r in rows if r["exit_code"]],
+        sources=sources)
+
+
+def calculate_index(contents, blobs):
+    files, aggregate, file_counts = [], {}, {}
+    expression = r"[A-Za-z_][A-Za-z_0-9]*"
+    for record in calculate_blobs(contents, blobs)["rows"]:
+        text = contents["fetched/" + record["file"]].decode("utf-8")
+        local = {}
+        for match in re.finditer(expression, text):
+            word = match.group(0)
+            local[word] = local.get(word, 0) + 1
+            aggregate[word] = aggregate.get(word, 0) + 1
+        for word in local:
+            file_counts[word] = file_counts.get(word, 0) + 1
+        ranked = sorted(local, key=lambda word: (-local[word], word))
+        files.append(dict(file=record["file"], repo_path=record["repo_path"], bytes=record["bytes"],
+            sha256=record["sha256"], lines=len(text.splitlines()), identifier_tokens=sum(local.values()),
+            distinct_identifiers=len(local), top_identifiers=[dict(identifier=word, count=local[word]) for word in ranked[:20]]))
+    return dict(method="lexical_identifier_inventory_v1", pattern=expression, top_limit=20,
+        source_files=len(files), source_bytes=sum(f["bytes"] for f in files), lines=sum(f["lines"] for f in files),
+        identifier_tokens=sum(aggregate.values()), files=files,
+        identifiers=[dict(identifier=word, count=aggregate[word], files=file_counts[word]) for word in sorted(aggregate)])
+
+
+def accepted_answer(request, node, expected, inventory):
+    deps = [dep for dep in request["dependencies"] if dep["node_id"] == node]
+    must(len(deps) == 1, "one accepted dependency required")
+    dep = deps[0]
+    accepted = decode(pinned(dep["accepted_evidence"]))
+    identity = {"task_id": dep["task_id"], "attempt_id": dep["attempt_id"], "run_id": request["run_id"], "node_id": node}
+    must(all(accepted.get(k) == v for k, v in identity.items()) and
+         isinstance(accepted.get("acceptance_native"), dict) and len(accepted["acceptance_native"]) > 0,
+         "foreign/unaccepted dependency")
+    must(accepted["output_files"] == dep["output_files"] and accepted["output_tree"] == dep["output_tree"],
+         "dependency pins differ")
+    base, files = tree_files(dep["output_tree"])
+    must(set(files) == {"result.json", "report.md"} and dep["output_tree"]["directories"] == [], "dependency deliverables differ")
+    outputs = dep["output_files"]
+    must(len(outputs) == 2 and {r["path"] for r in outputs} == {str(base / name) for name in files},
+         "dependency output pins differ from tree")
+    values = {Path(ref["path"]).name: (ref, pinned(ref)) for ref in outputs}
+    ref, raw = values["result.json"]
+    must(decode(raw) == dict(schema="orchestration-corpus-result-v2", **identity, data=expected),
+         "accepted answer differs from independently calculated corpus")
+    report = "\n".join(["Task: " + dep["task_id"], "Run: " + request["run_id"], "Node: " + node, "Result: PASS",
+        "Records: " + str(inventory["counts"]["total"]), "Failed fetches retained: " +
+        (", ".join(inventory["failed_fetches"]) or "none"), ""])
+    must(values["report.md"][1].decode("utf-8") == report, "dependency report identity/counts/failures differ")
+    return dict(node_id=node, task_id=dep["task_id"], result_sha256=ref["sha256"],
+                accepted_evidence_sha256=dep["accepted_evidence"]["sha256"])
+
+
+def calculate_successor(request, inventory):
+    accepted = accepted_answer(request, "inventory", inventory, inventory)
+    amounts = dict(git_source=0, documentation=0, metadata=0)
+    for record in inventory["records"]:
+        amounts[record["category"]] += record["bytes"]
+    return dict(inventory_task_id=accepted["task_id"], inventory_sha256=accepted["result_sha256"],
+        accepted_evidence_sha256=accepted["accepted_evidence_sha256"], counts=inventory["counts"],
+        bytes_by_category=amounts, failed_fetches=inventory["failed_fetches"], consistent=True)
+
+
+def calculate_merge(request, contents, rows, blobs, inventory):
+    accepted = [accepted_answer(request, "inventory", inventory, inventory)]
+    if request["node_id"] == "merge_checks":
+        sources = calculate_sources(contents, rows, blobs)
+        accepted.append(accepted_answer(request, "verify_inputs", sources, inventory))
+        must([r["name"] for r in inventory["records"]] == [r["name"] for r in sources["sources"]],
+             "inventory/provenance coverage differs")
+        joined = []
+        for record, provenance in zip(inventory["records"], sources["sources"]):
+            joined.append(dict(record, source_kind=provenance["source_kind"], git_ref=provenance["git_ref"]))
+        return dict(dependencies=accepted, counts=inventory["counts"], verified_files=sources["verified_files"],
+                    failed_fetches=inventory["failed_fetches"], joined_sources=joined, consistent=True)
+    successor = calculate_successor(request, inventory)
+    index = calculate_index(contents, blobs)
+    accepted.append(accepted_answer(request, "inventory_successor", successor, inventory))
+    accepted.append(accepted_answer(request, "source_index", index, inventory))
+    must(inventory["counts"]["git_source"] == index["source_files"] and
+         successor["bytes_by_category"]["git_source"] == index["source_bytes"], "source coverage differs")
+    return dict(dependencies=accepted, counts=inventory["counts"], bytes_by_category=successor["bytes_by_category"],
+        indexed_source_files=index["source_files"], identifier_tokens=index["identifier_tokens"],
+        failed_fetches=inventory["failed_fetches"], consistent=True)
+
+
 def check(request):
     must(request["schema"] == "orchestration-check-request-v2", "checker request version mismatch")
     work = decode(pinned(request["work_request"]))
@@ -144,56 +275,27 @@ def check(request):
          "output references differ from assigned scope")
     output = {Path(r["path"]).name: pinned(r) for r in outputs}
     node = request["node_id"]
-    if node != "dependent_local":
+    dependency_nodes = {"inventory_successor": {"inventory"}, "merge_checks": {"inventory", "verify_inputs"},
+                        "merge_uneven": {"inventory", "inventory_successor", "source_index"}}
+    if node in dependency_nodes:
+        deps = request["dependencies"]
+        must(len(deps) == len(dependency_nodes[node]) and {d["node_id"] for d in deps} == dependency_nodes[node] and
+             len({d["task_id"] for d in deps}) == len(deps) == len({d["attempt_id"] for d in deps}),
+             "exact unique accepted dependencies required")
+    elif node != "dependent_local":
         must(request["dependencies"] == [], "unexpected dependency")
     if node == "inventory":
         expected = inventory
     elif node == "independent_local":
-        verified = []
-        for row in sorted(blobs["rows"], key=lambda value: value["file"]):
-            data = contents["fetched/" + row["file"]]
-            hasher = hashlib.sha1()
-            hasher.update(f"blob {len(data)}\x00".encode("ascii"))
-            hasher.update(data)
-            value = hasher.hexdigest()
-            must(row["match"] is True and row["git_blob_sha1"] == value == row["tree_blob_sha1"] and
-                 row["bytes"] == len(data) and row["sha256"] == sha(data), "Git blob/tree mismatch")
-            verified.append(dict(file=row["file"], repo_path=row["repo_path"], bytes=len(data), sha256=sha(data),
-                                 git_blob_sha1=value, tree_blob_sha1=value, match=True))
-        must(blobs["checked"] == len(verified) == blobs["matched"], "Git summary mismatch")
-        expected = dict(checked=len(verified), matched=len(verified), rows=verified)
+        expected = calculate_blobs(contents, blobs)
     elif node == "verify_inputs":
-        sources = []
-        for row in rows:
-            url = urlsplit(row["url"])
-            must(url.scheme == "https" and url.fragment == "" and url.username is None and url.port is None, "invalid source URL")
-            commit = None
-            if classify(row["name"]) == "documentation":
-                must(url.netloc == "docs.typesafe.ai" and row["gh_api_args"] == ["CURL", row["url"]], "document source mismatch")
-                source_kind = "documentation"
-            else:
-                endpoint = url.path[1:] + ("?" + url.query if url.query else "")
-                parts = url.path.split("/")
-                organization_listing = (classify(row["name"]) == "metadata" and len(parts) == 4 and
-                    parts[1] == "orgs" and parts[3] == "repos" and
-                    re.fullmatch(r"[A-Za-z0-9-]+", parts[2]) is not None)
-                must(url.netloc == "api.github.com" and (endpoint.startswith("repos/") or organization_listing) and
-                     endpoint in row["gh_api_args"],
-                     "GitHub source mismatch")
-                source_kind = "github_api_metadata"
-                if classify(row["name"]) == "git_source":
-                    query = parse_qs(url.query)
-                    must(set(query) == {"ref"} and len(query["ref"]) == 1 and "/contents/" in url.path,
-                         "source commit reference missing")
-                    commit = query["ref"][0]
-                    must(re.fullmatch(r"[0-9a-f]{40}", commit) and
-                         row["name"].split("@", 1)[1].startswith(commit[:12] + "__"), "source commit differs")
-                    source_kind = "github_commit_content"
-            sources.append(dict(name=row["name"], url=row["url"], source_kind=source_kind, git_ref=commit))
-        expected = dict(verified_files=len(contents), manifest_records=len(rows), blob_records=len(blobs["rows"]),
-            successful_fetches=sum(1 for r in rows if r["exit_code"] == 0),
-            failed_fetches=[{k: r[k] for k in ("name", "exit_code", "bytes", "sha256", "stderr")} for r in rows if r["exit_code"]],
-            sources=sources)
+        expected = calculate_sources(contents, rows, blobs)
+    elif node == "source_index":
+        expected = calculate_index(contents, blobs)
+    elif node == "inventory_successor":
+        expected = calculate_successor(request, inventory)
+    elif node in ("merge_checks", "merge_uneven"):
+        expected = calculate_merge(request, contents, rows, blobs, inventory)
     else:
         must(node == "dependent_local", "unknown corpus node")
         deps = request["dependencies"]

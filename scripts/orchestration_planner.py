@@ -33,6 +33,7 @@ from orchestration_common import scopes_conflict
 
 PLAN_VERSION = 1
 ALLOWED_EXECUTORS = {"claude", "codex"}
+ISOLATED_EXECUTORS = {"codex": "codex", "claude_a": "claude", "claude_b": "claude"}
 ALLOWED_GENERATORS = {"claude_code_cli", "codex_cli", "supervisor"}
 ALLOWED_DECISION_PROVIDERS = {"rules", "offline_mock"}
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{1,63}$")
@@ -41,6 +42,19 @@ SURFACE_RE = re.compile(r"^surface:[0-9]+$")
 
 class PlanError(ValueError):
     """Raised when a graph cannot safely enter the collaboration lifecycle."""
+
+
+def executor_providers(plan):
+    """An executor ID addresses a session; it is never a provider name."""
+    if type(plan.get("version")) is not int:
+        raise PlanError("plan version must be an integer")
+    if plan["version"] == 1:
+        if "executor_providers" in plan:
+            raise PlanError("explicit executor providers require plan version 2")
+        return {key: key for key in sorted(ALLOWED_EXECUTORS)}
+    if plan["version"] == 2 and plan.get("executor_providers") == ISOLATED_EXECUTORS:
+        return dict(ISOLATED_EXECUTORS)
+    raise PlanError("plan v2 requires one Codex and two explicitly named Claude sessions")
 
 
 def _now() -> str:
@@ -125,8 +139,7 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise PlanError("plan root must be an object")
     normalized = copy.deepcopy(plan)
-    if normalized.get("version") != PLAN_VERSION:
-        raise PlanError(f"version must be {PLAN_VERSION}")
+    providers = executor_providers(normalized)
     if not ID_RE.fullmatch(_require_text(normalized.get("plan_id"), "plan_id")):
         raise PlanError("plan_id has an invalid shape")
     _require_text(normalized.get("objective"), "objective")
@@ -165,10 +178,10 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         if node_id in by_id:
             raise PlanError(f"duplicate node id: {node_id}")
         executor = _require_text(node.get("executor"), f"nodes[{index}].executor")
-        if executor not in ALLOWED_EXECUTORS:
-            raise PlanError(f"{node_id}.executor must be claude or codex")
+        if executor not in providers:
+            raise PlanError(f"{node_id}.executor must be an explicitly bound CLI session")
         transport = _require_text(node.get("transport"), f"{node_id}.transport")
-        expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[executor]
+        expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[providers[executor]]
         if transport != expected_transport:
             raise PlanError(f"{node_id}.transport must be {expected_transport}")
         if node.get("session_policy") != "reuse_existing":
@@ -190,6 +203,18 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         _require_text(node.get("verify"), f"{node_id}.verify")
         _valid_source(node.get("source"), f"{node_id}.source")
         write_scope = _require_text(node.get("write_scope"), f"{node_id}.write_scope")
+        if "output_scope" in node:
+            if normalized["version"] != 2:
+                raise PlanError("output_scope requires plan version 2")
+            output_scope = _require_text(node["output_scope"], f"{node_id}.output_scope")
+            for label, value in (("write_scope", write_scope), ("output_scope", output_scope)):
+                path = Path(value)
+                if (path.is_absolute() or ".." in path.parts or value in ("", ".") or
+                        str(path) != value or node[label] != value):
+                    raise PlanError(f"{node_id}.{label} must be a canonical relative child")
+            if Path(write_scope) not in (Path(output_scope), *Path(output_scope).parents):
+                raise PlanError(f"{node_id}.output_scope must be inside write_scope")
+            node["output_scope"] = output_scope
         expected_seconds = node.get("expected_seconds")
         if isinstance(expected_seconds, bool) or not isinstance(expected_seconds, (int, float)) or not math.isfinite(expected_seconds) or expected_seconds <= 0:
             raise PlanError(f"{node_id}.expected_seconds must be positive")
@@ -249,7 +274,7 @@ def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> 
     while remaining:
         ready = [node_id for node_id in order if node_id in remaining and set(nodes[node_id]["depends_on"]) <= completed]
         selected: list[str] = []
-        executor_counts = {executor: 0 for executor in ALLOWED_EXECUTORS}
+        executor_counts = {executor: 0 for executor in executor_providers(normalized)}
         scopes: set[str] = set()
         for node_id in ready:
             node = nodes[node_id]
@@ -306,7 +331,7 @@ def benchmark(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> dict[
 
 def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path, run_id: str) -> dict[str, Any]:
     task_id = f"{plan['plan_id']}--{run_id}--{node['id']}--a0001"
-    return {
+    seed = {
         "seed_version": 2,
         "task_id": task_id,
         "run_id": run_id,
@@ -318,7 +343,7 @@ def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path, 
             "write_scope": node["write_scope"],
         },
         "role": "executor",
-        "executor": node["executor"],
+        "executor": executor_providers(plan)[node["executor"]],
         "executor_surface": node.get("surface_ref"),
         "transport": node["transport"],
         "session_policy": "reuse_existing",
@@ -339,6 +364,10 @@ def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path, 
             "direct_cli_launch": False,
         },
     }
+    if plan["version"] == 2:
+        seed["orchestration"]["executor_id"] = node["executor"]
+        seed["orchestration"]["plan_version"] = 2
+    return seed
 
 
 def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_executor: int = 1, *, run_id: str | None = None) -> dict[str, Any]:

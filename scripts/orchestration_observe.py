@@ -10,17 +10,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from orchestration_campaign import node_output
+from orchestration_campaign import node_output, node_write_scope
 from orchestration_common import (checked_path, contract_errors, file_ref, json_ref, object_sha,
                                   parse_time, read_json, read_ref, scopes_conflict, verify_tree)
 from orchestration_coordinator import ACTIVE, TRANSITIONS, State, select_ready, topological_nodes
+from orchestration_continuation import observe_continuation
 from orchestration_evidence import task_identity
-from orchestration_native import require
+from orchestration_native import NativeReader, require
 from orchestration_planner import validate_plan
+from orchestration_timeline import node_timeline
 
 
 NODE_EVIDENCE = ("dispatch-intent.json", "candidate.json", "accepted-evidence.json",
-                 "failure-candidate.json", "settled-failure.json", "disarm.json")
+                 "failure-candidate.json", "settled-failure.json", "disarm.json", "continuation.json")
 
 
 def _control_fence(co):
@@ -37,13 +39,23 @@ def _control_fence(co):
 
     for name in ("run.json", "finish.json"):
         pin(co.root / name)
+    draft = checked_path(Path(co.campaign["root"]) / "package-drafts" / (co.spec["run_id"] + ".json"))
+    result["published_drafts"] = file_ref(draft) if draft.exists() else None
     for key, node in co.nodes.items():
         directory = checked_path(co.root / "nodes" / key)
         output = checked_path(node_output(co.root, node))
         result["node:" + key] = dict(directory_exists=directory.exists(), output_exists=output.exists())
         pin(co.root / "claims" / (key + ".json"))
-        for name in NODE_EVIDENCE + ("work-request.json", "prepared.json", "tests.json"):
+        for name in NODE_EVIDENCE + ("work-request.json", "prepared.json", "tests.json", "disarm-frozen.json",
+                                    "preflight/task-pack.json", "preflight/handshake-receipt.json",
+                                    "preflight/completion-callback-receipt.json"):
             pin(directory / name)
+        for name in ("preflight/completion-callback-receipt-attempts", "disarm-recovery"):
+            journal = checked_path(directory / name)
+            result["journal:" + key + ":" + name] = sorted(str(p.relative_to(journal))
+                for p in journal.rglob("*.json")) if journal.exists() else None
+            for relative in result["journal:" + key + ":" + name] or []:
+                pin(journal / relative)
         operations = checked_path(directory / "operations")
         result["operations:" + key] = sorted(p.name for p in operations.iterdir()) if operations.exists() else None
         for name in result["operations:" + key] or []:
@@ -217,7 +229,7 @@ def _advice(co, key, state, info, operations, files, lease):
     if state in (State.ACCEPTED, State.FAILED_PRESERVED):
         if lease["released_at"] is None:
             return advice("repair-original-release", "Terminal event recorded; original lease still retained.", "repair-releases")
-        if co.nodes[key]["executor"] == "claude" and "disarm.json" not in files:
+        if co.campaign["sessions"][co.nodes[key]["executor"]]["provider"] == "claude" and "disarm.json" not in files:
             if any(o["operation"] == "disarm" for o in operations):
                 return advice("review-original-disarm", "Preserve the original disarm operation and its bounded recovery evidence.")
             return advice("disarm-original-task", "Business acceptance and lease release are separate from scoped disarm.", "disarm")
@@ -242,6 +254,8 @@ def _advice(co, key, state, info, operations, files, lease):
     if state in (State.LOCAL_RUNNING, State.DISPATCHED):
         if "candidate.json" in files:
             return advice("review-persisted-candidate", "Review recovery of the frozen candidate; do not invent another native acceptance.")
+        if "continuation.json" in files:
+            return advice("review-callback-evidence", "Verified original callback is durable; prepare the candidate for independent acceptance.", "candidate")
         return advice("await-frozen-report", "Continue owned work or observe its original callback; a report filename alone is not DONE.",
                       "callback" if state == State.DISPATCHED else None)
     return advice("wait-dependencies-or-lane", "The frozen dependency, session FIFO and write scope constrain the next claim.")
@@ -267,6 +281,8 @@ def next_action(runner, run_id):
     events = co.events()
     states, data = recorded_state(co, events)
     leases = co.leases.read()
+    snapshots = {lane: NativeReader(session, fixtures=co.fixtures).snapshot()
+                 for lane, session in co.campaign["sessions"].items()}
     rows, incomplete = [], []
     for key, node in co.nodes.items():
         info, state = data[key], states[key]
@@ -293,6 +309,8 @@ def next_action(runner, run_id):
             incomplete.append(key)
         row = dict(node_id=key, recorded_state=state.value, dependency_ids=node["depends_on"],
             operations=operations, evidence_files=files, timings=_timings(key, node, events),
+            continuation=observe_continuation(co, key, info, events, files.get("continuation.json")),
+            timeline=node_timeline(co, key, info, events, files, lease, snapshots),
             lease_release_recorded_at=lease["released_at"] if lease else None,
             scoped_disarm_record="PRESENT_UNREVALIDATED" if "disarm.json" in files else "ABSENT")
         row["recommendation"] = _advice(co, key, state, info, operations, files, lease)
@@ -306,7 +324,7 @@ def next_action(runner, run_id):
         for node in select_ready(co.plan, states, spec["strategy"], root / "work", co.header["queues"]):
             session = runner.campaign["sessions"][node["executor"]]["session_id"]
             held = [owner for owner, lease in leases.items() if lease["released_at"] is None and
-                    (lease["session_id"] == session or scopes_conflict(lease["scope"], str(node_output(root, node)), "/"))]
+                    (lease["session_id"] == session or scopes_conflict(lease["scope"], str(node_write_scope(root, node)), "/"))]
             row = next(r for r in rows if r["node_id"] == node["id"])
             if held:
                 row["recommendation"].update(action="wait-original-lease", reason="Original session or scope lease retained.", lease_owners=held)
@@ -315,6 +333,13 @@ def next_action(runner, run_id):
                 row["recommendation"].update(action="claim-after-live-gates", reason="Recorded dependencies and lane permit a proposed claim; full gates must still pass.", gated_command="claim")
     require(_control_fence(co) == control_fence, "control evidence changed during observation; read again")
     require(co.events() == events and co.leases.read() == leases, "run advanced during observation; read again")
+    for lane, pin in snapshots.items():
+        NativeReader(co.campaign["sessions"][lane], fixtures=co.fixtures).verify_pin(pin)
+    observed = {name for row in rows for name, point in row["timeline"]["boundaries"].items() if point is not None}
+    derived = {"native_receipt": "task_received", "acknowledgement": "acknowledgement",
+               "callback_received": "callback_received"}
+    result["native_boundaries_not_derived"] = [name for name in result["native_boundaries_not_derived"]
+        if derived.get(name, name) not in observed]
     result.update(status="CLOSED_RECORDED" if closed else "OBSERVED", recorded_states={k: s.value for k, s in states.items()},
                   recorded_claim_candidates=candidates, incomplete_claims=incomplete, nodes=rows,
                   control_fence_sha256=object_sha(control_fence),

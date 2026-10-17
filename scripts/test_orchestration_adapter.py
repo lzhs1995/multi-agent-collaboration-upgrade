@@ -11,6 +11,16 @@ from orchestration_freeze import copy_runtime
 from orchestration_maintenance import maintenance_control
 
 
+class CurrentAdapterTests(unittest.TestCase):
+    def test_current_campaign_source_has_complete_dependencies(self):
+        # Fixture-only closure checks missed a deferred import of an absent
+        # adoption verifier in upgrade_experiment.live_gate. Validate the real
+        # source graph too, without importing or invoking any transport.
+        root = Path(__file__).resolve().parents[1]
+        modules = validate_adapter(tree_manifest(root), purpose="campaign")
+        self.assertIn("scripts/upgrade_experiment.py", modules)
+
+
 class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

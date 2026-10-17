@@ -189,6 +189,9 @@ class NativeReader:
         require(self.path.name.endswith(session["session_id"] + ".jsonl"), "native session filename mismatch")
         if not fixtures:
             root = Path.home() / (".codex/sessions" if self.provider == "codex" else ".claude/projects")
+            if "private_native" in session or root.resolve() not in self.path.parents:
+                from upgrade_live_runtime import authenticated_native_root
+                root = authenticated_native_root(session)
             require(root.resolve() in self.path.parents, "copied/non-native transcript cannot prove a CLI run")
         with self.open() as stream:
             found = False
@@ -311,10 +314,12 @@ class NativeReader:
         return dict(version=1, start=start, end=end, cached_reads=[], sender_calls=[])
 
     @contract_errors("native actions")
-    def action_summary(self, start, end, *, task_id, output_root, allow_empty=False):
+    def action_summary(self, start, end, *, task_id, output_root, allow_empty=False,
+                       allow_incomplete=False, include_evidence=False):
         """Derive useful action, model, retries and interventions from raw records."""
         model_seen, failed_api, explicit_retries = set(), 0, set()
         tool_calls, completed_calls = {}, {}
+        call_refs, result_refs, pending_refs, last_result_at = {}, {}, {}, {}
         user_texts = []
         prior = None
         for _, r in self.records(0, start):
@@ -327,14 +332,20 @@ class NativeReader:
         if prior:
             model_seen.add(prior)
 
-        def complete(key, value, record, failed=False):
+        def complete(key, value, record, record_ref, failed=False):
             if key not in tool_calls:
                 return
             require(key not in completed_calls, "duplicate native tool result")
-            require(not tool_pending(value), "unfinished task tool call: asynchronous result is not completion")
             stamp = parse_time(record["timestamp"])
             require(stamp >= tool_calls[key], "native tool completion precedes its call")
+            require(stamp >= last_result_at.get(key, stamp), "native tool result chronology moved backwards")
+            last_result_at[key] = stamp
+            if allow_incomplete and tool_pending(value):
+                pending_refs.setdefault(key, []).append(record_ref)
+                return
+            require(not tool_pending(value), "unfinished task tool call: asynchronous result is not completion")
             completed_calls[key] = (stamp, failed or tool_failed(value))
+            result_refs[key] = record_ref
 
         for ref, r in self.records(start, end):
             p = r.get("payload", {})
@@ -347,9 +358,10 @@ class NativeReader:
                     if task_work(args, output_root) and isinstance(p.get("call_id"), str):
                         require(p["call_id"] not in tool_calls, "duplicate native tool call id")
                         tool_calls[p["call_id"]] = parse_time(r["timestamp"])
+                        call_refs[p["call_id"]] = ref
                 if r.get("type") == "response_item" and p.get("type") in ("function_call_output", "custom_tool_call_output"):
                     output = p.get("output")
-                    complete(p.get("call_id"), output, r, p.get("is_error") is True)
+                    complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
                 if r.get("type") == "event_msg" and p.get("type") == "error":
                     failed_api += 1
             else:
@@ -369,8 +381,9 @@ class NativeReader:
                         if task_work(args, output_root) and isinstance(block.get("id"), str):
                             require(block["id"] not in tool_calls, "duplicate native tool call id")
                             tool_calls[block["id"]] = parse_time(r["timestamp"])
+                            call_refs[block["id"]] = ref
                     if r.get("type") == "user" and block.get("type") == "tool_result":
-                        complete(block.get("tool_use_id"), block.get("content"), r, block.get("is_error") is True)
+                        complete(block.get("tool_use_id"), block.get("content"), r, ref, block.get("is_error") is True)
                 if r.get("type") == "system" and r.get("subtype") == "api_error":
                     failed_api += 1
                     retry = r.get("retryAttempt")
@@ -380,16 +393,24 @@ class NativeReader:
             if text is not None:
                 user_texts.append(text)
         require(model_seen == {self.session["model"]}, "model missing or changed during replay")
-        require(set(tool_calls) == set(completed_calls), "unfinished task tool call at native boundary")
-        times = [t for key, t in tool_calls.items() if not completed_calls[key][1]]
+        require(allow_incomplete or set(tool_calls) == set(completed_calls), "unfinished task tool call at native boundary")
+        times = [t for key, t in tool_calls.items() if key in completed_calls and not completed_calls[key][1]]
         require(times or allow_empty, "no completed task-bound native CLI tool action")
-        return dict(first_action_at=min(times).isoformat() if times else None,
+        result = dict(first_action_at=min(times).isoformat() if times else None,
                     last_action_at=max(t for t, _ in completed_calls.values()).isoformat() if completed_calls else None,
                     failed_api_attempts=failed_api,
                     provider_auto_retries=len(explicit_retries) if explicit_retries or failed_api == 0 else None,
                     user_inputs=user_texts,
-                    attempted_task_calls=len(tool_calls), failed_task_calls=len(tool_calls) - len(times),
+                    attempted_task_calls=len(tool_calls), failed_task_calls=len(completed_calls) - len(times),
                     completed_task_calls=len(times), models=sorted(model_seen))
+        if include_evidence:
+            result.update(pending_task_calls=len(tool_calls) - len(completed_calls), actions=[dict(
+                call_id=key, started_at=at.isoformat(), call=call_refs[key],
+                completed_at=completed_calls[key][0].isoformat() if key in completed_calls else None,
+                result=result_refs.get(key), pending_results=pending_refs.get(key, []),
+                status=("FAILED" if completed_calls[key][1] else "COMPLETED") if key in completed_calls else "PENDING")
+                for key, at in tool_calls.items()])
+        return result
 
 
 def original_attempts(refs):

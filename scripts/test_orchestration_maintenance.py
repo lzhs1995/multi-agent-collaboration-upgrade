@@ -10,10 +10,11 @@ import sys
 import tempfile
 import unittest
 from datetime import timedelta
+from functools import lru_cache
 from pathlib import Path
 from unittest.mock import patch
 
-from orchestration_adapter import CAMPAIGN_MODULES
+from orchestration_adapter import validate_adapter
 from orchestration_common import ContractError, file_ref, json_ref, parse_time, tree_manifest, utc_now, write_json
 from orchestration_coordinator import Coordinator, LeaseRegistry, State
 from orchestration_evidence import failure_marker
@@ -23,12 +24,19 @@ from orchestration_transport import Transport
 from test_orchestration_transport import Crash, FakeRuntime
 
 
+@lru_cache(maxsize=1)
+def campaign_sources():
+    """Copy the actual transitive closure, including deferred v3 imports."""
+    root = Path(__file__).resolve().parents[1]
+    return {Path(name).name: (root / name).read_bytes()
+            for name in validate_adapter(tree_manifest(root), purpose="campaign")}
+
+
 def ownership_world(root):
     scripts = root / "adapter/scripts"
     scripts.mkdir(parents=True)
-    for name in CAMPAIGN_MODULES:
-        filename = name + ".py"
-        (scripts / filename).write_bytes((Path(__file__).parent / filename).read_bytes())
+    for filename, content in campaign_sources().items():
+        (scripts / filename).write_bytes(content)
     controller = root / "controller/scripts"
     controller.mkdir(parents=True)
     for name in ("cmux_bridge", "cmux_native_delivery", "cmux_workspace_guard", "cmux_daemon_identity"):
@@ -185,7 +193,7 @@ campaign = json_ref(cfg["campaign"])
 run = Path(campaign["root"]) / "runs/R1"
 co = coordinator.Coordinator.__new__(coordinator.Coordinator)
 co.root, co.campaign_ref, co.campaign, co.fixtures = run, cfg["campaign"], campaign, False
-co.nodes, co.spec, co.header = {"review": dict(id="review", executor="claude")}, dict(run_id="R1"), {}
+co.nodes, co.spec, co.header = {"review": dict(id="review", executor="claude", write_scope="review")}, dict(run_id="R1"), {}
 co.leases = coordinator.LeaseRegistry(campaign["lease_root"])
 state = coordinator.State.BLOCKED if action == "candidate" else coordinator.State.ACCEPTED
 co.state = lambda: ({"review": state}, {"review": cfg["info"]})
@@ -227,13 +235,13 @@ print(json.dumps(dict(rc=rc, output=out.getvalue(), error=err.getvalue(), reache
         claim = write_json(self.run / "claims/review.json", dict(task_id="task-review"))
         self.terminal = write_json(self.run / "events/000001.json", dict(
             state="ACCEPTED", node_id="review", seq=1, data=dict(verification=dict(task_id="task-review"))))
-        output = self.root / "output"
-        output.mkdir()
+        output = self.run / "work/review"
+        output.mkdir(parents=True)
         self.leases = LeaseRegistry(self.root / "leases")
         self.leases.reserve("task-review", "session-claude", str(output), claim)
         lease = self.leases.read()["task-review"]
         campaign = write_json(self.root / "campaign.json", dict(
-            controller=tree_manifest(self.root / "controller"), root=str(self.root / "campaign"),
+            version=2, controller=tree_manifest(self.root / "controller"), root=str(self.root / "campaign"),
             sessions=dict(claude=dict(session_id="session-claude")), lease_root=str(self.leases.root)))
         manifest = write_json(self.run / "nodes/review/maintenance/manifest.json", dict(
             campaign=campaign, run_id="R1", node_id="review", adapter=tree_manifest(self.root / "adapter"),
@@ -302,9 +310,8 @@ class MaintenanceTests(unittest.TestCase):
         # Product closure validation and all copied bytes remain unchanged.
         scripts = Path(self.temp.name).resolve() / "maintenance-source/scripts"
         scripts.mkdir(parents=True)
-        for name in CAMPAIGN_MODULES:
-            filename = name + ".py"
-            (scripts / filename).write_bytes((Path(__file__).parent / filename).read_bytes())
+        for filename, content in campaign_sources().items():
+            (scripts / filename).write_bytes(content)
         source = patch("orchestration_maintenance.__file__", str(scripts / "orchestration_maintenance.py"))
         source.start()
         self.addCleanup(source.stop)

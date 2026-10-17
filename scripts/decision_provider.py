@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from orchestration_common import ContractError, finite
+from orchestration_planner import ISOLATED_EXECUTORS
 
 
 class Outcome(str, Enum):
@@ -28,7 +29,7 @@ class Decision:
             raise ContractError("decision requires a typed outcome and reason")
         if not 0 <= finite(self.confidence, "confidence") <= 1:
             raise ContractError("confidence must be between zero and one")
-        if self.route not in (None, "claude", "codex"):
+        if self.route not in (None, "claude", "codex", "claude_a", "claude_b"):
             raise ContractError("route must name an existing CLI lane")
         if not isinstance(self.evidence_refs, tuple) or any(not isinstance(x, str) or not x for x in self.evidence_refs):
             raise ContractError("evidence_refs must be a tuple of references")
@@ -61,7 +62,10 @@ class RulesProvider:
         if context.get("purpose") == "route":
             available = context.get("available_executors", [])
             preferred = context.get("executor")
-            if not isinstance(available, (list, tuple)) or any(x not in ("claude", "codex") for x in available):
+            providers = context.get("executor_providers", {"codex": "codex", "claude": "claude"})
+            if providers not in ({"codex": "codex", "claude": "claude"}, ISOLATED_EXECUTORS):
+                return Decision(Outcome.DENY, "unsupported executor/provider binding", 1, refs)
+            if not isinstance(available, (list, tuple)) or any(x not in providers for x in available):
                 return Decision(Outcome.DENY, "route includes an unsupported executor", 1, refs)
             if preferred not in available:
                 return Decision(Outcome.ESCALATE, "the assigned existing session is unavailable", 1, refs)

@@ -16,7 +16,8 @@ from pathlib import Path
 from orchestration_common import (checked_path, contract_errors, count, digest, file_ref, finite, json_ref,
                                   parse_time, read_ref, verify_tree, within)
 from orchestration_native import NativeReader, native_text, require
-from orchestration_planner import ID_RE, validate_plan
+from orchestration_planner import ID_RE, executor_providers, validate_plan
+from orchestration_contracts import campaign_version, evidence_class, validate_private_campaign
 
 ORDER = ("serial", "omo", "codeg", "omo", "codeg", "serial", "codeg", "serial", "omo")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -31,6 +32,21 @@ METRICS = {
     "promotion": "all_nine_correct_and_contract_valid; median_improvement_at_least_15_percent",
     "zero_baseline": "percentage_ineligible",
     "tie_break": ["elapsed_seconds", "human_interventions", "retries", "omo"],
+}
+
+# Separate registration: historical v2 results keep their original meaning.
+METRICS_V3 = {
+    "version": 2,
+    "elapsed": "native_start_to_complete_closeout; same_boot_monotonic_plus_startup",
+    "first_action": "first_successful_completed_output_scoped_tool_call_start",
+    "retries": "transport_zero_input_retries_plus_failed_business_tool_calls",
+    "provider_auto_retries": "separate_native_counter; missing_is_null",
+    "interventions": "unclassified_user_inputs_are_unmeasured; status_queries_reported_separately",
+    "status_queries": list(METRICS["status_queries"]),
+    "promotion": "separate_registered_A1_B_paired_experiment; no_single_campaign_promotion",
+    "zero_baseline": "percentage_ineligible",
+    "native_timeline": "original_receipt_ack_actions_callback_acceptance_release_disarm; missing_is_null",
+    "failures": "retain_all_runs_recovery_provider_wait_and_cleanup",
 }
 
 
@@ -83,18 +99,29 @@ def find_control(reader, script, *, after=0):
     return matches[0]
 
 
-def node_output(root, node):
+def node_write_scope(root, node):
+    """Reserve the whole mutable resource, even when outputs use child directories."""
     scope = Path(node["write_scope"])
     require(not scope.is_absolute() and ".." not in scope.parts and str(scope) not in ("", "."),
             "live write scope must be a relative child of the run work directory")
     return within(Path(root) / "work" / scope, Path(root) / "work")
 
 
+def node_output(root, node):
+    reserved = node_write_scope(root, node)
+    if "output_scope" not in node:
+        return reserved
+    scope = Path(node["output_scope"])
+    require(not scope.is_absolute() and ".." not in scope.parts and str(scope) not in ("", ".") and
+            str(scope) == node["output_scope"], "live output scope must be a canonical relative child")
+    return within(Path(root) / "work" / scope, reserved)
+
+
 @contract_errors("campaign")
 def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     campaign = json_ref(ref, "trusted campaign")
-    require(type(campaign.get("version")) is int and campaign["version"] == 2, "campaign version must be 2")
-    require(campaign.get("evidence_class") == ("offline_fixture" if fixtures else "cli_campaign_v2"),
+    version = campaign_version(campaign)
+    require(campaign.get("evidence_class") == evidence_class(campaign, "cli_campaign", fixtures),
             "campaign execution class mismatch; fixtures are never live evidence")
     require(isinstance(campaign.get("campaign_id"), str) and ID_RE.fullmatch(campaign["campaign_id"]),
             "invalid campaign id")
@@ -103,27 +130,32 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     require(checked_path(campaign["lease_root"]) != root, "dedicated session lease registry required")
     parse_time(campaign["created_at"])
     require(campaign.get("third_party_api") is False and campaign.get("replacement_sessions") is False,
-            "only the two original CLI sessions may own model calls")
+            "only the explicitly bound original CLI sessions may own model calls")
     require(campaign.get("decision_provider") == "rules", "live campaign uses frozen rules provider")
-    require(campaign.get("metrics") == METRICS, "measurement definitions were not frozen")
+    require(campaign.get("metrics") == (METRICS if version == 2 else METRICS_V3),
+            "measurement definitions were not frozen")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,
             "approved promotion threshold is 15 percent")
     require(0 < count(campaign.get("checker_timeout_seconds"), "checker timeout") <= 60,
             "checker timeout must be between 1 and 60 seconds")
 
     plan = validate_plan(json_ref(campaign["plan"], "frozen plan"))
-    if not fixtures or "schedule_probe" in campaign:
+    require(plan["version"] == version - 1, "plan and campaign executor formats differ")
+    if version == 2 and (not fixtures or "schedule_probe" in campaign):
         from orchestration_coordinator import strategy_probe
         probe = json_ref(campaign["schedule_probe"], "frozen schedule probe")
         require(probe == strategy_probe(plan) and probe["distinguishes_all"] is True,
                 "frozen workload must distinguish all three actual scheduling policies")
     sessions = campaign.get("sessions")
-    require(isinstance(sessions, dict) and set(sessions) == {"codex", "claude"}, "exactly two original CLI lanes required")
-    require(len({s["session_id"] for s in sessions.values()}) == 2, "session lanes must be distinct")
-    require(sessions["codex"]["workspace_uuid"] == sessions["claude"]["workspace_uuid"], "campaign endpoints moved workspaces")
-    require(sessions["codex"]["pane_uuid"] != sessions["claude"]["pane_uuid"], "Claude must remain in its original side pane")
+    providers = executor_providers(plan)
+    require(isinstance(sessions, dict) and set(sessions) == set(providers), "original CLI lanes differ from the plan")
+    require(len({s["session_id"] for s in sessions.values()}) == len(sessions), "session lanes must be distinct")
+    require(len({s["workspace_uuid"] for s in sessions.values()}) == 1, "campaign endpoints moved workspaces")
+    require(len({s["pane_uuid"] for s in sessions.values()}) == len(sessions), "executors must remain in distinct side panes")
+    if version == 3:
+        validate_private_campaign(campaign, fixtures=fixtures)
     for lane, session in sessions.items():
-        require(session.get("provider") == lane, "session provider mismatch")
+        require(session.get("provider") == providers[lane], "session provider mismatch")
         reader = NativeReader(session, fixtures=fixtures)
         freeze = reader.verify_pin(session["freeze_fence"])
         model = reader.record(session["model_record"])
@@ -154,10 +186,12 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     runs = campaign.get("runs")
     require(isinstance(runs, list) and runs, "frozen run order required")
     require(all(isinstance(r, dict) and set(r) == {"run_id", "strategy"} and
-                isinstance(r["run_id"], str) and ID_RE.fullmatch(r["run_id"]) and r["strategy"] in ORDER for r in runs),
+                isinstance(r["run_id"], str) and ID_RE.fullmatch(r["run_id"]) and
+                (r["strategy"] in ORDER or version == 3 and r["strategy"] == "mac_native") for r in runs),
             "invalid frozen run specification")
     require(len({r["run_id"] for r in runs}) == len(runs), "run ids must be unique")
-    require(fixtures or tuple(r["strategy"] for r in runs) == ORDER, "nine counterbalanced original runs required")
+    require(version == 3 or fixtures or tuple(r["strategy"] for r in runs) == ORDER,
+            "nine counterbalanced original runs required")
     inputs = campaign.get("inputs")
     require(isinstance(inputs, list) and inputs, "frozen workload inputs required")
     require(len({item["path"] for item in inputs}) == len(inputs), "duplicate frozen input paths")
@@ -238,21 +272,38 @@ def collect_live_sessions(campaign):
         codex = dict(provider="codex", session_id=public["session"], tty=public["tty"],
                      process=native._public_process(proof["client"]),
                      workspace_uuid=caller["workspace_id"], surface_uuid=caller["surface_id"], pane_uuid=caller["pane_id"])
-        pin = native._pin_file(native._transcript_path("codex", public["session"]), "codex", public["session"])
+        private_live = campaign.get("version") == 3
+        path = (native._transcript_path("codex", public["session"], proof["client"]) if private_live
+                else native._transcript_path("codex", public["session"]))
+        pin = native._pin_file(path, "codex", public["session"])
         codex["transcript"] = {k: pin[k] for k in ("path", "device", "inode")}
-        target = campaign["sessions"]["claude"]["surface_uuid"]
-        bound = native.bind_target(bridge, target, "ORCHESTRATION_IDENTITY_READ_ONLY")
-        claude = {k: bound[k] for k in ("provider", "session_id", "tty", "process")}
-        claude.update(workspace_uuid=bound["identity"]["workspace_uuid"],
-                      surface_uuid=bound["identity"]["target_surface_uuid"], pane_uuid=bound["identity"]["target_pane_uuid"],
-                      transcript={k: bound["transcript"][k] for k in ("path", "device", "inode")})
-        return dict(codex=codex, claude=claude)
+        if private_live:
+            # This module belongs to the separately pinned controller. Importing
+            # it as an adapter dependency would either break source freezing or
+            # load a second copy from the wrong tree. The authenticated native
+            # reader already owns its private-root implementation.
+            within(Path(native.private_roots.__file__).resolve(), root)
+            codex["native_config_root"] = str(native.private_roots.process_root("codex", proof["client"]))
+        observed = dict(codex=codex)
+        for lane, session in campaign["sessions"].items():
+            if lane == "codex":
+                continue
+            bound = native.bind_target(bridge, session["surface_uuid"], "ORCHESTRATION_IDENTITY_READ_ONLY")
+            receiver = {k: bound[k] for k in ("provider", "session_id", "tty", "process")}
+            receiver.update(workspace_uuid=bound["identity"]["workspace_uuid"],
+                            surface_uuid=bound["identity"]["target_surface_uuid"], pane_uuid=bound["identity"]["target_pane_uuid"],
+                             transcript={k: bound["transcript"][k] for k in ("path", "device", "inode")})
+            if private_live:
+                receiver["native_config_root"] = bound["native_config_root"]
+            observed[lane] = receiver
+        return observed
     finally:
         sys.path.pop(0)
 
 
 def require_live_identity(campaign):
     observed = collect_live_sessions(campaign)
+    require(set(observed) == set(campaign["sessions"]), "original live session lanes missing")
     for lane, actual in observed.items():
         require(all(campaign["sessions"][lane].get(k) == v for k, v in actual.items()),
                 f"original {lane} identity/process/transcript changed; do not retarget")

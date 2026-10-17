@@ -4,9 +4,11 @@ import contextlib
 import json
 import secrets
 import sys
+import uuid
 from pathlib import Path
 
-from orchestration_campaign import METRICS, control_script
+from orchestration_campaign import METRICS, METRICS_V3, control_script
+from orchestration_contracts import campaign_version
 from orchestration_common import digest, file_ref, json_ref, object_sha, parse_time, read_ref, tree_manifest, utc_now, write_json
 from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import (failure_marker, make_test_result, marker_for, output_refs, pack_extension,
@@ -17,10 +19,11 @@ from test_orchestration_native import NativeFixture
 class OfflineDisarmRuntime:
     """Private marker/state files; never imports or calls a shared controller."""
 
-    def __init__(self, campaign, root):
+    def __init__(self, campaign, root, *, executor_id=None):
         from types import SimpleNamespace
         from orchestration_disarm import marker_callers
         self.campaign, self.root = campaign, Path(root).resolve()
+        self.executor_id = executor_id
         self.active, self.states = self.root / "active", self.root / "states"
         self.active.mkdir(parents=True, exist_ok=True)
         self.states.mkdir(parents=True, exist_ok=True)
@@ -43,7 +46,8 @@ class OfflineDisarmRuntime:
                 workspace_uuid=self.campaign["sessions"]["codex"]["workspace_uuid"],
                 participants=[dict(role="supervisor" if lane == "codex" else "executor",
                                    surface_uuid=session["surface_uuid"])
-                              for lane, session in self.campaign["sessions"].items()])
+                              for lane, session in self.campaign["sessions"].items()
+                              if self.executor_id is None or lane in ("codex", self.executor_id)])
             write_json(self.active / self.marker["workspace_uuid"] / (self.marker["collaboration_id"] + ".json"),
                        self.marker, exclusive=True)
         return freeze_original(self.campaign, task_id, self.disarm_harness, self.lifecycle, self.reask)
@@ -100,17 +104,26 @@ class OfflineDisarmRuntime:
 
 
 class CampaignFixture:
-    def __init__(self, base, strategies=("omo",)):
+    def __init__(self, base, strategies=("omo",), *, version=2, arm="B"):
         base = Path(base).resolve()
-        self.root = base / "campaign"
+        assert version in (2, 3)
+        private = self._private_runtime(base, arm) if version == 3 else None
+        self.root = private["paths"]["campaigns"] / "campaign" if private else base / "campaign"
         self.root.mkdir()
         self.clients = {}
-        for lane in ("codex", "claude"):
+        lanes = ("codex", "claude_a", "claude_b") if version == 3 else ("codex", "claude")
+        workspace = str(uuid.uuid4())
+        for index, lane in enumerate(lanes, 1):
             directory = base / lane
             directory.mkdir()
-            client = NativeFixture(directory, lane)
-            client.session.update(surface_uuid=lane + "-surface", pane_uuid=lane + "-pane",
-                                  surface_ref="surface:1" if lane == "codex" else "surface:2")
+            provider = "codex" if lane == "codex" else "claude"
+            client = NativeFixture(directory, provider, session_id=str(uuid.uuid4()) if version == 3 else None)
+            client.session.update(surface_uuid=str(uuid.uuid4()) if version == 3 else lane + "-surface",
+                                  pane_uuid=str(uuid.uuid4()) if version == 3 else lane + "-pane",
+                                  surface_ref=f"surface:{index}")
+            if version == 3:
+                client.session.update(workspace_uuid=workspace, tty=f"ttys{index:03d}",
+                                      process=dict(pid=100 + index, birth=[123456, index], executable="/fixture/cli"))
             if lane == "codex":
                 model = client.append(dict(type="turn_context", payload={"model": "test-model"}, timestamp=utc_now()))
             else:
@@ -125,35 +138,77 @@ class CampaignFixture:
                                  text_sha256=digest(b"Implement the plan."))]))
         for client in self.clients.values():
             client.session["freeze_fence"] = client.reader.snapshot()
-        self.plan = dict(version=1, plan_id="fixture-plan", objective="Inspect a frozen input and review it independently",
+        self.plan = dict(version=version - 1, plan_id="fixture-plan", objective="Inspect a frozen input and review it independently",
             source={"generated_by": "supervisor", "revision": "fixture"}, decision_provider="rules",
             api_policy={"third_party_api": False, "model_call_owners": ["codex_cli", "claude_code_cli"]}, nodes=[])
-        for key, lane, deps in (("local", "codex", []), ("review", "claude", []), ("closeout", "codex", ["local", "review"])):
+        if version == 3:
+            self.plan["executor_providers"] = {"codex": "codex", "claude_a": "claude", "claude_b": "claude"}
+        nodes = (("local", "codex", []), ("review", "claude", []), ("closeout", "codex", ["local", "review"]))
+        if version == 3:
+            nodes = (("local", "codex", []), ("review", "claude_a", []), ("parallel", "claude_b", []),
+                     ("followup", "claude_a", ["review"]), ("closeout", "codex", ["local", "followup", "parallel"]))
+        for key, lane, deps in nodes:
             self.plan["nodes"].append(dict(id=key, title=key, executor=lane, depends_on=deps,
                 execution_kind="local_cli" if lane == "codex" else "delegated_cli",
                 transport="codex_cli" if lane == "codex" else "claude_code_cli", session_policy="reuse_existing",
                 context="Inspect the input", source=[str(self.root / "input.json")], scope="Write assigned output",
                 forbidden="No APIs or replacements", verify="Run the pinned checker", write_scope=key,
                 expected_seconds=1, deliverables=["result.json", "report.md"], report="report.md"))
-        adapter, controller = base / "adapter", base / "controller"
+        adapter = private["paths"]["controllers"] / "adapter" if private else base / "adapter"
+        controller = Path(private["runtime"]["controller"]["path"]) if private else base / "controller"
         adapter.mkdir()
-        controller.mkdir()
+        controller.mkdir(exist_ok=True)
         (adapter / "scripts").mkdir()
-        (controller / "SKILL.md").write_text("offline fixture\n")
+        if not private:
+            (controller / "SKILL.md").write_text("offline fixture\n")
         checker = adapter / "scripts" / "checker.py"
         checker.write_text('import json,sys\nfrom pathlib import Path\nr=json.load(sys.stdin)\n'
             'v=json.loads((Path(r["output_root"])/"result.json").read_text())\n'
             'print(json.dumps({"checks":[{"id":"answer", "passed": v == {"answer":42}}]}))\n')
-        self.campaign = dict(version=2, evidence_class="offline_fixture", campaign_id="fixture-campaign",
-            root=str(self.root), created_at=utc_now(), lease_root=str(base / "leases"),
+        self.campaign = dict(version=version, evidence_class="offline_fixture", campaign_id="fixture-campaign",
+            root=str(self.root), created_at=utc_now(),
+            lease_root=str(private["paths"]["state"] / "orchestration-leases" if private else base / "leases"),
             plan=write_json(self.root / "plan.json", self.plan), sessions={k: c.session for k, c in self.clients.items()},
             runs=[dict(run_id=f"run-{i:02d}", strategy=s) for i, s in enumerate(strategies, 1)],
             inputs=[write_json(self.root / "input.json", {"question": "6 * 7"})], authorization=authorization,
             controller=tree_manifest(controller), adapter=tree_manifest(adapter), python=file_ref(Path(sys.executable).resolve()),
             checker=file_ref(checker), checker_timeout_seconds=10, decision_provider="rules",
-            metrics=copy.deepcopy(METRICS),
+            metrics=copy.deepcopy(METRICS_V3 if version == 3 else METRICS),
             minimum_improvement_percent=15, third_party_api=False, replacement_sessions=False)
+        if private:
+            self.campaign.update(experiment=private["context_ref"], runtime=private["runtime_ref"],
+                                 arm=arm, client_isolation=None)
         self.ref = write_json(self.root / "campaign.json", self.campaign)
+
+    @staticmethod
+    def _private_runtime(base, arm):
+        """Minimal explicitly offline manifest; no client-adoption or live bypass."""
+        from upgrade_experiment import arm_paths, init_experiment, validate_context
+        source = base / "original-controller"
+        (source / "scripts").mkdir(parents=True)
+        (source / "SKILL.md").write_text("offline fixture\n")
+        (source / "scripts/mac_harness.py").write_text("# offline fixture only\n")
+        context_ref = init_experiment(base / "lab", "three-lane-fixture", source)
+        context = validate_context(context_ref)
+        paths = arm_paths(context, arm)
+        for path in paths.values():
+            path.mkdir()
+        controller = paths["controllers"] / "releases/private-v1/source"
+        (controller / "scripts").mkdir(parents=True)
+        (controller / "SKILL.md").write_text("offline fixture\n")
+        (controller / "scripts/mac_harness.py").write_text("# offline fixture only\n")
+        helper = paths["bin"] / "cmux-agent"
+        helper.write_text("# offline fixture; no transport\n")
+        configs = {name: write_json(paths["config"] / name, {"offline_fixture": True})
+                   for name in ("codex-hooks.json", "claude-settings.json")}
+        runtime = dict(version=1, skill=context["skill"], context=context_ref, arm=arm, execution_mode="offline",
+            source_controller=context["source_controller"], controller=tree_manifest(controller),
+            release_manifest=write_json(controller.parent / "MANIFEST.json", {"offline_fixture": True}),
+            patches=write_json(paths["controllers"] / "patches.json", {"offline_fixture": True}),
+            helper=file_ref(helper), configs=configs, state_root=str(paths["state"]), config_root=str(paths["config"]),
+            python=context["python"], production_adoption=False)
+        runtime_ref = write_json(paths["controllers"] / "runtime.json", runtime)
+        return dict(context_ref=context_ref, paths=paths, runtime=runtime, runtime_ref=runtime_ref)
 
     def save(self):
         self.ref = write_json(self.root / "campaign.json", self.campaign)
@@ -162,7 +217,8 @@ class CampaignFixture:
     def control(self, action, run_id, **kwargs):
         script = control_script(self.campaign, self.ref, action, run_id, **kwargs)
         return self.clients["codex"].append(dict(type="response_item", timestamp=utc_now(),
-            payload={"type": "custom_tool_call", "name": "exec", "input": script}))
+            payload={"type": "custom_tool_call", "name": "exec", "input": script,
+                     "call_id": "fixture-control-" + str(self.clients["codex"].path.stat().st_size)}))
 
     def start(self, index=0):
         spec = self.campaign["runs"][index]
@@ -171,7 +227,7 @@ class CampaignFixture:
 
     def disarm(self, co, key):
         from orchestration_transport import Transport
-        runtime = OfflineDisarmRuntime(self.campaign, co.root / "offline-disarm")
+        runtime = OfflineDisarmRuntime(self.campaign, co.root / "offline-disarm", executor_id=co.nodes[key]["executor"])
         return Transport(co, key, runtime=runtime).disarm()
 
     def work(self, info, lane="codex"):
@@ -200,7 +256,7 @@ class CampaignFixture:
         manifest, outputs, report = output_refs(self.campaign, co.header, node, info)
         tests = write_json(co.root / "nodes" / key / "tests.json",
                            make_test_result(self.campaign, co.header, node, info, outputs), exclusive=True)
-        evidence = dict(version=2, evidence_class="offline_fixture", **task_identity(self.campaign, co.header, node),
+        evidence = dict(version=campaign_version(self.campaign), evidence_class="offline_fixture", **task_identity(self.campaign, co.header, node),
             execution_kind=info["mode"], output_tree=manifest, output_files=outputs, report=report, tests=tests,
             candidate_native_end={k: c.reader.snapshot() for k, c in self.clients.items()})
         if protocol is None:
@@ -225,7 +281,7 @@ class CampaignFixture:
         info, node = data[key], co.nodes[key]
         directory = co.root / "nodes" / key
         preflight = directory / "preflight"
-        client, sender = self.clients["claude"], self.clients["codex"].session
+        client, sender = self.clients[node["executor"]], self.clients["codex"].session
         nonce = secrets.token_hex(4)
         ack = f"PREFLIGHT_ACK|{info['task_id']}|claude:identity|READY|INLINE|{nonce}"
         notice = "PREFLIGHT " + ack
@@ -236,8 +292,8 @@ class CampaignFixture:
         handshake = write_json(preflight / "handshake-receipt.json", dict(task_id=info["task_id"], status="PASS",
             executor_ack=True, ack_nonce=nonce, ack_line=ack))
         gate = write_json(preflight / "identity-gate.json", dict(task_id=info["task_id"], status="PASS",
-            native_participants=[dict(provider=k, surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
-                                 for k, c in self.clients.items()]))
+            native_participants=[dict(provider=c.session["provider"], surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
+                                 for k, c in self.clients.items() if k in ("codex", node["executor"])]))
         validation = write_json(preflight / "validation.json", dict(task_id=info["task_id"], status="PASS"))
         completion = secrets.token_hex(12)
         report = str(Path(info["output_root"]) / node["report"])
@@ -266,7 +322,7 @@ class CampaignFixture:
         info = co.state()[1][key]
         value = dict(version=2, operation="submit_task_pack", **task_identity(self.campaign, co.header, co.nodes[key]),
                      prepared=info["prepared"], controller_sha256=object_sha(self.campaign["controller"]),
-                     created_at=utc_now(), native_fence=self.clients["claude"].reader.snapshot())
+                     created_at=utc_now(), native_fence=self.clients[co.nodes[key]["executor"]].reader.snapshot())
         ref = write_json(co.root / "nodes" / key / "dispatch-intent.json", value)
         co.transition(key, State.DISPATCH_INTENT, {"dispatch_intent": ref})
         return ref
@@ -274,7 +330,7 @@ class CampaignFixture:
     def dispatch(self, co, key):
         info = co.state()[1][key]
         notice = read_ref(info["prepared"]["notice"]).decode()
-        bundle = self.clients["claude"].delivery(notice, sender=self.clients["codex"].session,
+        bundle = self.clients[co.nodes[key]["executor"]].delivery(notice, sender=self.clients["codex"].session,
             journal=co.root / "nodes" / key / "task-dispatch", at=utc_now(), task_id=info["task_id"], marker=info["task_id"],
             task_pack_sha256=info["prepared"]["pack"]["sha256"], payload_sha256=digest(notice.encode()))
         co.transition(key, State.DISPATCHED, {"delivery": bundle})
@@ -285,7 +341,7 @@ class CampaignFixture:
         pack = json_ref(info["prepared"]["pack"])
         report = file_ref(pack["report"])
         path = Path(pack["completion_receipt"])
-        callback = self.clients["codex"].delivery(pack["completion_callback"], sender=self.clients["claude"].session,
+        callback = self.clients["codex"].delivery(pack["completion_callback"], sender=self.clients[co.nodes[key]["executor"]].session,
             journal=path.with_name(path.stem + "-attempts"), receipt_path=path, at=utc_now(),
             task_id=info["task_id"], completion_nonce=pack["completion_nonce"], completion_callback=pack["completion_callback"],
             callback_target=self.clients["codex"].session["surface_ref"], task_pack_sha256=info["prepared"]["pack"]["sha256"],
@@ -300,7 +356,7 @@ class CampaignFixture:
 
     def failure(self, co, key, boundary="local_boundary", **extra):
         info = co.state()[1][key]
-        evidence = dict(version=2, evidence_class="offline_fixture", **task_identity(self.campaign, co.header, co.nodes[key]),
+        evidence = dict(version=campaign_version(self.campaign), evidence_class="offline_fixture", **task_identity(self.campaign, co.header, co.nodes[key]),
                         blocker=info["blocker"], boundary=boundary, output_tree=tree_manifest(info["output_root"], kind="output"), **extra)
         write_json(co.root / "nodes" / key / "failure-candidate.json", evidence)
         evidence["failure_native"] = self.control("settle", co.spec["run_id"], node_id=key, marker=failure_marker(info, evidence))

@@ -20,6 +20,7 @@ from orchestration_common import (ContractError, checked_path, contract_errors, 
                                   object_sha, parse_time, read_json, read_ref, utc_now, verify_tree, within,
                                   write_bytes_once, write_json)
 from orchestration_coordinator import State
+from orchestration_contracts import campaign_version, state_root
 from orchestration_disarm import (Recovery, freeze_original, invoke_disarm, invoke_recovery, observe_original,
                                   original_result, validate_frozen, validate_result)
 from orchestration_evidence import (dispatch_journal, node_directory, pack_extension, task_identity,
@@ -105,8 +106,14 @@ class PinnedRuntime:
             sys.path.pop(0)
             verify_tree(self.campaign["controller"])
 
-    def harness_argv(self, phase, task_id, artifact_root):
-        receiver = self.campaign["sessions"]["claude"]
+    def harness_argv(self, phase, task_id, artifact_root, *, executor_id=None):
+        if campaign_version(self.campaign) == 2:
+            require(executor_id in (None, "claude"), "legacy campaign has one Claude lane")
+            executor_id = "claude"
+        require(executor_id in self.campaign["sessions"] and
+                self.campaign["sessions"][executor_id]["provider"] == "claude",
+                "an explicit original Claude executor is required")
+        receiver = self.campaign["sessions"][executor_id]
         return [self.campaign["python"]["path"], "-B", str(self.scripts / "mac_harness.py"), phase,
                 "--task-id", task_id, "--artifact-root", str(artifact_root), "--executor", "claude",
                 "--supervisor", "codex", "--executor-surface", receiver["surface_uuid"],
@@ -217,7 +224,7 @@ def journal_bundle(directory, receipt=None):
 
 def handshake_journal(campaign, nonce):
     key = digest(json.dumps([campaign["sessions"]["codex"]["surface_uuid"], nonce], sort_keys=True).encode())
-    return Path.home() / ".local/state/multi-agent-collaboration/message-dispatch-v1" / key
+    return state_root(campaign) / "message-dispatch-v1" / key
 
 
 def exact_native(reader, text, start, role):
@@ -232,9 +239,10 @@ class Transport:
         self.co = coordinator
         self.key = node_id
         self.node = coordinator.nodes[node_id]
-        require(self.node["executor"] == "claude", "transport only serves the original Claude lane")
         require(coordinator.fixtures or runtime is None, "runtime overrides are offline-test-only")
         self.campaign = coordinator.campaign
+        self.receiver = self.campaign["sessions"][self.node["executor"]]
+        require(self.receiver["provider"] == "claude", "transport only serves an original Claude executor")
         self.root = node_directory(self.campaign, coordinator.header, self.node)
         self.runtime = runtime if runtime is not None else PinnedRuntime(self.campaign)
 
@@ -249,13 +257,18 @@ class Transport:
     def _bundle(self, info):
         return journal_bundle(dispatch_journal(self.campaign, info))
 
+    def _harness_argv(self, phase, task_id, artifact_root):
+        if campaign_version(self.campaign) == 2:
+            return self.runtime.harness_argv(phase, task_id, artifact_root)
+        return self.runtime.harness_argv(phase, task_id, artifact_root, executor_id=self.node["executor"])
+
     def _preparation_proof(self, info, *, existing_only=False):
         preflight = self.root / "preflight"
         handshake = read_json(preflight / "handshake-receipt.json")
         original = handshake_journal(self.campaign, handshake["ack_nonce"])
         delivery = journal_bundle(original)
         receipt = json_ref(delivery["receipt"])
-        reader = NativeReader(self.campaign["sessions"]["claude"], fixtures=self.co.fixtures)
+        reader = NativeReader(self.receiver, fixtures=self.co.fixtures)
         # The ordinary journal intentionally does not store the complete notice.
         # Recover its exact text only from the receipt's original native record.
         notice = native_text(reader.record(receipt["native_proof"]), "claude", "user")
@@ -281,6 +294,7 @@ class Transport:
                 verify_prepared(self.campaign, self.co.header, self.node, info, info["prepared"], fixtures=self.co.fixtures)
                 return info["prepared"]
             require(state == State.PREPARING, "preparation is not active")
+            self.co._work_budget()
             journal = self.journal(info)
             config_path = self.root / "transport.json"
             expected = dict(version=2, task_id=info["task_id"], campaign=self.co.campaign_ref)
@@ -292,7 +306,7 @@ class Transport:
                     re.fullmatch(r"[0-9a-f]{24}", config["completion_nonce"]), "original transport nonce/config changed")
             preflight = self.root / "preflight"
             for phase in ("preflight", "task-pack"):
-                argv = self.runtime.harness_argv(phase, info["task_id"], preflight)
+                argv = self._harness_argv(phase, info["task_id"], preflight)
                 result = journal.once(phase, {"argv": argv}, lambda op, argv=argv: self.runtime.harness(argv, op))
                 require(result.get("returncode") == 0, f"original {phase} failed; inspect its saved output, do not repeat it")
 
@@ -308,7 +322,7 @@ class Transport:
                 return write_json(path, pack)
 
             journal.once("fill-pack", {"transport": file_ref(config_path)}, fill)
-            argv = self.runtime.harness_argv("finalize-pack", info["task_id"], preflight)
+            argv = self._harness_argv("finalize-pack", info["task_id"], preflight)
             result = journal.once("finalize-pack", {"argv": argv}, lambda op: self.runtime.harness(argv, op))
             require(result.get("returncode") == 0, "original finalization failed; preserve its result")
             pack_ref = file_ref(preflight / "task-pack.json")
@@ -344,6 +358,7 @@ class Transport:
             if state in (State.DISPATCH_INTENT, State.UNCERTAIN):
                 return self._observe(info, reconcile=False)
             require(state == State.PREPARED, "finalize the pack before dispatch")
+            self.co._work_budget()
             intent_path = self.root / "dispatch-intent.json"
             # Even a crash before the lifecycle transition cannot grant a new
             # submit budget. The pre-existing intent becomes observe-only.
@@ -351,7 +366,7 @@ class Transport:
             if not existed:
                 value = dict(version=2, operation="submit_task_pack", **task_identity(self.campaign, self.co.header, self.node),
                              prepared=info["prepared"], controller_sha256=object_sha(self.campaign["controller"]),
-                             created_at=utc_now(), native_fence=NativeReader(self.campaign["sessions"]["claude"],
+                             created_at=utc_now(), native_fence=NativeReader(self.receiver,
                                                                           fixtures=self.co.fixtures).snapshot())
                 write_json(intent_path, value, exclusive=True)
             self.co.transition(self.key, State.DISPATCH_INTENT, {"dispatch_intent": file_ref(intent_path)})
@@ -359,7 +374,7 @@ class Transport:
             if existed:
                 return self._observe(info, reconcile=False)
             notice, pack = read_ref(info["prepared"]["notice"]).decode(), info["prepared"]["pack"]
-            args = dict(surface=self.campaign["sessions"]["claude"]["surface_uuid"], notice=info["prepared"]["notice"],
+            args = dict(surface=self.receiver["surface_uuid"], notice=info["prepared"]["notice"],
                         pack=pack, reconcile_only=False)
             try:
                 self.journal(info).once("submit-task-pack", args,
@@ -380,7 +395,7 @@ class Transport:
                 pack, notice = info["prepared"]["pack"], info["prepared"]["notice"]
                 args = dict(pack=pack, notice=notice, reconcile_only=True)
                 self.journal(info).observation("reconcile-task", args, lambda _: self.runtime.submit(
-                    self.campaign["sessions"]["claude"]["surface_uuid"], read_ref(notice).decode(),
+                    self.receiver["surface_uuid"], read_ref(notice).decode(),
                     pack["path"], reconcile_only=True))
                 return self._received(info)
             return self._uncertain("original dispatch result is absent; no new input")
@@ -420,7 +435,7 @@ class Transport:
                 self.journal(info).observation("settle-callback", args, lambda _: self.runtime.settle_callback(
                     pack_ref["path"], str(reader.path), line))
             bundle = journal_bundle(journal, receipt)
-            verify_delivery(bundle, self.campaign["sessions"]["codex"], self.campaign["sessions"]["claude"],
+            verify_delivery(bundle, self.campaign["sessions"]["codex"], self.receiver,
                             pack["completion_callback"], fixtures=self.co.fixtures)
             return bundle
 

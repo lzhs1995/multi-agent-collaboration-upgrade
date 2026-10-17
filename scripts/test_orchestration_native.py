@@ -17,9 +17,9 @@ EPOCH = parse_time(STAMP).timestamp()
 
 
 class NativeFixture:
-    def __init__(self, root, provider="claude"):
+    def __init__(self, root, provider="claude", *, session_id=None):
         self.root = Path(root).resolve()
-        sid = "42977dde-eb08-4900-aad1-1d20db13ff17" if provider == "claude" else "01a13a5f-2412-7012-a872-501c8f75fda9"
+        sid = session_id or ("42977dde-eb08-4900-aad1-1d20db13ff17" if provider == "claude" else "01a13a5f-2412-7012-a872-501c8f75fda9")
         self.path = self.root / (sid + ".jsonl")
         self.provider = provider
         self.path.write_bytes(canonical(dict(type="session_meta", payload={"id": sid}, sessionId=sid)))
@@ -262,6 +262,70 @@ class NativeEvidenceTests(unittest.TestCase):
             next(f.reader.records(0, end + 1))
         with self.assertRaisesRegex(ContractError, "native range starts inside a record"):
             next(f.reader.records(start + 1, end))
+
+    def test_observation_retains_pending_evidence_without_completion(self):
+        for provider in ("claude", "codex"):
+            root = self.root / provider
+            root.mkdir()
+            f = NativeFixture(root, provider)
+            call, pending = self.action_records(f, {"status": "running", "session_id": 12})
+            start = f.reader.snapshot()["offset"]
+            call_ref = f.append(call)
+            for result in (None, pending):
+                pending_ref = f.append(result) if result else None
+                summary = f.reader.action_summary(start, f.reader.snapshot()["offset"],
+                    task_id="task", output_root="/task/output", allow_empty=True,
+                    allow_incomplete=True, include_evidence=True)
+                self.assertEqual((summary["pending_task_calls"], summary["completed_task_calls"]), (1, 0))
+                self.assertIsNone(summary["first_action_at"])
+                self.assertIsNone(summary["last_action_at"])
+                action = summary["actions"][0]
+                self.assertEqual(action["call"], call_ref)
+                self.assertEqual(action["pending_results"], [pending_ref] if result else [])
+                self.assertIsNone(action["completed_at"])
+                self.assertIsNone(action["result"])
+                with self.assertRaisesRegex(ContractError, "unfinished task tool call"):
+                    f.reader.action_summary(start, f.reader.snapshot()["offset"],
+                        task_id="task", output_root="/task/output", allow_empty=True)
+
+    def test_pending_and_failed_actions_cannot_be_first_successful_work(self):
+        f = NativeFixture(self.root, "codex")
+        start = f.reader.snapshot()["offset"]
+        for index, value in enumerate(({"exit_code": 2}, {"status": "running"}, {"exit_code": 0})):
+            call, result = self.action_records(f, value)
+            call["payload"]["call_id"] = result["payload"]["call_id"] = str(index)
+            call["timestamp"] = result["timestamp"] = f"2026-10-14T00:00:0{index + 2}+00:00"
+            f.append(call)
+            f.append(result)
+        summary = f.reader.action_summary(start, f.reader.snapshot()["offset"], task_id="task",
+            output_root="/task/output", allow_incomplete=True, include_evidence=True)
+        self.assertEqual([a["status"] for a in summary["actions"]], ["FAILED", "PENDING", "COMPLETED"])
+        self.assertEqual(summary["first_action_at"], "2026-10-14T00:00:04+00:00")
+        self.assertEqual(summary["last_action_at"], "2026-10-14T00:00:04+00:00")
+
+    def test_pending_result_chronology_is_checked_before_observing_it(self):
+        f = NativeFixture(self.root, "codex")
+        call, pending = self.action_records(f, {"status": "running"})
+        start = f.reader.snapshot()["offset"]
+        f.append(call)
+        pending["timestamp"] = "2026-10-14T00:00:01+00:00"
+        f.append(pending)
+        with self.assertRaisesRegex(ContractError, "precedes its call"):
+            f.reader.action_summary(start, f.reader.snapshot()["offset"], task_id="task",
+                output_root="/task/output", allow_empty=True, allow_incomplete=True, include_evidence=True)
+
+    def test_final_result_cannot_precede_an_observed_pending_result(self):
+        f = NativeFixture(self.root, "codex")
+        call, pending = self.action_records(f, {"status": "running"})
+        start = f.reader.snapshot()["offset"]
+        f.append(call)
+        pending["timestamp"] = "2026-10-14T00:00:05+00:00"
+        f.append(pending)
+        _, final = self.action_records(f, {"exit_code": 0})
+        f.append(final)
+        with self.assertRaisesRegex(ContractError, "chronology moved backwards"):
+            f.reader.action_summary(start, f.reader.snapshot()["offset"], task_id="task",
+                output_root="/task/output", allow_empty=True, allow_incomplete=True, include_evidence=True)
 
     def test_duplicate_calls_and_results_cannot_inflate_useful_actions(self):
         for provider in ("claude", "codex"):
