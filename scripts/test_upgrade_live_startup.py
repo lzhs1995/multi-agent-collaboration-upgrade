@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,7 @@ from unittest.mock import patch
 import uuid
 
 from orchestration_common import ContractError, file_ref, json_ref, write_json
-from upgrade_client_isolation import LANES, SANDBOX
+from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
 from upgrade_experiment import arm_paths, init_experiment, validate_context
 from upgrade_hook_observer import hook_parents
 import upgrade_input_gate as gate
@@ -65,6 +66,52 @@ class MaterializedStartupTests(unittest.TestCase):
         self.assertIn("--remote", self.spec["clients"]["codex"]["argv"])
         self.assertFalse((self.paths["state"] / "startup").exists())
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_full_codex_wrapper_joins_real_startup_argv_once_without_model(self):
+        # Run the entire materialized wrapper and final exec inside Seatbelt.
+        # Only the external CLI emitter/model executable are replaced by inert
+        # fixtures; no live cmux command, native client or credential is used.
+        capture = self.root / "capture-argv"
+        capture.write_text("#!/bin/bash\nexec " + shlex.quote(sys.executable) +
+                           " -I -B -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \"$@\"\n")
+        capture.chmod(0o755)
+        emitter = self.root / "emit-hooks"
+        emitter.write_text("#!/bin/bash\n" +
+            '[[ "$*" == "hooks codex inject-args" ]] || exit 73\n' +
+            '[[ "$UPGRADE_TEST_EMIT" == "empty" ]] && exit 0\n' +
+            '[[ "$UPGRADE_TEST_EMIT" == "error" ]] && exit 1\n' +
+            "printf '%s\\0' --enable hooks --dangerously-bypass-hook-trust -c " +
+            shlex.quote('hooks.PreToolUse=[{hooks=[{type="command",command="/fixture/cmux-hook"}]}]') + "\n")
+        emitter.chmod(0o755)
+        context = init_experiment(self.root / "j", "argv-join", SOURCE)
+        binaries = dict(self.binaries, codex=capture, cmux=emitter)
+        runtime = json_ref(materialize_live(context, "B", binaries=binaries, provider_configuration=({}, {})))
+        spec, _ = validate_startup(runtime["startup"])
+        client = spec["clients"]["codex"]
+        env = clean_child_environment(client["environment"])
+        env.update(CMUX_SURFACE_ID=str(uuid.uuid4()), CMUX_WORKSPACE_ID=str(uuid.uuid4()),
+                   CMUX_BUNDLED_CLI_PATH=str(emitter), CMUX_COMPUTER_USE_APP_ENABLED="0",
+                   CMUX_COMPUTER_USE_MCP_DISABLED="1")
+        env.pop("CMUX_SOCKET_PATH", None)
+        for mode in ("normal", "empty", "error"):
+            with self.subTest(mode=mode):
+                env["UPGRADE_TEST_EMIT"] = mode
+                result = subprocess.run([str(SANDBOX), "-f", spec["pins"]["codex_sandbox"]["path"],
+                                         *client["argv"]], env=env, cwd=spec["work_root"],
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = json.loads(result.stdout)
+                flag = "--dangerously-bypass-hook-trust"
+                self.assertEqual(args.count(flag), 1)
+                self.assertEqual(args[-1], client["argv"][-1])  # exact original readiness prompt
+                self.assertEqual(args[args.index("--remote") + 1], "unix://" + spec["rpc"]["path"])
+                for arg in client["argv"][1:]:
+                    self.assertIn(arg, args)
+                self.assertEqual("--enable" in args, mode == "normal")
+                self.assertEqual(any("/fixture/cmux-hook" in arg for arg in args), mode == "normal")
+        self.assertFalse(Path(spec["rpc"]["path"]).exists())
+        self.assertFalse(Path(spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_inventory_and_controlling_tty_inside_seatbelt(self):

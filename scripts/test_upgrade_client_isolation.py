@@ -119,6 +119,24 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "TMP_PATH_TOO_LONG"):
             client_temp_base({"tmp": self.root / ("长" * 10)}, "claude_b")
 
+    @unittest.skipUnless(Path("/Applications/cmux.app/Contents/Resources/bin/cmux-codex-wrapper").exists(),
+                         "installed cmux wrapper unavailable")
+    def test_codex_join_preserves_values_prompt_separator_and_other_repeated_options(self):
+        original = Path("/Applications/cmux.app/Contents/Resources/bin/cmux-codex-wrapper").read_bytes()
+        wrapper = patch_cmux_wrapper("codex", original, Path("/usr/bin/true"), self.paths).decode()
+        parser = wrapper[wrapper.index("codex_option_consumes_value() {"):
+                         wrapper.index("codex_passthrough_option_flag() {")]
+        merge = wrapper[wrapper.index("cmux_upgrade_codex_args=()"):
+                        wrapper.index("if cmux_codex_read_inject_args; then")]
+        flag = "--dangerously-bypass-hook-trust"
+        args = ["--config", flag, flag, "--enable", "hooks", flag,
+                "-c", 'quoted="a b"', "--enable", "other", "--", flag, "prompt\n" + flag]
+        script = parser + merge + '\ncmux_upgrade_merge_codex_args "$@"\nprintf "%s\\0" "${cmux_upgrade_codex_args[@]}"\n'
+        result = subprocess.run(["/bin/bash", "-c", script, "fixture", *args], capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = args[:5] + args[6:]
+        self.assertEqual(result.stdout.decode().split("\0")[:-1], expected)
+
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS Seatbelt")
     def test_actual_child_temporary_files_stay_private_and_outside_writes_fail(self):
         self.paths["tmp"].mkdir(mode=0o700)

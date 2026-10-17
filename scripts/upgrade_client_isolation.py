@@ -274,10 +274,11 @@ def clean_child_environment(overrides):
 
 
 def patch_cmux_wrapper(provider, original, real_binary, paths, *, node=None):
-    """Pin a cmux wrapper copy and relocate its incidental cache writes only.
+    """Pin a private wrapper, its cache writes and the startup argument join.
 
     No global wrapper is installed/replaced. Preserve cmux's native hook producer
-    and CLI argument handling; don't implement another input sender.
+    and CLI argument handling except duplicate hook-trust flags at the join;
+    don't implement another input sender.
     """
     require(provider in ("codex", "claude"), "unsupported wrapper")
     binary = checked_path(real_binary)
@@ -289,6 +290,43 @@ def patch_cmux_wrapper(provider, original, real_binary, paths, *, node=None):
     marker = "REAL_" + provider.upper() + '=\"$(' + function + ')\"'
     require(text.count(marker) == 1, "unrecognised cmux wrapper executable resolver")
     text = text.replace(marker, "REAL_" + provider.upper() + "=" + shlex.quote(str(binary)), 1)
+    if provider == "codex":
+        # The immutable startup argv owns a trust flag even when cmux emits
+        # nothing. Its hook producer may emit the same non-repeatable flag.
+        # Merge only that boolean; preserve option values, ordering and prompts.
+        marker = 'if cmux_codex_read_inject_args; then\n'
+        joined = '"${cmux_codex_injected_args[@]}" "${cmux_codex_session_args[@]}"'
+        require(text.count(marker) == text.count(joined) == 1,
+                "unrecognised cmux Codex argument join")
+        merge = '''cmux_upgrade_codex_args=()
+cmux_upgrade_merge_codex_args() {
+    local trust_seen=false value_pending=false after_separator=false arg
+    cmux_upgrade_codex_args=()
+    for arg in "$@"; do
+        if [[ "$value_pending" == true ]]; then
+            value_pending=false
+        elif [[ "$after_separator" == false ]]; then
+            case "$arg" in
+                --) after_separator=true ;;
+                --dangerously-bypass-hook-trust)
+                    [[ "$trust_seen" == true ]] && continue
+                    trust_seen=true
+                    ;;
+                *)
+                    if [[ "$arg" != *=* ]] && codex_option_consumes_value "$arg"; then
+                        value_pending=true
+                    fi
+                    ;;
+            esac
+        fi
+        cmux_upgrade_codex_args+=("$arg")
+    done
+}
+
+'''
+        text = text.replace(joined, '"${cmux_upgrade_codex_args[@]}"', 1)
+        text = text.replace(marker, merge + marker +
+                            '    cmux_upgrade_merge_codex_args ' + joined + '\n', 1)
     if provider == "claude":
         require(node is not None, "explicit Node executable required")
         node = checked_path(node)

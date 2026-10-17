@@ -215,3 +215,39 @@ profile refusal. Source/log pins belong in a new evidence directory. A subsequen
 live candidate must pin its exact paths and obtain authorization for this changed
 write scope and its new clients before the first launch. A passing test suite is
 not native startup, automatic adoption, pilot acceptance or measured efficiency.
+
+## r4 startup result and wrapper/workspace repair
+
+r4 was explicitly authorized and launched once. Its physical Codex socket was
+created, crossing the r3 failure boundary. Both original Claude clients completed
+native readiness; a separate read-only diagnostic correlated their original
+readiness calls with automatic PreToolUse and PostToolUse observations. This
+diagnostic did not publish adoption or prove every live isolation/input gate.
+The original Codex CLI exited before establishing a session because both the
+startup argv and cmux hook emitter supplied the non-repeatable
+`--dangerously-bypass-hook-trust` flag. The inspector also rejected the actual
+creation response `OK workspace:1000020047` by requiring a UUID substring.
+
+r4 is HALTED/FAILED: one permit, zero of 33 closures, pilot zero of three, no
+business dispatch and no adoption. Preserve `/Users/lzhs/u4`, its sessions,
+socket/lock, original driver result and frozen v4 source. Its authorization is
+already received; it does not authorize replacement or replay after failure.
+
+The repaired private Codex wrapper deduplicates only that boolean flag at the
+final injected/session argument join. It retains one startup flag even if the
+hook emitter is empty or fails, and preserves option values, other repeated
+options, ordering and prompt text after `--`. The global wrapper is unchanged.
+Workspace inspection parses the complete response and uniquely resolves each
+ref/UUID selector against the same fresh tree used for native surface lookup.
+Ambiguous, conflicting, duplicate and substring-only responses fail closed;
+PID/birth, workspace, provider, native root, session, kernel and hook gates remain.
+
+Run `test_upgrade_client_isolation`, `test_upgrade_live_startup`,
+`test_upgrade_live_inspect` and `test_upgrade_benchmark`, then one complete suite
+over unchanged source. The full-wrapper test executes real private materialization
+inside Seatbelt with inert external emitter/model fixtures. Inspector-flow tests
+cover real ref resolution and rejection before readiness on moved surfaces or
+changed PID/birth; native processes, kernel and RPC are fixtures there. Neither
+test is a model run or adoption proof. Freeze the tested repair separately and
+prepare any successor without launch. Present its exact new-client/socket scope
+only after validation; never silently rerun or rewrite r4.

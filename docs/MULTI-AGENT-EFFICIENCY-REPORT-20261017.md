@@ -1,6 +1,6 @@
 # 多 agent 协作提效报告
 
-更新日期：2026-10-17。用户已授权继续实现和独立实验。r3 已实际启动双 Claude，但 Codex 启动失败，实验封存为 HALTED/FAILED；当前在完成本地修复与后续候选验证。平台源码、Issue、PR 结论仍沿用 2026-10-16 的固定 gh CLI 证据，不代表重新核查后的线上状态。
+更新日期：2026-10-18。用户已授权的 r4 已启动一次，双 Claude 完成原生 readiness，Codex 的物理 socket 已创建；Codex CLI 因重复 trust 参数退出，工作区 ref 解析也出现误判。r4 已封存为 HALTED/FAILED，当前修复进入完整离线验证。平台源码、Issue、PR 结论仍沿用 2026-10-16 的固定 gh CLI 证据，不代表重新核查后的线上状态。
 
 **建议继续完善 upgrade 的调度闭环，以 Orca 为任务编排的主要架构参考，吸收 Paseo 的主动 callback，通过 MAC 复用原 Codex/Claude 会话。cmux 承载终端，CCC 承担运行维护，thesis-refiner 承担学术工作流与验收。**
 
@@ -12,16 +12,16 @@
 | --- | --- | --- |
 | 四个平台与自身四个仓库的核查 | gh 资料、源码与相关 Issue/PR 审计完成；完整报告有固定提交引用 | 未做跨平台性能实验 |
 | upgrade 实现 | 已有持久协调器、依赖、claims/leases、FIFO、drafts、continuation、时间线，以及注册、permit、自动 driver、原生 bootstrap 和测量闭环 | 全链路 live adoption、callback、独立验收及连续续派尚待证明 |
-| 离线验证 | 修复进程发现后的完整 suite 为 1696 PASS；新增 socket 候选首轮集成定向测试为 41 PASS | 1696 项基线不覆盖随后新增 socket 源码；最终候选以独立完整验证回执为准。测试不等于现场效率或 Claude 独立验收 |
+| 离线验证 | r4 冻结源码曾通过 1706 项全测；本次 wrapper/workspace 修复先通过 42 项定向测试，新增 inspector 整体接线回归后其 11 项全部通过 | 本次新源码以独立完整验证回执为准；历史全测不覆盖后续修复，离线测试不等于 Claude 独立验收 |
 | 代码发布 | [Draft PR #1](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/1) 已存在 | Draft 不等于合并、部署或活跃客户端采用 |
-| r3 双 Claude | 两条真实会话均读取固定 skill、完成 readiness 工具调用并回复 EXPERIMENT_READY，实际模型为 claude-opus-5-5 | readiness 标明 adoption_proven=false、input_operations=0；不能称已通过双 Claude 验收 |
-| r3 Codex | 固定 native binary 的物理 `.lock` 创建被 Seatbelt 拒绝，已定位 EPERM syscall | r3 HALTED/FAILED，1 permit、0/33 closures；原会话与尝试保留 |
-| 当前修复 | libproc 进程识别；显式可选精确 socket/lock 边界；私有装配、alias、启动与输入前校验；真实 syscall 测试 | 新共享目录下两条准确路径的 live 写入与新客户端须在候选可审查后单独授权 |
+| r4 双 Claude | 两条真实原会话完成 readiness；只读诊断关联到各自原生调用和自动 PreToolUse／PostToolUse hooks | 诊断未证明全部隔离与输入门禁，未发布 adoption，未派发业务 |
+| r4 Codex | 物理 socket 创建成功；CLI 因重复 `--dangerously-bypass-hook-trust` 退出，未建立 native session | r4 HALTED/FAILED，1 permit、0/33 closures；r2/r3/r4 原会话与尝试保留 |
+| 当前修复 | 私有 wrapper 在最终 argv 合并处去重；完整 cmux 创建返回值通过同一份 tree 严格解析 ref/UUID；保留身份和隔离检查 | 完成新源码全测、冻结与候选准备后，再确认是否超出既有禁止 replacement/replay 的授权边界 |
 | 效率收益 | 当前注册目标为 3 轮 pilot＋12 对 warm＋3 对 cold，共 33 slots、15 pairs | pilot 0/3；warm/cold 实跑结果、正确性通过、至少 15% 提速均未证明 |
 
 历史握手问题是 ref/UUID 表示混比：原 Claude 收到通知并回复 ACK，主管仍拒绝核收。私有控制器已加入 canonical recipient 兼容修复；原共享会话及失败 receipt 仍保留，不能把新私有代码当作旧会话已完成核收。
 
-r3 两个独立启动故障已定位：`/bin/ps` 在隔离内执行失败，已用有界 libproc inventory 修复；固定 Codex 的 advertised 私有 socket 实际指向共享 daemon 根，原生 `.lock` 的 `open` 被拒绝。新策略只给 Codex 两个准确 literal 路径权限，不开放父目录或邻居文件。当前验证是 SOLO 本地修复验证；后续真实双 Claude 验证仍未完成。
+r3 的 `/bin/ps` 与物理 socket 故障已修复，r4 已跨过 socket 创建边界。r4 暴露出两处后续问题：wrapper 与 startup 重复添加 trust 参数；inspector 把 `OK workspace:1000020047` 误当必须包含 UUID 的响应。修复只改变新私有候选，不修改原会话或冻结控制器。当前代码审查与测试是 SOLO；双 Claude 原生 readiness 和自动 hooks 有证据，但业务验证仍未完成。
 
 ## 2. 两份原分析哪些成立，哪些不成立
 
@@ -53,7 +53,7 @@ Issue/PR 只在对应版本、provider 和复现条件内成立。未合并 PR �
 
 ## 4. 当前到底慢在哪里
 
-已有证据能确认历史核收缺陷和 r3 启动失败；自动 driver 已实现，但完整 live 闭环尚未跑通。其他环节各占多少时间，尚无完整现场时间线。先区分三类时间：
+已有证据能确认历史核收缺陷及 r3/r4 启动失败；自动 driver 已实现，但完整 live 闭环尚未跑通。其他环节各占多少时间，尚无完整现场时间线。先区分三类时间：
 
 - **业务计算**：Claude 阅读、推理、写作、分析和审查。
 - **平台等待**：provider 排队、限流、压缩、断连与恢复。
@@ -79,7 +79,7 @@ Issue/PR 只在对应版本、provider 和复现条件内成立。未合并 PR �
 
 | 顺序 | 具体改动 | 缩短什么等待 | 完成标准 |
 | --- | --- | --- | --- |
-| **P0：私有启动修复** | canonical ACK、只读 stdin、短 Claude temp 路径、固定 Node、libproc 已实现；精确 socket 候选进入验证 | 消除启动与核收前置阻断 | 最终源码全测、固定候选、新范围授权后，真实原生启动与自动 adoption 通过 |
+| **P0：私有启动修复** | 精确 socket 已在 r4 创建成功；新增 wrapper 参数去重及严格工作区响应解析 | 消除启动与核收前置阻断 | 修复源码全测、固定候选、必要的新实验授权后，真实原生启动与自动 adoption 通过 |
 | **P1：时间线** | 已实现只读 timeline、原生事件关联和测量工具 | 识别真实高耗时阶段 | live 证据完整；缺失为 null/UNKNOWN，不回填推测时间 |
 | **P2：事件与就绪** | 已实现持久协调、依赖检查、continuation、permit 与单 driver 所有权 | 减少轮询和整波等待 | 实测重启不重复派发、只有一个写者，正确释放依赖 |
 | **P3：原会话派发** | 已实现 drafts、正式包、原 harness/bridge、会话复用指令 | 减少重复准备 | 同组全部 warm 轮复用原三会话；未知结果只核原尝试 |
@@ -169,4 +169,4 @@ cmux 承载这些原会话；CCC 观察并管理运行状态；thesis-refiner �
 - [cmux 消息机制及 idle Codex 唤醒限制](https://github.com/manaflow-ai/cmux/blob/6c23792198ce042b7ba2c018ca4e0b9d797a4235/docs/agent-messages.md#L23-L79)
 - [Conductor 官方 releases 仓库](https://github.com/meltylabs/conductor-releases/tree/0095de9b888f2a37413a3a3666638344028d2f46)
 
-本报告的后续执行依据是 [隔离实验 runbook](/Users/lzhs/projects/multi-agent-collaboration-upgrade/docs/ISOLATED-UPGRADE-RUNBOOK.md)。最终候选的完整源码、测试日志、精确 socket 路径和新授权需求应一起封存；不得修改或重放 r3。当前没有已测得的提速结论。
+本报告的后续执行依据是 [隔离实验 runbook](/Users/lzhs/projects/multi-agent-collaboration-upgrade/docs/ISOLATED-UPGRADE-RUNBOOK.md)。[r4 失败证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/validation/resume-20261018-r4-startup-failure/manifest.json) 和 [双 Claude 原生 readiness／自动 hooks 诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/validation/resume-20261018-r4-startup-failure/native-readiness-03.json) 已保存。该诊断使用源码读取器，其私有 root 环境字段未采集，不冒充完整 adoption。最终候选的源码、测试日志、精确 socket 路径和新授权需求另行封存；不得修改或重放 r2/r3/r4。当前没有已测得的提速结论。

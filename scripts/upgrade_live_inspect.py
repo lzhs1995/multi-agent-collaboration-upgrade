@@ -26,12 +26,58 @@ from upgrade_socket_boundary import binding_boundary, verify_kernel
 class ReadOnlyCmux:
     def __init__(self, executable):
         self.executable = executable
+        self.snapshot = None
 
     def _run(self, *args):
         require(args == ("tree", "--all", "--json", "--id-format", "both"),
                 "INSPECTOR_METADATA_ONLY")
-        return subprocess.run([self.executable, *args], capture_output=True,
-                              text=True, timeout=10, check=True).stdout
+        # One fresh tree per inspection, shared by workspace and surface checks.
+        if self.snapshot is None:
+            self.snapshot = subprocess.run([self.executable, *args], capture_output=True,
+                                           text=True, timeout=10, check=True).stdout
+        return self.snapshot
+
+
+def launch_workspace(stdout, bridge):
+    """Resolve the complete original create response against one live tree."""
+    require(isinstance(stdout, str), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+    response = stdout.strip()
+    selectors = {}
+    if response.startswith("{"):
+        value = strict_json(response, "workspace creation response")
+        require(isinstance(value, dict) and value
+                and set(value) <= {"workspace_id", "workspace_ref", "id", "ref"},
+                "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        for key, item in value.items():
+            kind = "ref" if key.endswith("ref") else "id"
+            require(kind not in selectors, "LAUNCH_WORKSPACE_RESPONSE_AMBIGUOUS")
+            selectors[kind] = item
+    else:
+        match = re.fullmatch(r"(?:OK )?(workspace:[0-9]+|[0-9a-fA-F-]{36})", response)
+        require(match is not None, "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        item = match[1]
+        selectors["ref" if item.startswith("workspace:") else "id"] = item
+    for kind, item in selectors.items():
+        require(isinstance(item, str), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        if kind == "ref":
+            require(re.fullmatch(r"workspace:[0-9]+", item), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        else:
+            selectors[kind] = str(uuid.UUID(item))
+    tree = strict_json(bridge._run("tree", "--all", "--json", "--id-format", "both"), "live cmux tree")
+    workspaces = [ws for window in tree["windows"] for ws in window["workspaces"]]
+    matched = []
+    # Resolve every selector independently: a duplicate ref cannot be excused
+    # by a unique UUID, nor can a ref/UUID mismatch select a different workspace.
+    for kind, item in selectors.items():
+        rows = [ws for ws in workspaces
+                if (str(uuid.UUID(ws["id"])) if kind == "id" else ws.get("ref")) == item]
+        require(len(rows) == 1, "LAUNCH_WORKSPACE_NOT_UNIQUE")
+        matched.append(str(uuid.UUID(rows[0]["id"])))
+    require(len(set(matched)) == 1, "LAUNCH_WORKSPACE_CHANGED")
+    workspace = matched[0]
+    require(sum(str(uuid.UUID(ws["id"])) == workspace for ws in workspaces) == 1,
+            "LAUNCH_WORKSPACE_NOT_UNIQUE")
+    return workspace
 
 
 def native_records(native, session):
@@ -268,7 +314,7 @@ def inspect(startup_ref, spec, binding):
                     "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED")
             workspace = str(uuid.UUID(row["workspace_uuid"]))
             require(workspace == str(uuid.UUID(launch["workspace_uuid"]))
-                    and workspace.lower() in result["stdout"].lower(), "LAUNCH_WORKSPACE_CHANGED")
+                    == launch_workspace(result["stdout"], bridge), "LAUNCH_WORKSPACE_CHANGED")
             provider = "codex" if lane == "codex" else "claude"
             require(native._provider(client) == provider
                     and str(process_root(provider, client)) == spec["clients"][lane]["native_root"],
