@@ -68,6 +68,64 @@ class MaterializedStartupTests(unittest.TestCase):
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_materialized_standalone_tool_hook_and_public_proof(self):
+        # Execute the actual transformed collectors in a fresh interpreter.
+        # Only kernel/foreground observations are fixtures; dispatch is absent.
+        controller = Path(self.spec["controller"]) / "scripts"
+        code = f'''
+import copy, os, sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, {str(controller)!r})
+import cmux_daemon_identity as d
+import cmux_foreground_thread as foreground
+import mac_upgrade_standalone_identity as standalone
+import mac_upgrade_process_inventory as inventory
+assert standalone.__file__ == {str(controller / 'mac_upgrade_standalone_identity.py')!r}
+scope = dict(CMUX_SURFACE_ID='00000000-0000-0000-0000-000000000002',
+             CMUX_WORKSPACE_ID='00000000-0000-0000-0000-000000000003')
+session = '00000000-0000-0000-0000-000000000001'
+env = dict(scope, CODEX_THREAD_ID=session)
+client = dict(pid=44992, ppid=1, birth=[1000, 1], executable='/native/codex',
+              argv=['/native/codex', '--disable', 'computer_use'], env=scope)
+server = dict(pid=45091, ppid=44992, birth=[1001, 1], executable='/native/codex',
+              argv=['/native/codex', 'app-server', '--listen'], env=scope)
+current = dict(pid=os.getpid(), ppid=45091, birth=[1002, 1], executable='/native/python',
+               argv=['/native/python'], env=env)
+chain = [server, client]
+with patch.object(d.sys, 'platform', 'darwin'), \\
+     patch.object(d.os, 'getppid', return_value=45091), \\
+     patch.object(d, '_ancestry', side_effect=lambda: (copy.deepcopy(chain), None)), \\
+     patch.object(d, 'process', side_effect=lambda pid: copy.deepcopy(next(p for p in [current]+chain if p['pid']==pid))), \\
+     patch.object(foreground, 'read', return_value=dict(thread_id=session)), \\
+     patch.object(inventory, 'terminal', return_value='ttys88'):
+    tool = d.collect(env)
+    hook = d.collect_hook(env, dict(session_id=session, hook_event_name='PostToolUse'))
+    assert tool == hook
+    public = d.public_proof(tool)
+    assert public['daemon_pid'] is None and public['foreground']['thread_id'] == session
+    tree = dict(windows=[dict(ref='window:1',workspaces=[dict(id=scope['CMUX_WORKSPACE_ID'],ref='workspace:1',panes=[dict(id='pane-uuid',ref='pane:1',surfaces=[dict(id=scope['CMUX_SURFACE_ID'],ref='surface:1',type='terminal',tty='ttys88')])])])])
+    identity = dict(caller=dict(surface_ref='surface:1',workspace_ref='workspace:1',pane_ref='pane:1'))
+    resolved, resolved_env = d.resolve(identity, tree, env, tool)
+    assert resolved['caller']['surface_id'] == scope['CMUX_SURFACE_ID']
+    assert resolved_env == env
+    bad = copy.deepcopy(tree)
+    bad['windows'][0]['workspaces'][0]['panes'][0]['surfaces'][0]['tty'] = 'ttys99'
+    try:
+        d.resolve(identity, bad, env, tool)
+    except d.IdentityError:
+        pass
+    else:
+        raise AssertionError('wrong surface TTY accepted')
+print('MATERIALIZED_STANDALONE_TOOL_HOOK_PASS')
+'''
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["codex_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MATERIALIZED_STANDALONE_TOOL_HOOK_PASS", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_full_codex_wrapper_joins_real_startup_argv_once_without_model(self):
         # Run the entire materialized wrapper and final exec inside Seatbelt.
         # Only the external CLI emitter/model executable are replaced by inert

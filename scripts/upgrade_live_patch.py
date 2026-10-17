@@ -11,7 +11,8 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_client_isolation", "upgrade_live_entry", "upgrade_live_integrity",
     "upgrade_client_probe", "upgrade_startup_contract", "upgrade_hook_observer",
     "upgrade_input_gate", "upgrade_live_inspect", "upgrade_bootstrap",
-    "upgrade_process_inventory", "upgrade_socket_boundary", "upgrade_claude_ps")}
+    "upgrade_process_inventory", "upgrade_socket_boundary", "upgrade_claude_ps",
+    "upgrade_standalone_identity")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -48,7 +49,7 @@ def native_readers(name, text):
         node = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "client_candidates")
         text = edit_nodes(text, [(node, 'def client_candidates():\n'
             '    return [pid for pid, path in private_process.inventory(lambda name: Path(name).name == "codex")]')])
-        return _terminal_reads(text)
+        return standalone_identity(_terminal_reads(text))
     if name == "cmux_native_delivery.py":
         text = replace_once(text, "import cmux_foreground_thread as foreground",
                             "import cmux_foreground_thread as foreground\nimport upgrade_native_roots as private_roots\n"
@@ -103,6 +104,30 @@ def native_readers(name, text):
                             "from upgrade_native_roots import transcript_root\n"
                             "    if transcript_root('claude', binding=binding) not in log.parents:")
     return text
+
+
+def standalone_identity(text):
+    """Patch only the two absent-daemon branches; keep managed proof intact."""
+    text = replace_once(text, "import cmux_foreground_thread as foreground",
+                        "import cmux_foreground_thread as foreground\n"
+                        "import upgrade_standalone_identity as private_standalone")
+    edits = []
+    for name, arguments in (("collect", "env, chain"),
+                            ("collect_hook", "env, chain, payload=payload")):
+        nodes = [n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == name]
+        if len(nodes) != 1:
+            raise ValueError("expected native collector missing: " + name)
+        node = nodes[0]
+        source = ast.get_source_segment(text, node)
+        replacement = replace_once(source, "if daemon is None:\n        return None",
+            "if daemon is None:\n        return private_standalone.collect(" + arguments + ")")
+        edits.append((node, replacement))
+    text = edit_nodes(text, edits)
+    text = replace_once(text, "source, caller = by_env(daemon['env']), by_env(client['env'])",
+        "origin = daemon if daemon is not None else client\n"
+        "    source, caller = by_env(origin['env']), by_env(client['env'])")
+    return replace_once(text, "daemon_pid=proof['daemon']['pid'],",
+        "daemon_pid=proof['daemon']['pid'] if proof['daemon'] is not None else None,")
 
 
 def _terminal_reads(text):
