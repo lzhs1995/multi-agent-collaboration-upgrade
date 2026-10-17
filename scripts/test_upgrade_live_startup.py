@@ -216,6 +216,87 @@ os.execve({command[0]!r}, {command!r}, os.environ)
             marker.write_bytes(original_marker)
             marker.chmod(0o400)
 
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists()
+                         and Path("/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node").is_file(),
+                         "requires macOS and local Node; no model client is launched")
+    def test_native_node_self_query_inside_both_claude_profiles(self):
+        # Match Claude's observed execFile query using a real native process.
+        # Compare its answer with system ps outside Seatbelt while the same PID
+        # is still alive. No fabricated registry or model adoption is involved.
+        outside = self.root / "ps-outside-sentinel"
+        outside.write_text("unchanged")
+        helper = self.spec["pins"]["claude_ps"]["path"]
+        node = "/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node"
+        script = r'''
+const cp = require('child_process'), fs = require('fs');
+const args = ['-o', 'lstart=', '-p', String(process.pid)];
+const result = cp.spawnSync('ps', args, {encoding: 'utf8', timeout: 10000});
+const system = cp.spawnSync('/bin/ps', args, {encoding: 'utf8', timeout: 10000});
+const denied = [];
+for (const path of [process.argv[1], process.argv[2]]) {
+  try { fs.writeFileSync(path, 'escape'); denied.push(false); }
+  catch (error) { denied.push(error.code === 'EPERM' || error.code === 'EACCES'); }
+}
+console.log(JSON.stringify({pid: process.pid, code: result.status,
+  stdout: result.stdout, stderr: result.stderr, error: result.error?.message,
+  systemError: system.error?.code, denied}));
+fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+'''
+        for lane in ("claude_a", "claude_b"):
+            with self.subTest(lane=lane):
+                env = clean_child_environment(self.spec["clients"][lane]["environment"])
+                with subprocess.Popen([str(SANDBOX), "-f", self.spec["pins"][lane + "_sandbox"]["path"],
+                        node, "-e", script, str(outside), helper], env=env, cwd=self.spec["work_root"],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+                    try:
+                        import selectors
+                        with selectors.DefaultSelector() as selector:
+                            selector.register(child.stdout, selectors.EVENT_READ)
+                            self.assertTrue(selector.select(15), "native self-query timed out")
+                        row = json.loads(child.stdout.readline())
+                        self.assertEqual(row["pid"], child.pid)
+                        self.assertEqual(row["code"], 0, row)
+                        self.assertEqual(row["systemError"], "EPERM")
+                        self.assertEqual(row["denied"], [True, True])
+                        oracle = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(child.pid)],
+                                                capture_output=True, text=True, timeout=5, check=True)
+                        # System ps pads its display column; Claude stores the
+                        # trimmed value. The helper emits just that value + LF.
+                        self.assertEqual(row["stdout"], oracle.stdout.strip() + "\n")
+                    finally:
+                        child.communicate("x", timeout=5)
+                self.assertEqual(child.returncode, 0)
+        self.assertEqual(outside.read_text(), "unchanged")
+        self.assertNotIn("claude-tools", self.spec["clients"]["codex"]["environment"]["PATH"])
+
+    def test_rehashed_changed_ps_helper_and_removed_private_path_refuse(self):
+        path, helper = Path(self.ref["path"]), Path(self.spec["pins"]["claude_ps"]["path"])
+        original_spec, original_helper = path.read_bytes(), helper.read_bytes()
+        try:
+            helper.chmod(0o755)
+            helper.write_text("#!/bin/sh\nprintf 'invented timestamp\\n'\n")
+            helper.chmod(0o555)
+            altered = copy.deepcopy(self.spec)
+            altered["pins"]["claude_ps"] = artifact_ref(helper)
+            path.chmod(0o644)
+            path.write_text(json.dumps(altered))
+            with self.assertRaisesRegex(ContractError, "STARTUP_CLAUDE_PS_CHANGED"):
+                validate_startup(file_ref(path))
+            helper.chmod(0o755)
+            helper.write_bytes(original_helper)
+            helper.chmod(0o555)
+            altered = copy.deepcopy(self.spec)
+            altered["clients"]["claude_a"]["environment"]["PATH"] = altered["clients"]["codex"]["environment"]["PATH"]
+            path.write_text(json.dumps(altered))
+            with self.assertRaisesRegex(ContractError, "STARTUP_ARGUMENTS_OR_ENV_CHANGED"):
+                validate_startup(file_ref(path))
+        finally:
+            helper.chmod(0o755)
+            helper.write_bytes(original_helper)
+            helper.chmod(0o555)
+            path.write_bytes(original_spec)
+            path.chmod(0o444)
+
     def test_long_temp_path_refuses_before_materializing_arm_artifacts(self):
         context_ref = init_experiment(self.root / ("long-root-" * 3), "long-startup", SOURCE)
         paths = arm_paths(validate_context(context_ref), "B")

@@ -12,7 +12,7 @@ from orchestration_common import (ContractError, checked_path, digest, file_ref,
                                   read_regular, tree_manifest, verify_tree, write_bytes_once, write_json)
 from orchestration_native import require
 from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_config, client_argv, client_temp_base,
-    codex_config, control_socket, patch_cmux_wrapper, private_native_roots,
+    claude_ps_wrapper, codex_config, control_socket, patch_cmux_wrapper, private_native_roots,
     prepare_client_temp, read_provider_configuration, sandbox_profile)
 from upgrade_controller_patch import add_bootstrap
 from upgrade_experiment import NAME, arm_paths, protected_paths, validate_context
@@ -26,7 +26,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_native_roots.py", "upgrade_client_isolation.py", "upgrade_live_entry.py",
            "upgrade_live_integrity.py", "upgrade_client_probe.py", "upgrade_startup_contract.py",
            "upgrade_hook_observer.py", "upgrade_input_gate.py", "upgrade_live_inspect.py", "upgrade_bootstrap.py",
-           "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py")
+           "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py",
+           "upgrade_claude_ps.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -108,7 +109,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                 "after": {"sha256": digest(raw), "bytes": len(raw)}})
     for name in SUPPORT:
         raw = read_regular(support / name)
-        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py"):
+        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
         raw = private_imports(raw.decode()).encode()
@@ -147,6 +148,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
+    (paths["bin"] / "claude-tools").mkdir(mode=0o700)
+    pins["claude_ps"] = immutable_bytes(paths["bin"] / "claude-tools/ps",
+        claude_ps_wrapper(controller, context["python"]["path"]), executable=True)
     for provider in ("codex", "claude"):
         pins[provider + "_original_wrapper"] = executable_pins[provider + "_wrapper"]
         pins[provider + "_wrapper"] = immutable_bytes(paths["bin"] / ("cmux-" + provider + "-wrapper"),

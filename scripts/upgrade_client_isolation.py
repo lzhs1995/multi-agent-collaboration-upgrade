@@ -273,6 +273,12 @@ def clean_child_environment(overrides):
     return env
 
 
+def claude_ps_wrapper(controller, python):
+    """An immutable, non-setuid self-query helper for new Claude clients."""
+    return ("#!/bin/sh\nexec " + shlex.join([str(python), "-I", "-B",
+            str(Path(controller) / "scripts/mac_upgrade_claude_ps.py")]) + ' "$@"\n').encode()
+
+
 def patch_cmux_wrapper(provider, original, real_binary, paths, *, node=None):
     """Pin a private wrapper, its cache writes and the startup argument join.
 

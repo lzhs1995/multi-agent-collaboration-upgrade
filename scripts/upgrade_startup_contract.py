@@ -11,7 +11,7 @@ import shlex
 import uuid
 
 from orchestration_common import checked_path, file_ref, json_ref, read_regular, require
-from upgrade_client_isolation import (LANES, NATIVE_POLICY, client_argv, control_socket,
+from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_ps_wrapper, client_argv, control_socket,
                                       environment, private_native_roots, sandbox_profile, verify_client_temp)
 from upgrade_live_integrity import verify_artifact
 from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary, extend_profile
@@ -59,6 +59,8 @@ def client_environment(roots, paths, lane, rtk):
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
     result["PATH"] = os.pathsep.join(dict.fromkeys(map(str, (
         paths["bin"], Path(rtk).parent, "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"))))
+    if lane != "codex":
+        result["PATH"] = str(paths["bin"] / "claude-tools") + os.pathsep + result["PATH"]
     return result
 
 
@@ -107,10 +109,10 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
             "STARTUP_PROTECTED_ENDPOINTS_CHANGED")
     pins = spec["pins"]
     required = {"codex", "claude", "cmux", "rtk", "node", "python", "codex_original_wrapper", "claude_original_wrapper",
-                "codex_wrapper", "claude_wrapper", "helper", "codex-hooks.json", "claude-settings.json",
+                "codex_wrapper", "claude_wrapper", "claude_ps", "helper", "codex-hooks.json", "claude-settings.json",
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
-    local = {"helper": paths["bin"] / "cmux-agent"}
+    local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
     for provider in ("codex", "claude"):
         local[provider + "_wrapper"] = paths["bin"] / ("cmux-" + provider + "-wrapper")
     for name in ("codex-hooks.json", "claude-settings.json", "claude-startup-state.json"):
@@ -135,6 +137,9 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     if verify_pins:
         for pin in pins.values():
             verify_artifact(pin)
+    require(pins["claude_ps"]["mode"] == 0o555
+            and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
+            "STARTUP_CLAUDE_PS_CHANGED")
     boundary = binding_boundary(binding, binary_pin=pins["codex"])
     if boundary is not None:
         require(spec["socket_boundary"] == boundary, "STARTUP_SOCKET_BOUNDARY_CHANGED")

@@ -251,3 +251,42 @@ changed PID/birth; native processes, kernel and RPC are fixtures there. Neither
 test is a model run or adoption proof. Freeze the tested repair separately and
 prepare any successor without launch. Present its exact new-client/socket scope
 only after validation; never silently rerun or rewrite r4.
+
+## r5 native registration result and self-query repair
+
+r5 started one real Codex and two real Claude clients. Codex established its
+native session and direct-input capability, with the client/server socket and
+kernel boundaries verified. Its readiness call was still unobserved during
+provider high-demand reconnection. Both Claude processes started, but their
+native session registries omitted `procStart`: Claude's original
+`ps -o lstart= -p PID` invocation received `posix_spawn EPERM` from Seatbelt.
+Darwin's system `/bin/ps` is setuid. The unchanged native reader correctly
+refused `NATIVE_REGISTRATION_PROCESS_MISMATCH` before adoption.
+
+r5 is HALTED/FAILED: one permit, zero of 33 closures, pilot zero of three,
+no adoption and no business dispatch. Preserve `/Users/lzhs/u5`, all original
+clients, controllers, native registries, socket/lock and driver evidence. Do not
+fill in `procStart`, relax the reader, edit frozen PATH or restart the run.
+
+New candidates materialize an immutable `bin/ARM/claude-tools/ps` wrapper and
+`mac_upgrade_claude_ps.py` in the pinned controller. Only new Claude PATHs gain
+this directory; the account PATH and Codex PATH remain unchanged. This helper
+supports only the observed self-query argument shape, checks the direct parent
+PID and same-user kernel birth before and after reading, and prints the actual
+local start time. Unsupported queries, changed/reparented processes and kernel
+errors fail without a timestamp. It writes no registry, session or journal.
+Claude remains responsible for native registration; the independent native
+reader retains its complete process/root/session/birth checks. Startup validates
+the wrapper's exact rendered bytes, path, 0555 mode and ordinary artifact pin.
+No additional writable path or socket exception is introduced.
+
+Run `test_upgrade_claude_ps`, `test_upgrade_client_isolation`,
+`test_upgrade_live_startup`, `test_upgrade_live_inspect`,
+`test_upgrade_process_inventory` and `test_upgrade_benchmark`, then the full
+current-source suite. The materialized Node subprocess test reproduces the exact
+native self-query inside both Claude Seatbelt profiles and compares it with
+system ps outside Seatbelt while the original fixture PID is alive. It also
+checks the original system-ps denial and rejects writes to the helper and an
+outside sentinel. These are local fixtures, not model clients or adoption proof.
+Provider readiness remains a separate live condition. Any subsequent candidate
+must be frozen and reviewed before requesting its new-client authorization.
