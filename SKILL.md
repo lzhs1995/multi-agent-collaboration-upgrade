@@ -1,9 +1,49 @@
 ---
-name: multi-agent-collaboration
-description: Coordinate context-bearing CLI agents in macOS cmux using scoped task packs, authenticated acknowledgements, evidence-bound callbacks, review gates, and bounded failure recovery. Requires cmux; not a general-purpose parallel-agent launcher.
+name: multi-agent-collaboration-upgrade
+description: Independently test dependency scheduling and durable callbacks for existing Codex and Claude Code sessions in a dedicated cmux experiment. Requires an explicit private experiment context; never installs over production multi-agent-collaboration.
 ---
 
-# Multi-Agent Collaboration
+# Multi-Agent Collaboration Upgrade
+
+This is an independent experimental skill. The installed
+`multi-agent-collaboration` and its active sessions are separately owned.
+Start with `scripts/upgrade_experiment.py`; every v3 campaign must pin its private
+context, controller, configuration, state and exact permitted sessions. No shared
+MAC path is a fallback. Do not run the inherited installer against a real account.
+Do not edit global hooks, use production executors, migrate old attempts or change
+HOME. The user has authorized private CODEX_HOME / CLAUDE_CONFIG_DIR values only
+for newly created experimental clients. Existing processes and global environment
+remain unchanged. Actual automatic hook adoption must be verified before live input.
+
+The inherited transport contract below remains a compatibility reference. v2
+campaigns retain their original controller and evidence; v3 is a separate format.
+Offline estimates, replay and passing tests do not prove live efficiency. Report
+the paired benchmark and correctness results before considering production use.
+See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
+Current measured results and open live-validation gaps are recorded in the
+[2026-10-18 validation report](docs/VALIDATION-20261018.md).
+
+For v3, automatic workflow hooks run through the pinned advisory wrapper.
+Unresolved callbacks, reservation, reask or review state do not block ordinary
+tools or Stop. Legacy gate descriptions below are explicit diagnostics, never a
+global session lock. This does not relax the sender's identity, original-attempt,
+native reception or input safeguards. Verify actual automatic invocation in
+each live client separately from configuration and manual hook tests.
+
+Pressure acceptance requires both safety and successful independent work.
+Report every attempted reservation, semantic conflict and registry-lock timeout;
+zero double owners alone is insufficient. Only short registry transactions may
+wait up to five seconds for their lock. Action locks remain fail-fast, and no
+dispatch or callback is retried by this wait. See [pressure and experience
+controls](references/lessons.md#pressure-and-field-experience).
+
+Native readiness is only a startup result. A later original Codex
+`event_msg/task_complete` with an error must halt the experiment with its pinned
+native record, preserving sessions, completed measurements and every registered
+slot. The driver observes at most 256 records per tick; unread or partial records
+hold advancement without extending the registered watchdog. A crash reuses the
+first failure evidence, never retries input. See [native failure closeout](
+docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).
 
 For zero-input identity refusals, read [native caller inventory failures](references/native-caller-inventory.md).
 Repair discovery before retrying a handshake; retain kernel/UUID authentication
@@ -74,7 +114,8 @@ because a target is unavailable. The scope narrows access and cannot permit
 cross-workspace input. Resource coordination across workspaces uses existing
 file/queue receipts, not executor-handshake transport or a STATUS-prefix exemption.
 
-Install via `scripts/manage_install.py`; it registers the guard for both clients.
+The production MAC installer registers the guard for both clients. This upgrade
+does not use that installation route; it materializes a pinned private controller.
 Run the installed hook with a cross-workspace/raw-input negative case and verify
 exit 2 and zero input before claiming enforcement. Client settings registration,
 active hook execution and imported Python modules are separate states; a process
@@ -137,13 +178,13 @@ Use [efficiency and task closeout](references/efficiency-and-closeout.md) to
 choose zero, one or two executors, apply phase-specific handshake budgets,
 attribute delivery failures, and close accepted work without repeated reviews.
 
-Use [executor closeout enforcement](references/executor-closeout-enforcement.md):
-the PreToolUse guard freezes the report, task pack and original attempt after the
+The legacy [executor closeout diagnostic](references/executor-closeout-enforcement.md)
+freezes the report, task pack and original attempt after the
 bound callback returns. Strict task-bound read-only diagnostics and original-controller
-reconciliation remain available. Stop accepts an ordinary honest waiting statement
-as WAITING_SUPERVISOR (continue:false, suppressOutput:true); no exact STATUS template
-is required. It preserves task/receipt state and rejects unsupported confirmation or
-consensus claims. Missing/in-flight/changed evidence cannot use this boundary.
+reconciliation remain available. In v3 its automatic advisory wrapper permits
+ordinary tools and an honest waiting turn-end; do not apply the legacy
+continue:false output as a conversation gate. Waiting does not confirm reception,
+release resources or establish consensus.
 
 After a proven sole `attempt-0001` with `NO_INPUT` and `events=[]`, closeout also
 admits the exact synchronous original callback CLI once. The frozen pack chooses
@@ -176,10 +217,11 @@ current evidence for authorized follow-up; never ask the user to relay to a boun
   process/session/transcript and a fresh EOF fence at the original PASTE_INTENT.
   Only a new whole native user record after that fence, exactly equal to the
   payload including whitespace, yields NATIVE_RECEIVED. Claude queued_command
-  remains pending. Paste once, wait for the full stable draft, then submit once:
-  use Tab directly for busy Codex displaying the verified tab-to-queue hint,
-  otherwise Enter in a clear supported state. All recovery paths share at most
-  one additional key under the original controller; no separate Enter/Tab budget.
+  remains pending. For Codex, use its bound native control socket once with the
+  current expected turn identity; never inspect its composer, paste or press keys.
+  For Claude, paste once, verify the full stable draft, then submit once with Enter.
+  An uncertain native input permits original-log observation only. Historical
+  terminal recovery retains only its original controller's single-key budget.
 - `submit_completion_callback` writes an exclusive attempt journal before
   input, binding task pack SHA, report SHA, nonce and live workspace identities.
   A submitted attempt refuses repeat delivery; `--reconcile-only` is the explicit
@@ -264,10 +306,11 @@ Internal `action/results` objects are not valid top-level Codex hook output.
 Validate the wire format against the official schema and then observe automatic
 execution in the active client; a manual script exit is a separate offline check.
 
-- Install guards on both clients through `scripts/manage_install.py`; `doctor`
-  checks configuration and benign execution. Installation is not proof that an
-  already-running client reloaded its configuration. Run harness `guard-check`
-  after client settings changes and at task close.
+- Materialize the pinned controller and both client configurations through
+  `scripts/upgrade_live_materialize.py` inside the explicit private context.
+  Do not run the inherited production installer. Configuration checks are separate
+  from active-client adoption: verify actual automatic hooks, kernel isolation,
+  original session identities and native input capability before business input.
 - Require semantic positive and negative tests through real hook entrypoints,
   not only helper definitions or source-string counts. Missing/null/boolean-as-
   count, stale evidence, changed pins and malformed receipts must fail closed.

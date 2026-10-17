@@ -19,16 +19,21 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from orchestration_common import scopes_conflict
+
 
 PLAN_VERSION = 1
 ALLOWED_EXECUTORS = {"claude", "codex"}
+ISOLATED_EXECUTORS = {"codex": "codex", "claude_a": "claude", "claude_b": "claude"}
 ALLOWED_GENERATORS = {"claude_code_cli", "codex_cli", "supervisor"}
 ALLOWED_DECISION_PROVIDERS = {"rules", "offline_mock"}
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{1,63}$")
@@ -37,6 +42,19 @@ SURFACE_RE = re.compile(r"^surface:[0-9]+$")
 
 class PlanError(ValueError):
     """Raised when a graph cannot safely enter the collaboration lifecycle."""
+
+
+def executor_providers(plan):
+    """An executor ID addresses a session; it is never a provider name."""
+    if type(plan.get("version")) is not int:
+        raise PlanError("plan version must be an integer")
+    if plan["version"] == 1:
+        if "executor_providers" in plan:
+            raise PlanError("explicit executor providers require plan version 2")
+        return {key: key for key in sorted(ALLOWED_EXECUTORS)}
+    if plan["version"] == 2 and plan.get("executor_providers") == ISOLATED_EXECUTORS:
+        return dict(ISOLATED_EXECUTORS)
+    raise PlanError("plan v2 requires one Codex and two explicitly named Claude sessions")
 
 
 def _now() -> str:
@@ -121,9 +139,9 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise PlanError("plan root must be an object")
     normalized = copy.deepcopy(plan)
-    if normalized.get("version") != PLAN_VERSION:
-        raise PlanError(f"version must be {PLAN_VERSION}")
-    _require_text(normalized.get("plan_id"), "plan_id")
+    providers = executor_providers(normalized)
+    if not ID_RE.fullmatch(_require_text(normalized.get("plan_id"), "plan_id")):
+        raise PlanError("plan_id has an invalid shape")
     _require_text(normalized.get("objective"), "objective")
 
     source = normalized.get("source")
@@ -160,10 +178,10 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         if node_id in by_id:
             raise PlanError(f"duplicate node id: {node_id}")
         executor = _require_text(node.get("executor"), f"nodes[{index}].executor")
-        if executor not in ALLOWED_EXECUTORS:
-            raise PlanError(f"{node_id}.executor must be claude or codex")
+        if executor not in providers:
+            raise PlanError(f"{node_id}.executor must be an explicitly bound CLI session")
         transport = _require_text(node.get("transport"), f"{node_id}.transport")
-        expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[executor]
+        expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[providers[executor]]
         if transport != expected_transport:
             raise PlanError(f"{node_id}.transport must be {expected_transport}")
         if node.get("session_policy") != "reuse_existing":
@@ -185,11 +203,23 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         _require_text(node.get("verify"), f"{node_id}.verify")
         _valid_source(node.get("source"), f"{node_id}.source")
         write_scope = _require_text(node.get("write_scope"), f"{node_id}.write_scope")
+        if "output_scope" in node:
+            if normalized["version"] != 2:
+                raise PlanError("output_scope requires plan version 2")
+            output_scope = _require_text(node["output_scope"], f"{node_id}.output_scope")
+            for label, value in (("write_scope", write_scope), ("output_scope", output_scope)):
+                path = Path(value)
+                if (path.is_absolute() or ".." in path.parts or value in ("", ".") or
+                        str(path) != value or node[label] != value):
+                    raise PlanError(f"{node_id}.{label} must be a canonical relative child")
+            if Path(write_scope) not in (Path(output_scope), *Path(output_scope).parents):
+                raise PlanError(f"{node_id}.output_scope must be inside write_scope")
+            node["output_scope"] = output_scope
         expected_seconds = node.get("expected_seconds")
-        if isinstance(expected_seconds, bool) or not isinstance(expected_seconds, (int, float)) or expected_seconds <= 0:
+        if isinstance(expected_seconds, bool) or not isinstance(expected_seconds, (int, float)) or not math.isfinite(expected_seconds) or expected_seconds <= 0:
             raise PlanError(f"{node_id}.expected_seconds must be positive")
         retry_seconds = node.get("retry_seconds", 0)
-        if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, (int, float)) or retry_seconds < 0:
+        if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, (int, float)) or not math.isfinite(retry_seconds) or retry_seconds < 0:
             raise PlanError(f"{node_id}.retry_seconds must be non-negative")
         observed_retries = node.get("observed_retries", 0)
         if isinstance(observed_retries, bool) or not isinstance(observed_retries, int) or observed_retries < 0:
@@ -234,8 +264,8 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
 def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> list[dict[str, Any]]:
     """Build bounded ready waves while preserving one writer per scope."""
     normalized = validate_plan(plan)
-    if isinstance(max_parallel_per_executor, bool) or max_parallel_per_executor < 1:
-        raise PlanError("max_parallel_per_executor must be at least 1")
+    if type(max_parallel_per_executor) is not int or max_parallel_per_executor != 1:
+        raise PlanError("max_parallel_per_executor must be 1 for each existing CLI session")
     nodes = {node["id"]: node for node in normalized["nodes"]}
     order = [node["id"] for node in normalized["nodes"]]
     remaining = set(order)
@@ -244,14 +274,14 @@ def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> 
     while remaining:
         ready = [node_id for node_id in order if node_id in remaining and set(nodes[node_id]["depends_on"]) <= completed]
         selected: list[str] = []
-        executor_counts = {executor: 0 for executor in ALLOWED_EXECUTORS}
+        executor_counts = {executor: 0 for executor in executor_providers(normalized)}
         scopes: set[str] = set()
         for node_id in ready:
             node = nodes[node_id]
             executor = node["executor"]
             if executor_counts[executor] >= max_parallel_per_executor:
                 continue
-            if node["write_scope"] in scopes:
+            if any(scopes_conflict(node["write_scope"], scope, normalized.get("scope_root", Path.cwd())) for scope in scopes):
                 continue
             selected.append(node_id)
             executor_counts[executor] += 1
@@ -285,8 +315,8 @@ def benchmark(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> dict[
     reduction = 0.0 if serial_seconds == 0 else (serial_seconds - scheduled_seconds) / serial_seconds * 100.0
     return {
         "plan_id": normalized["plan_id"],
-        "evidence_class": normalized.get("evidence_class", "offline_schedule_estimate"),
-        "claim": "This is an offline schedule estimate unless measured_cli_replay evidence is supplied.",
+        "evidence_class": "offline_schedule_estimate",
+        "claim": "This is always an offline schedule estimate. Measured promotion requires the separate v2 verifier.",
         "nodes": len(nodes),
         "waves": len(waves),
         "parallel_waves": sum(1 for wave in waves if wave["parallelism"] > 1),
@@ -299,11 +329,13 @@ def benchmark(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> dict[
     }
 
 
-def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path) -> dict[str, Any]:
-    task_id = f"{plan['plan_id']}--{node['id']}"
-    return {
-        "seed_version": 1,
+def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path, run_id: str) -> dict[str, Any]:
+    task_id = f"{plan['plan_id']}--{run_id}--{node['id']}--a0001"
+    seed = {
+        "seed_version": 2,
         "task_id": task_id,
+        "run_id": run_id,
+        "attempt_id": f"{run_id}:{node['id']}:a0001",
         "orchestration": {
             "plan_id": plan["plan_id"],
             "node_id": node["id"],
@@ -311,7 +343,7 @@ def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path) 
             "write_scope": node["write_scope"],
         },
         "role": "executor",
-        "executor": node["executor"],
+        "executor": executor_providers(plan)[node["executor"]],
         "executor_surface": node.get("surface_ref"),
         "transport": node["transport"],
         "session_policy": "reuse_existing",
@@ -332,9 +364,13 @@ def _task_seed(plan: dict[str, Any], node: dict[str, Any], artifact_root: Path) 
             "direct_cli_launch": False,
         },
     }
+    if plan["version"] == 2:
+        seed["orchestration"]["executor_id"] = node["executor"]
+        seed["orchestration"]["plan_version"] = 2
+    return seed
 
 
-def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_executor: int = 1) -> dict[str, Any]:
+def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_executor: int = 1, *, run_id: str | None = None) -> dict[str, Any]:
     """Write a graph, schedule and task-pack seeds for later guarded dispatch."""
     normalized = validate_plan(plan)
     output_root = Path(output_root)
@@ -342,11 +378,17 @@ def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_execut
         raise PlanError(f"refuse to materialize through symlink: {output_root}")
     output_root = output_root.absolute()
     output_root.mkdir(parents=True, exist_ok=True)
+    if any(output_root.iterdir()):
+        raise PlanError("materialize requires an empty output root; preserve existing run artifacts")
+    run_id = run_id or uuid.uuid4().hex
+    if not ID_RE.fullmatch(run_id):
+        raise PlanError("run_id has an invalid shape")
     schedule = build_schedule(normalized, max_parallel_per_executor=max_parallel_per_executor)
     plan_sha = _write_json_atomic(output_root / "orchestration-plan.json", normalized)
     schedule_doc = {
         "version": 1,
         "plan_id": normalized["plan_id"],
+        "run_id": run_id,
         "created_at": _now(),
         "plan_sha256": plan_sha,
         "max_parallel_per_executor": max_parallel_per_executor,
@@ -358,10 +400,11 @@ def materialize(plan: dict[str, Any], output_root: Path, max_parallel_per_execut
     seed_hashes: dict[str, str] = {}
     for node in normalized["nodes"]:
         seed_path = seed_dir / f"{node['id']}.json"
-        seed_hashes[node["id"]] = _write_json_atomic(seed_path, _task_seed(normalized, node, output_root))
+        seed_hashes[node["id"]] = _write_json_atomic(seed_path, _task_seed(normalized, node, output_root, run_id))
     manifest = {
         "version": 1,
         "plan_id": normalized["plan_id"],
+        "run_id": run_id,
         "created_at": _now(),
         "plan_sha256": plan_sha,
         "schedule_sha256": schedule_sha,
@@ -394,7 +437,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def _cmd_materialize(args: argparse.Namespace) -> int:
-    output = materialize(_load_json(Path(args.plan)), Path(args.output_root), args.max_parallel_per_executor)
+    output = materialize(_load_json(Path(args.plan)), Path(args.output_root), args.max_parallel_per_executor, run_id=args.run_id)
     print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
@@ -408,6 +451,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         child.add_argument("--max-parallel-per-executor", type=int, default=1)
         if name == "materialize":
             child.add_argument("--output-root", required=True)
+            child.add_argument("--run-id", help="unique run identity; defaults to a new UUID")
     sub.choices["validate"].set_defaults(handler=_cmd_validate)
     sub.choices["schedule"].set_defaults(handler=_cmd_schedule)
     sub.choices["benchmark"].set_defaults(handler=_cmd_benchmark)

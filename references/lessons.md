@@ -48,3 +48,72 @@ workflow; do not invent peer review during a SOLO task.
 The detailed incident archive predates this public packaging and contains local
 observations. It is not normative for model choice, input ownership or present
 provider capability. SKILL.md and the tested public defaults take precedence.
+
+## Pressure and field experience
+
+The r7 experiment reached real readiness and automatic hooks in all three
+clients, but an inspector incorrectly compared a Codex outer exec call id with
+the inner CommandExecution hook id. Reconcile only the exact command and its
+successful output within the original thread, turn and call/result boundary.
+Negative cases must reject crossed turns, ambiguous commands, failed output and
+changed pins. Original-log revalidation never upgrades a failed pilot result.
+See `test_upgrade_live_inspect.py`.
+
+The first 24-process contention experiment admitted only 389 of 2400 independent
+reservations despite passing safety checks. An immediate nonblocking registry
+lock refusal was incorrectly counted like a genuine session/scope conflict.
+Distinguish these outcomes. Registry reserve/release now opt into at most five
+seconds of acquisition waiting; action/driver locks retain immediate refusal.
+Acquire and validate the original path inode before reading or writing a lease.
+Timeout, replaced/deleted lock paths and unknown or foreign terminal evidence
+cannot release ownership. See `test_orchestration_lock.py`,
+`test_orchestration_coordinator.py` and `test_orchestration_maintenance.py`.
+
+Repeat the 24-process, 100-round-per-mode matrix in a new evidence directory.
+Every independent round must admit 24/24, and shared-session/shared-scope rounds
+must admit exactly 1/24 with semantic refusals for the rest. Report latency,
+registry busy/timeouts, retained history and invalid/idempotent release checks.
+Keep failed reports immutable and publish corrections separately. Synthetic task
+events used by component pressure tests are not live callback receipts.
+
+The designated experience session's published maintenance notes and the thesis
+workspace's existing lessons supply additional boundaries: file request creation,
+hook exposure, full-body SHA consumption, native reception, callback settlement
+and business acceptance are separate observations. Do not call a pending file
+request a received message or an answered consultation. Keep the original
+controller, task, nonce, reservation and UNKNOWN evidence. Current v3 automatic
+hooks are advisory; inherited closeout gates are not session-wide tool locks.
+
+Thesis experience also shows that a small Word/Zotero fixture can pass while a
+full chapter times out. Keep realistic workload sizes, a single writer for
+Word/Zotero, account-wide NotebookLM sharing and independent output scopes.
+Do not use synthetic pressure, a tiny readiness request or offline scheduling
+estimates as proof of model collaboration speed. Use the frozen pilot and paired
+experiment, count failures, measure coordination overhead and verify correctness.
+
+The r8 experiment passed native readiness and automatic hook adoption in all
+three clients. After reading its bootstrap, the original Codex turn ended with
+HTTP 400 `invalid_encrypted_content`. This was not a missing-Claude result, and
+the native error alone does not identify an authentication, load or server root
+cause. Pilot remained 0/3 and pairs 0/15. A small successful readiness request
+cannot establish multi-turn provider compatibility or collaboration efficiency.
+
+`upgrade_failure_watch.py` now observes the frozen original Codex journal. Only
+a native `event_msg/task_complete` error after the original freeze fence can
+trigger early FAILED closeout. Quoted examples, tool errors and pre-freeze errors
+cannot. The observer verifies file identity and record hashes, advances a bounded
+cursor, holds progression for unread/partial data and retains the ordinary
+watchdog. First evidence survives a crash; a later append cannot hide a known
+failure. Completed measurements and failed/missing denominator slots remain in
+the report. Run `test_upgrade_failure_watch.py` and `test_upgrade_driver.py`;
+read-only detection on the original r8 journal is separately recorded and does
+not rerun or repair r8.
+
+Automatic hook invocation and authenticated request discovery also differ. The
+experience session's actual 0.4.34 hook audit shows a standalone Codex parent,
+while that release's `collect_hook` returns no native proof without a managed
+daemon and `authenticated_root` requires one. Preserve the pending request and
+report this code-path incompatibility; do not manufacture a hook receipt or use
+a simulated payload as proof that the target read it. A repair in an isolated
+maintenance copy does not update already installed hooks or create a missing
+native input control endpoint.
