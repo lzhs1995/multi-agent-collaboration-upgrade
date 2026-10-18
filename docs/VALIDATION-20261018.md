@@ -5,6 +5,28 @@
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
+## r12 原始真实实验运行中（2026-10-18 13:05 台北）
+
+v11 已冻结 295 个文件，七组生成控制器已逐字自审；沿用完整回归通过的
+`4b38553` 产品代码。独立 r12 授权配置已成功生成，原 driver 仅启动一次，
+证据为 `execution/r12-original-driver/`，实验根 `/Users/lzhs/uc`。
+
+- 04:53:39Z：原 1 Codex＋2 Claude 全部 ADOPTED，原生 readiness、实际自动
+  hooks、内核隔离及输入能力分别核验。04:54:59Z 发布原 bootstrap。
+- 04:58:53Z：原 Codex 发出唯一正式 `start --run pilot-01`；05:00:21Z 原生
+  CommandExecution 记录 exit 0、STARTED，执行耗时 86.659 秒。
+  05:04:18Z 原 Codex 收取同一个工具进程结果，未重放 start。
+- 截至 05:04:55Z，原 driver 仍为 WAITING_ORIGINAL_SUPERVISOR；没有 halt。
+  已确认成绩仍为 pilot **0/3**、pairs **0/15**、closures **0/33**。
+  两只 Claude 尚无业务派发记录，不能把三客户端采用计为业务通过。
+- 原 run.json 的正式时钟对应本轮截止点 **05:28:53Z / 台北 13:28:53**；
+  这是单轮 watchdog 边界，不是最终交付时间。最终耗时尚不能可靠估计。
+
+继续收取原 driver 和原三客户端证据；完整规模保持 3 轮 pilot、12 warm＋3
+cold pairs。只读增量观察保存至 `maintenance/r12-progress/`；未向实验客户端
+发送额外催促，未改冻结控制器、未重新运行已经通过且源码未变的组件压力。
+本节属于全测完成后的文档更新，不声称参与此前 1,804 项测试。
+
 ## r11 默认 Claude 页脚误判与修复
 
 `default-footer-tip-full-01` 原进程已正常结束：**1,799/1,799**，零失败、错误和
@@ -228,10 +250,9 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r11因默认Claude页脚误判而FAILED/HALTED，pilot 0/3、pairs 0/15、
-   closures 0/33。当前页脚、Tip/spinner与实际生成controller修复已通过
-   1,804项完整回归；下一步冻结v11并启动独立r12。沿用用户全面授权，
-   不重复询问；保留全部旧会话、控制器、失败和分母，不重放原driver。
+1. r11因默认Claude页脚误判而FAILED/HALTED，旧失败分母保留。修复已通过
+   1,804项完整回归，v11已冻结，r12真实三客户端全部ADOPTED，pilot-01
+   唯一正式start已成功。继续原driver；不重复授权、不重放启动或派发。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
@@ -256,7 +277,7 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问诊断 | `maintenance/standalone-caller-v1/hook-discovery-diagnosis-02.json` |
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-26.json` |
 
-最近原实验最终报告：`/Users/lzhs/ub/driver/final-report.json`；原 halt：
+最近已结束实验的最终报告：`/Users/lzhs/ub/driver/final-report.json`；原 halt：
 `/Users/lzhs/ub/schedule/halt.json`。r11已FAILED/HALTED；没有真实提效通过结论。
 最新全测日志 SHA256：`1afe54174535c7ed2b01d9c65ffcaeb8691d0ca9c9920ca2e4d02ae824ef5b87`。
 
