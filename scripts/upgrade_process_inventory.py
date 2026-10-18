@@ -49,42 +49,120 @@ def _pids(lib):
     raise IdentityError("kernel client inventory exceeds bound")
 
 
+def _discovery_error(message, pid, stage, *, count=None, error=None):
+    from cmux_daemon_identity import IdentityError
+    details = dict(pid=pid, stage=stage, count=count, errno=error)
+    exc = IdentityError(message + f" (pid={pid}, stage={stage}, count={count}, errno={error})")
+    exc.discovery = details
+    return exc
+
+
+def _kernel_bsd(lib, pid, stage, *, expected=None):
+    """One discovery-only read; retain the original errno and negative evidence."""
+    import errno
+    from cmux_daemon_identity import BsdInfo
+    budget.check()
+    b = BsdInfo()
+    ctypes.set_errno(0)
+    count = lib.proc_pidinfo(pid, 3, 0, ctypes.byref(b), ctypes.sizeof(b))
+    error = ctypes.get_errno()
+    if count != ctypes.sizeof(b):
+        if count <= 0 and error == errno.ESRCH:
+            return None
+        raise _discovery_error("kernel process identity inaccessible", pid, stage,
+                               count=count, error=error)
+    if b.pid != pid or b.uid != os.getuid() or not b.start_sec:
+        raise _discovery_error("kernel process identity changed, foreign, or invalid", pid, stage)
+    current = dict(identity=dict(pid=pid, ppid=b.ppid, birth=[b.start_sec, b.start_usec]),
+                   name=bytes(b.name), zombie=b.status == 5)
+    # Validate before considering zombie/exit. A reused PID cannot erase drift.
+    if expected is not None and (current['identity'] != expected['identity']
+                                 or current['name'] != expected['name']):
+        raise _discovery_error("kernel executable inventory changed", pid, stage)
+    return current
+
+
+def _unrelated_name(snapshot, candidate):
+    raw = snapshot['name']
+    if not raw or len(raw) >= 31:
+        return False
+    try:
+        name = raw.decode('utf-8', errors='strict')
+    except UnicodeDecodeError:
+        return False
+    return not candidate(name)
+
+
+def _discovery_pair(lib, pid, candidate, *, stage, previous=None, known_noncandidate=None):
+    """No retries. An exit can exclude only an original known unrelated row."""
+    first = _kernel_bsd(lib, pid, stage + '_bsd_1', expected=previous)
+    if first is None or first['zombie']:
+        if previous is None or known_noncandidate is True:
+            return None
+        raise _discovery_error("candidate or unknown process exited", pid, stage + '_bsd_1')
+    second = _kernel_bsd(lib, pid, stage + '_bsd_2', expected=first)
+    if second is None or second['zombie']:
+        may_exclude = (_unrelated_name(first, candidate) if known_noncandidate is None
+                       else known_noncandidate)
+        if may_exclude:
+            return None
+        raise _discovery_error("candidate or unknown process exited", pid, stage + '_bsd_2')
+    return second
+
+
 def inventory(candidate):
-    """Return discovery-only [PID string, kernel executable path] rows."""
-    from cmux_daemon_identity import IdentityError, ProcessExited, process
+    """Return discovery-only [PID string, kernel executable path] rows.
+
+    A complete BSD basename is negative discovery evidence only. Selected native
+    clients still pass the original strict process()/argv/TTY/session checks.
+    """
+    import errno
     lib, rows = _lib(), []
     for pid in _pids(lib):
-        budget.check()
-        try:
-            before = process(pid, arguments=False)
-        except ProcessExited:
-            continue  # Only initial ESRCH/zombie is harmless, never EPERM.
+        before = _discovery_pair(lib, pid, candidate, stage='before_path')
+        if before is None:
+            continue
         buf = ctypes.create_string_buffer(4096)
         ctypes.set_errno(0)
-        if lib.proc_pidpath(pid, buf, len(buf)) <= 0:
-            # A still-live unrelated program may have an unlinked executable.
-            # Fall back only to a stable, untruncated BSD name proving that it
-            # cannot be a candidate. Never hide an unreadable candidate.
-            from cmux_daemon_identity import BsdInfo
-            b = BsdInfo()
-            if (lib.proc_pidinfo(pid, 3, 0, ctypes.byref(b), ctypes.sizeof(b)) != ctypes.sizeof(b)
-                    or b.pid != pid or b.uid != os.getuid() or b.status == 5
-                    or [b.start_sec, b.start_usec] != before["birth"]):
-                raise IdentityError("kernel executable inventory inaccessible")
-            name = b.name.decode()
-            if not name or len(b.name) >= 31 or candidate(name):
-                raise IdentityError("candidate executable inventory inaccessible")
-            path = None
+        count = lib.proc_pidpath(pid, buf, len(buf))
+        error = ctypes.get_errno()
+        if count <= 0:
+            # EPERM/EACCES/unknown reads must never turn into successful scans.
+            # ENOENT permits the original stable-name unlinked-file fallback.
+            if error not in (errno.ESRCH, errno.ENOENT):
+                raise _discovery_error("kernel executable inventory inaccessible", pid,
+                                       'path', count=count, error=error)
+            if error == errno.ESRCH:
+                if _unrelated_name(before, candidate):
+                    continue
+                raise _discovery_error("candidate executable inventory inaccessible", pid,
+                                       'path', count=count, error=error)
+            fallback = _kernel_bsd(lib, pid, 'path_fallback_bsd', expected=before)
+            if fallback is None or fallback['zombie']:
+                if _unrelated_name(before, candidate):
+                    continue
+                raise _discovery_error("candidate executable inventory inaccessible", pid,
+                                       'path_fallback_bsd')
+            if not _unrelated_name(fallback, candidate):
+                raise _discovery_error("candidate executable inventory inaccessible", pid,
+                                       'path_fallback_bsd')
+            before, path, is_candidate = fallback, None, False
         else:
-            path = buf.value.decode()
-            if not Path(path).is_absolute():
-                raise IdentityError("kernel executable inventory invalid")
-        if process(pid, arguments=False) != before:
-            raise IdentityError("kernel executable inventory changed")
-        if path is not None and candidate(path):
+            try:
+                path = buf.value.decode('utf-8', errors='strict')
+            except UnicodeDecodeError:
+                raise _discovery_error("kernel executable inventory invalid", pid, 'path')
+            if not Path(path).is_absolute() or count >= len(buf):
+                raise _discovery_error("kernel executable inventory invalid", pid, 'path')
+            is_candidate = candidate(path)
+        after = _discovery_pair(lib, pid, candidate, stage='after_path', previous=before,
+                                known_noncandidate=not is_candidate)
+        if after is not None and is_candidate:
             rows.append([str(pid), path])
     budget.check()
     return rows
+
+
 
 
 def _tty_device(lib, expected):

@@ -1,6 +1,7 @@
 """Exercise private startup wiring without creating a workspace or model client."""
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
@@ -22,7 +23,7 @@ from upgrade_hook_observer import hook_parents
 import upgrade_input_gate as gate
 from upgrade_live_integrity import artifact_ref
 from upgrade_live_materialize import materialize_live
-from upgrade_live_patch import live_gates
+from upgrade_live_patch import live_gates, private_imports
 import upgrade_native_roots as roots
 from upgrade_startup_contract import validate_startup
 
@@ -329,6 +330,22 @@ print('MATERIALIZED_STANDALONE_TOOL_HOOK_PASS')
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_inventory_and_controlling_tty_inside_seatbelt(self):
         controller = Path(self.spec["controller"]) / "scripts"
+        support = Path(__file__).resolve().parent / "upgrade_process_inventory.py"
+        self.assertEqual((controller / "mac_upgrade_process_inventory.py").read_text(),
+                         private_imports(support.read_text()))
+        def function_tree(path, name):
+            return next(node for node in ast.parse(path.read_text()).body
+                        if isinstance(node, ast.FunctionDef) and node.name == name)
+        # Discovery changes must not replace the pinned base's strict reader.
+        self.assertEqual(ast.dump(function_tree(controller / "cmux_daemon_identity.py", "process")),
+                         ast.dump(function_tree(SOURCE / "scripts/cmux_daemon_identity.py", "process")))
+        for module, entrypoint in (("cmux_daemon_identity.py", "client_candidates"),
+                                   ("cmux_native_delivery.py", "_target_process")):
+            calls = [node for node in ast.walk(function_tree(controller / module, entrypoint))
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and isinstance(node.func.value, ast.Name)
+                     and node.func.value.id == "private_process" and node.func.attr == "inventory"]
+            self.assertEqual(len(calls), 1, (module, entrypoint))
         for name in ("cmux_daemon_identity.py", "cmux_native_delivery.py"):
             self.assertNotIn("/bin/ps", (controller / name).read_text())
             self.assertIn("mac_upgrade_process_inventory", (controller / name).read_text())
@@ -340,7 +357,12 @@ from pathlib import Path
 sys.path.insert(0, {str(controller)!r})
 import cmux_daemon_identity as identity
 import mac_upgrade_process_inventory as inventory
+import cmux_native_delivery as delivery
 assert inventory.__file__ == {str(controller / 'mac_upgrade_process_inventory.py')!r}
+assert identity.private_process is inventory
+assert delivery.private_process is inventory
+assert identity.private_process.inventory is inventory.inventory
+assert delivery.private_process.inventory is inventory.inventory
 p = identity.process(os.getpid())
 rows = inventory.inventory(lambda name: Path(name).name == Path(p['executable']).name)
 assert sum(int(pid) == os.getpid() for pid, path in rows) == 1
@@ -353,7 +375,6 @@ except identity.IdentityError:
 else:
     raise AssertionError('changed birth accepted')
 # Exercise the materialized delivery gate with real kernel identity/TTY.
-import cmux_native_delivery as delivery
 delivery.private_process.inventory = lambda candidate: [[str(os.getpid()), p['executable']]]
 delivery.private_roots.candidate_process_name = lambda path: True
 delivery._provider = lambda proc: 'claude'

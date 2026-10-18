@@ -1,4 +1,9 @@
 """The operator can resume persisted evidence without replaying native input."""
+import contextlib
+import errno
+import io
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,8 +16,9 @@ from orchestration_common import ContractError, digest, file_ref, json_ref, pars
 from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import failure_marker, marker_for
 from orchestration_native import delivery_identity
-from orchestration_run import Runner
+from orchestration_run import Runner, main
 from orchestration_test_support import CampaignFixture
+from orchestration_transport import PendingOperation
 from orchestration_verify import finish_run
 
 
@@ -144,6 +150,104 @@ class RunnerTests(unittest.TestCase):
         marker = marker_for(info, json_ref(info["candidate"]))
         self.f.control("accept", self.run, node_id="local", marker=marker)
         return marker
+
+    def invoke_cli(self, *action):
+        out, err = io.StringIO(), io.StringIO()
+        frozen = str(Path(self.r.campaign["adapter"]["path"]) / "scripts/orchestration_run.py")
+        with patch("orchestration_run.Runner", return_value=self.r), \
+             patch("orchestration_run.__file__", frozen), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(["--campaign", self.f.ref["path"], "--campaign-sha256", self.f.ref["sha256"], *action])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_cli_checker_ebadf_preserves_original_frames_and_unaccepted_work(self):
+        self.completed_work()
+        before = {key: client.reader.snapshot() for key, client in self.f.clients.items()}
+        events = [file_ref(p) for p in sorted((self.co.root / "events").glob("*.json"))]
+        original_run, checker_calls = subprocess.run, []
+
+        def checker_bad_fd(argv, **kwargs):
+            if argv == [self.f.campaign["python"]["path"], "-I", "-B", self.f.campaign["checker"]["path"]]:
+                checker_calls.append(argv)
+                diagnostic_local = "local-value-must-not-enter-cli-errors"
+                os.fstat(-1)  # Real kernel EBADF, at the original checker subprocess boundary.
+                raise AssertionError(diagnostic_local)
+            return original_run(argv, **kwargs)
+
+        with patch("orchestration_evidence.subprocess.run", side_effect=checker_bad_fd):
+            code, out, err = self.invoke_cli("candidate", "--run", self.run, "--node", "local")
+        self.assertEqual((code, out), (2, ""))
+        result = json.loads(err)
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertFalse(result["input_retry_authorized"])
+        self.assertEqual(len(checker_calls), 1)
+        trace = result["exception_trace"][0]
+        self.assertEqual((trace["exception_type"], trace["errno"]), ("OSError", errno.EBADF))
+        functions = [frame["function"] for frame in trace["frames"]]
+        self.assertIn("candidate", functions)
+        self.assertIn("make_test_result", functions)
+        self.assertIn("run_checker", functions)
+        self.assertEqual(functions[-1], "checker_bad_fd")
+        self.assertTrue(all(set(frame) == {"file", "line", "function"} and frame["line"] > 0
+                            for frame in trace["frames"]))
+        self.assertNotIn("local-value-must-not-enter-cli-errors", err)
+        self.assertEqual(before, {key: client.reader.snapshot() for key, client in self.f.clients.items()})
+        self.assertEqual(events, [file_ref(p) for p in sorted((self.co.root / "events").glob("*.json"))])
+        self.assertEqual(self.co.state()[0]["local"], State.LOCAL_RUNNING)
+        for name in ("tests.json", "candidate.json", "accepted-evidence.json"):
+            self.assertFalse((self.co.root / "nodes/local" / name).exists())
+
+    def test_cli_keeps_original_errno_through_explicit_and_cleanup_exception_chains(self):
+        for kind in ("explicit", "cleanup", "cycle"):
+            with self.subTest(kind=kind):
+                def fail_with_chain(*_args):
+                    try:
+                        os.fstat(-1)
+                    except OSError as original:
+                        if kind == "cleanup":
+                            raise ValueError("cleanup failure")
+                        wrapped = ContractError("checker wrapper")
+                        if kind == "cycle":
+                            original.__cause__ = wrapped
+                        raise wrapped from original
+
+                with patch.object(self.r, "status", side_effect=fail_with_chain):
+                    code, out, err = self.invoke_cli("status")
+                self.assertEqual((code, out), (2, ""))
+                result = json.loads(err)
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertFalse(result["input_retry_authorized"])
+                outer, inner = result["exception_trace"]
+                self.assertEqual(outer["context"], 1)
+                self.assertEqual(outer["cause"], None if kind == "cleanup" else 1)
+                self.assertEqual(outer["suppress_context"], kind != "cleanup")
+                self.assertEqual((inner["exception_type"], inner["errno"]), ("OSError", errno.EBADF))
+                self.assertEqual(inner["frames"][-1]["function"], "fail_with_chain")
+                self.assertEqual(outer["frames"][-1]["function"], "fail_with_chain")
+                self.assertNotEqual(inner["frames"][-1]["line"], outer["frames"][-1]["line"])
+                if kind == "cycle":
+                    self.assertEqual(inner["cause"], 0)
+
+    def test_cli_pending_keeps_exit_status_and_existing_diagnostic(self):
+        pending = PendingOperation("original operation remains pending")
+        pending.diagnostic = dict(operation="original", input_operations=0)
+        with patch.object(self.r, "wait_permit", side_effect=pending) as operation:
+            code, out, err = self.invoke_cli("wait-permit", "--run", self.run)
+        self.assertEqual((code, out), (3, ""))
+        result = json.loads(err)
+        self.assertEqual(result["status"], "PENDING_OR_BLOCKED")
+        self.assertEqual(result["error"], str(pending))
+        self.assertEqual(result["diagnostic"], pending.diagnostic)
+        self.assertFalse(result["input_retry_authorized"])
+        self.assertEqual(result["exception_trace"][0]["exception_type"], "PendingOperation")
+        operation.assert_called_once_with(self.run, 45)
+
+    def test_cli_success_payload_and_exit_status_are_unchanged(self):
+        expected = self.r.status(self.run)
+        code, out, err = self.invoke_cli("status", "--run", self.run)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), expected)
+        self.assertNotIn("exception_trace", json.loads(out))
 
     def test_claim_resume_does_not_create_a_new_nonce_or_run_business(self):
         first = self.r.claim(self.run, "local")

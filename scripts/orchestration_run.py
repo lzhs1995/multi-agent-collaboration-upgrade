@@ -316,6 +316,30 @@ class Runner:
         return dict(status=self.status(run_id), observations=observations, input_operations=0)
 
 
+def exception_trace(exc):
+    """Preserve failure locations and causal links without source text or locals."""
+    pending, indexes, result = [exc], {id(exc): 0}, []
+    for error in pending:
+        frames, trace = [], error.__traceback__
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            frames.append(dict(file=code.co_filename, line=trace.tb_lineno, function=code.co_name))
+            trace = trace.tb_next
+        row = dict(exception_type=type(error).__name__, errno=getattr(error, "errno", None),
+                   frames=frames, suppress_context=error.__suppress_context__)
+        for relation in ("cause", "context"):
+            linked = getattr(error, "__" + relation + "__")
+            if linked is None:
+                row[relation] = None
+            else:
+                if id(linked) not in indexes:
+                    indexes[id(linked)] = len(pending)
+                    pending.append(linked)
+                row[relation] = indexes[id(linked)]
+        result.append(row)
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
@@ -375,7 +399,7 @@ def main(argv=None):
         return 3 if isinstance(result, dict) and result.get("status") == "UNCERTAIN" else 0
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
         result = dict(status="PENDING_OR_BLOCKED" if isinstance(exc, PendingOperation) else "REJECTED",
-                      error=str(exc), input_retry_authorized=False)
+                      error=str(exc), input_retry_authorized=False, exception_trace=exception_trace(exc))
         if getattr(exc, "diagnostic", None) is not None:
             result["diagnostic"] = exc.diagnostic
         print(json.dumps(result, ensure_ascii=False, allow_nan=False), file=sys.stderr)

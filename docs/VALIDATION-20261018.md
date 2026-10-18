@@ -1,9 +1,86 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**组件压力通过；v3 契约修复后的完整回归1,811/1,811通过；真实协作提效仍未证明。**
+当前结论：**组件压力通过；包含新诊断的完整回归1,826/1,826通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## r14 启动前最终回归（07:19Z）
+
+唯一 `candidate-diagnostics-full-01` 原进程已收取，exit 0：
+**1,826/1,826，零失败、错误、跳过**。执行器耗时 1,276.899 秒，
+unittest 耗时 1,271.292 秒，246 个监测文件 SHA 前后一致；
+live_model_requests=0，未修改子测试超时。日志 SHA256：
+`30275141957b8072396edaac06042584632ec3ed50bddf8cf512f68985e92d32`。
+两条 60 秒栈快照属于观察器诊断，相关用例随后完成，最终无测试超时失败。
+
+此前 CLI 诊断定向验证 47/47 通过，覆盖真实 EBADF 注入、异常链、循环 cause、
+PendingOperation 和成功输出兼容。原 r13 EBADF 根因仍未知；新增的异常类型、
+errno 和栈帧记录是诊断改进，不追认原实验成功。
+
+外部性能审计实测一次 continuation 验证构造 8 个 NativeReader，另加一次
+state_root 验证，共 9 次 runtime 校验，耗时占 98.5%。29 个 pin 单次约
+1.02 GB，9 次重复哈希约 9.18 GB 逻辑输入，不等于物理磁盘读取量。原 Codex
+watchdog 前 status 仅 1 次、check 0 次，没有重复 status/check 的证据。
+当前未实施缓存或降低校验门槛，后续用真实配对结果评估效率。
+
+沿现有全面授权，下一步冻结 v13 源码并核验七组实际 controller，随后执行
+唯一 r14 driver。规模仍为 7 组、33 轮、15 对，pilot 连续 3/3 后进入配对。
+指定经验请求观察 45（07:04:22Z）尚无回复；没有追加输入或宣称双向沟通完成。
+本节为全测完成后的结果文档更新，由导出记录单独固定。
+
+## r13 终态、进程压力与 candidate 诊断（06:52Z）
+
+r13 原 driver 已 exit 2，06:23:31.336Z HALTED/TIMEOUT；注册截止为
+06:23:21.229Z，未延长。三客户端实际 ADOPTED，Claude B 已完成 source_index
+业务产物，处理 48 个源码文件、4,817 行、194,785 字节。完整业务验收仍为
+**pilot 0/3、pairs 0/15、closures 0/33**，产物和收到 callback 不等于整轮通过。
+原最终报告 `/Users/lzhs/ud/driver/final-report.json` SHA256：
+`116e6a8d628effb8dc893e05c0f12a3bf757073025b922e9536dbe72f6db3249`。
+
+正式任务原生接收已确认，重试数为零。Claude callback 的完整 native user 于
+06:20:43.951Z 到达原 Codex；正式 receipt 于 06:23:35.693Z 发布，间隔
+171.742 秒，晚于 halt 4.357 秒。首次零输入结算的锁获取立即拒绝，不能将外层
+工具耗时全归因于锁等待。原回执 confirmed=true、bridge_retries=0；所有旧次
+证据和会话保留，不重放。详细时序见 `validation/r13-process-churn-pair-v2-01/R13-TIMING-AUDIT.md`。
+
+随后原 Codex 的 candidate 于 06:33:37Z 返回 `[Errno 9] Bad file descriptor`。
+当时 continuation 已发布，tests.json/candidate.json 未发布；旧 CLI 只保留异常
+文字，缺少调用栈，因此根因仍未知。严格 Seatbelt 禁止旧根写入及网络的诊断中，
+原 continuation 只读验证、output_refs 和真实 run_checker 子进程均通过；checker
+返回 8 项正确性检查、exit 0。独立新目录的发布/锁文件描述符检查也未复现 EBADF。
+这些结果不等于原 candidate 成功，也不证明原进程继承的文件描述符状态正常。
+诊断器自身的 pipe FD 拒绝和嵌套 Seatbelt 失败均保留，未算入通过。
+详见 `validation/r13-process-churn-pair-v2-01/R13-EBADF-AUDIT.md`。
+当前补充结构化异常链和栈帧诊断，保留原拒绝和不重试语义；这是诊断改进，
+不是已确定根因的修复。修改后的代码需要另外验证，不能借用前一轮全测成绩。
+
+私有 Darwin inventory 修复保留每次 BSD 读取的 errno，并逐次核对 PID、UID、
+birth、ppid 和完整 name。身份漂移、权限错误和未知/短读继续拒绝；仅确知无关的
+进程返回精确 ESRCH/zombie 时排除。kernel 候选路径优先于 basename 排除，
+仅 ENOENT 可使用稳定完整 BSD 名回退；选定客户端的 strict process/argv/TTY
+认证不变。实际 materialized controller 的完整 helper 字节、双入口同模块调用
+及 strict process AST 均纳入验证。
+
+第三批真实进程压力已完成：200 次扫描、4,800 个自有子进程、818,746 次内核
+操作，旧版和新版各 98/100 返回；sentinel 遗漏/漂移及遗留子进程均为零。四次
+拒绝保留，分别为旧版两次初始 BSD EPERM、新版一次初始 BSD EPERM 和一次同
+birth/ppid 下的 name 漂移。新版一条已知 `/bin/sleep` 的后续精确 ESRCH 已实测
+排除；未实测到的内层初始第二 BSD ESRCH 不宣称覆盖。完整 trace 审计 PASS
+不代表自然扫描 100% 成功，更不是业务提效证明。
+
+定向回归 **124/124 PASS**。进程发现修复版完整回归
+`process-discovery-pair-full-01` 已 exit 0：**1,822/1,822，零失败/错误/跳过**，
+执行器 1,193.096 秒，246 个监测文件 SHA 前后一致，live_model_requests=0；
+日志 SHA256 `43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
+旧 `process-discovery-full-01` 的 1,812/1,813 和一项失败保留，不用于新导出。
+7,200 次 reserve 组件压力涉及的产品源码未变，不重复运行已通过的该项压力。
+
+r14 外部准备脚本已静态审查，尚未导出或启动客户端。沿用户现有全面授权，
+诊断改动验证后冻结独立源码，核对七组实际 controller，再执行唯一 driver。
+原注册仍为同三会话 pilot 连续 3/3、12 warm＋3 cold pairs、7 组/33 轮/15 对；
+900 秒启动及 1,800 秒单轮 watchdog 不变。下一轮属于有诊断记录的新实验，
+不能描述为已修复旧 EBADF。指定经验观察 43（06:51:57Z）仍无双向回复。
 
 ## r12 已失败封存，v3 契约修复全测通过
 
@@ -44,7 +121,7 @@ v11原件SHA/bytes一致。已使用独立v12 export及私有根 `/Users/lzhs/ud
 hooks、内核隔离及输入能力分别核验。05:50:44Z发布bootstrap，原Codex已
 从原等待进程取得BOOTSTRAP_READY。05:51:00Z只读观察仍为pilot 0/3、
 pairs 0/15、closures 0/33；没有halt，尚不能宣称真实业务或提效通过。
-唯一driver继续运行，不重启prepare/authorize/driver，不接管实验Codex的工具。
+以上为 r13 失败前的历史启动观察；其终态及后续诊断以上节为准。
 本节为全测结束后的结果文档更新，不改变已测试的可执行源码。
 
 指定经验会话最新零输入观察为 `request-observation-35.json`，05:51:20Z；
@@ -295,9 +372,9 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r12因UUID-only真实格式缺陷而FAILED/HALTED，旧失败分母保留。修复已通过
-   1,811项完整回归，v12已冻结；r13真实三客户端全部ADOPTED，bootstrap已
-   发布。继续r13唯一原driver；不重复授权、不重放启动或派发。
+1. r13 已 HALTED/TIMEOUT，旧会话、失败分母及原证据保留。进程发现修复及
+   新诊断已通过 1,826 项完整回归；candidate EBADF 尚未归因。冻结独立 r14，
+   沿现有全面授权执行，不重放任何旧次启动或派发。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
@@ -313,7 +390,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 | 证据 | 路径 |
 | --- | --- |
-| 最新完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/v3-contract-full-01/` |
+| 包含 CLI 诊断的最终完整回归 | `validation/r8-pressure-and-full/candidate-diagnostics-full-01/` |
+| CLI 定向验证与只读性能审计 | `validation/r13-cli-error-diagnostics-02/`、`validation/r13-process-churn-pair-v2-01/R13-PERFORMANCE-BOUNDARIES.md` |
+| 进程发现修复完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/process-discovery-pair-full-01/` |
+| 真实进程压力与原 callback/candidate 诊断 | `validation/r13-process-churn-pair-v2-01/` |
 | 修复前完整回归 | `validation/r8-pressure-and-full/repair-full-04/` |
 | 修复后完整压力及原压力更正 | `validation/r8-pressure-and-full/multiprocess-stress-02/result.json`、`validation/r8-pressure-and-full/multiprocess-stress-01-correction.json` |
 | 压力执行脚本 | `validation/r8-pressure-and-full/stress_components_v2.py` |
@@ -323,9 +403,9 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/uc/driver/final-report.json`；原 halt：
-`/Users/lzhs/uc/schedule/halt.json`。r12已FAILED/HALTED；r13运行中，没有真实提效通过结论。
-最新全测日志 SHA256：`2257307bdd610afc5e6cbf79948a7da2a4bcd75725b0ce943f12a7ab262d494a`。
+最近已结束实验的最终报告：`/Users/lzhs/ud/driver/final-report.json`；原 halt：
+`/Users/lzhs/ud/schedule/halt.json`。r13已HALTED/TIMEOUT，没有真实提效通过结论。
+进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；
 失败模块复核 100/100 通过不抹除原失败。失败收口新增测试曾因 fixture 缺字段

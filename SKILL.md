@@ -50,6 +50,22 @@ wait up to five seconds for their lock. Action locks remain fail-fast, and no
 dispatch or callback is retried by this wait. See [pressure and experience
 controls](references/lessons.md#pressure-and-field-experience).
 
+Private Darwin discovery retains paired kernel BSD snapshots and the original
+errno at each read. A complete, untruncated BSD basename or absolute kernel path
+may exclude a known unrelated row that then returns exact ESRCH/zombie. Candidate
+paths override earlier basename exclusions. Permission errors, unknown or partial
+reads, and PID/birth/parent/name drift refuse before considering a later exit;
+selected native clients retain the original strict process/argv/TTY checks.
+Stress every read boundary with real short-lived processes and preserve failed
+scan counts. A traceback without its PID/path does not prove an unrelated row, and this discovery fix alone
+does not establish successful live collaboration.
+
+Preserve structured exception chains and traceback frame locations in runner
+CLI refusals, without local variables or source lines. An unexplained filesystem
+error is not a transient provider failure; record the last published artifact and
+diagnose it before a new experiment. A passing read-only reproduction does not
+retroactively repair the original attempt or authorize its replay.
+
 Native readiness is only a startup result. A later original Codex
 `event_msg/task_complete` with an error must halt the experiment with its pinned
 native record, preserving sessions, completed measurements and every registered
