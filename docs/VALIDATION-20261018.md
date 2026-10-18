@@ -1,11 +1,51 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**组件压力通过；生成控制器修复后的完整回归1,804/1,804通过；真实协作提效仍未证明。**
+当前结论：**组件压力通过；v3 契约修复后的完整回归1,811/1,811通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
-## r12 原始真实实验运行中（2026-10-18 13:05 台北）
+## r12 已失败封存，v3 契约修复全测通过
+
+
+r12 已于 05:15:29Z HALTED/FAILED，原 driver exit 2；原报告仍保留全部
+33 个注册轮次，pilot 0/3、pairs 0/15、verified_runs=0、passing_runs=0。
+`/Users/lzhs/uc/driver/final-report.json` SHA256：
+`193257945d2355e2b87830389f10a0c1686413fe717a727c01685bb9ead66355`。
+
+实际三客户端、自动 hooks、preflight 和 Claude ACK 均已观察到；失败发生在
+五个准备阶段完成后的 `verify_prepared()`：真实 v3 sessions 没有 `surface_ref`，
+旧验收代码却直接读取它。旧 fixture 含该字段，因此既有 1,804 项回归未覆盖此
+真实格式。该回归成绩只证明上一版已测范围，不能证明当前修复或真实提效。
+
+当前修复从固定的原 identity gate 认证 supervisor ref 到 UUID/workspace/pane/
+native session/role 的对应关系；callback 绑定已验证 pack。已用 r12 原 gate
+只读核对，成功解析原 `surface:1000021656`，input_operations=0；这不是重放或
+重新验收旧实验。另修未映射 UI ref 被零输入检查误当无关接收者的漏洞，该漏洞
+由离线审计发现，不声称 r12 现场触发。
+
+修复版 `v3-contract-full-01` 原进程已收取，exit 0：**1,811/1,811 PASS**，
+零失败、错误和跳过，981.601秒，246个监测文件SHA前后一致；没有模型请求，
+没有延长子测试超时。日志SHA256为
+`2257307bdd610afc5e6cbf79948a7da2a4bcd75725b0ce943f12a7ab262d494a`。
+新增测试使用真实UUID-only会话形状，覆盖双lane生命周期、18种原gate篡改、
+callback目标绑定及未映射ref零输入判定；v2原ref兼容保持。
+
+另以r12原pack、原生握手回执、ACK和fence执行 `verify_prepared` 完整只读
+兼容验证（`r13-original-prepared-01`）：fixtures=False、Seatbelt禁止网络和
+全部写入，exit 0，7.140秒，原件不变。stdout SHA256为
+`b0081ea3bc98d915bf4dff3738cc937bf575c7560fa2c81cadf50025c1044773`。
+这项离线原证据验证不改变r12终态或已完成轮数。
+
+r13外部准备脚本已独立审查；导出时另核对49个未纳入本轮监测的文件与已验证
+v11原件SHA/bytes一致。后续使用独立v12 export及私有根 `/Users/lzhs/ud`，
+沿现有全面授权执行7组、33轮、15对；此时尚未启动，不宣称真实业务通过。
+本节为全测结束后的结果文档更新，不改变已测试的可执行源码。
+
+指定经验会话最新零输入观察为 `request-observation-33.json`，05:34:38Z；
+未收到双向回复。PR39 实景 parser 经验已复现吸收，不能据此宣称沟通全部完成。
+
+## r12 历史启动记录（终态以上节为准）
 
 v11 已冻结 295 个文件，七组生成控制器已逐字自审；沿用完整回归通过的
 `4b38553` 产品代码。独立 r12 授权配置已成功生成，原 driver 仅启动一次，
@@ -22,7 +62,7 @@ v11 已冻结 295 个文件，七组生成控制器已逐字自审；沿用完�
 - 原 run.json 的正式时钟对应本轮截止点 **05:28:53Z / 台北 13:28:53**；
   这是单轮 watchdog 边界，不是最终交付时间。最终耗时尚不能可靠估计。
 
-继续收取原 driver 和原三客户端证据；完整规模保持 3 轮 pilot、12 warm＋3
+以上为失败前的历史观察，原 driver 已结束；后续独立实验完整规模保持 3 轮 pilot、12 warm＋3
 cold pairs。只读增量观察保存至 `maintenance/r12-progress/`；未向实验客户端
 发送额外催促，未改冻结控制器、未重新运行已经通过且源码未变的组件压力。
 本节属于全测完成后的文档更新，不声称参与此前 1,804 项测试。

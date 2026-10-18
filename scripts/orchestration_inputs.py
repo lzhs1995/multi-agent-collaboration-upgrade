@@ -382,6 +382,10 @@ def require_unrelated(call, receiver, sender, targets, *, state_root=None):
     require(broadcast or selectors and all(_literal.target(s) for s in selectors), "unresolved actual sender recipient")
     identities = {_literal.target(receiver.get(k)) for k in ("surface_uuid", "surface_ref", "pane_uuid", "session_id")}
     if not broadcast and not any(_literal.target(s) in identities for s in selectors):
+        # UUID-only v3 adoption cannot prove an unbound UI ref is a different
+        # receiver. A recycled or omitted ref must never establish zero input.
+        require(not any(isinstance(s, str) and re.fullmatch(r"(?:surface|pane):[0-9]+", s)
+                        for s in selectors), "unbound UI ref cannot prove unrelated recipient")
         return
     texts = list(call.get("texts", []))
     for key in ("text", "pack"):

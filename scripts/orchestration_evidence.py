@@ -6,6 +6,7 @@ path, command, duration or PASS supplied by an executor is treated as authority.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -206,6 +207,46 @@ def _native_message(reader, ref, role, expected, lower, upper):
     return parse_time(record.get("timestamp"))
 
 
+def prepared_supervisor(campaign, node, gate):
+    """Resolve the original C34 callback ref through its pinned v3 identity gate.
+
+    v3 adoption stores UUIDs, not mutable UI refs. Do not invent a ref or change
+    the harness callback wire to a UUID; authenticate the original gate mapping.
+    """
+    sender = campaign["sessions"]["codex"]
+    if campaign_version(campaign) != 3:
+        return sender["surface_ref"]
+    receiver = campaign["sessions"][node["executor"]]
+    supervisor = gate.get("supervisor")
+    require(isinstance(supervisor, str) and re.fullmatch(r"surface:[0-9]+", supervisor),
+            "identity gate supervisor ref is invalid")
+    require(gate.get("supervisor_provider") == "codex" and
+            campaign_uuid(campaign, gate.get("supervisor_surface_uuid")) == sender["surface_uuid"] and
+            campaign_uuid(campaign, gate.get("workspace_uuid")) == sender["workspace_uuid"] == receiver["workspace_uuid"],
+            "identity gate supervisor/workspace changed")
+    participants = gate.get("native_participants")
+    require(isinstance(participants, list) and len(participants) == 2, "identity gate participants changed")
+    expected = {(role, s["provider"], s["surface_uuid"], s["session_id"])
+                for role, s in (("supervisor", sender), ("executor", receiver))}
+    observed = {(p.get("role"), p.get("provider"), campaign_uuid(campaign, p.get("surface_uuid")),
+                 p.get("native_session_id")) for p in participants}
+    require(observed == expected, "identity gate native roles/sessions changed")
+    proofs = gate.get("workspace_proofs")
+    require(isinstance(proofs, dict) and len(proofs) == 1, "identity gate workspace proof is not unique")
+    selector, mapping = next(iter(proofs.items()))
+    require(campaign_uuid(campaign, selector) == receiver["surface_uuid"] and isinstance(mapping, dict),
+            "identity gate workspace proof receiver changed")
+    expected_mapping = dict(caller_surface_uuid=sender["surface_uuid"], caller_pane_uuid=sender["pane_uuid"],
+                            target_surface_uuid=receiver["surface_uuid"], target_pane_uuid=receiver["pane_uuid"],
+                            workspace_uuid=sender["workspace_uuid"])
+    require(all(campaign_uuid(campaign, mapping.get(k)) == v for k, v in expected_mapping.items()) and
+            mapping.get("caller_surface_ref") == supervisor and
+            isinstance(mapping.get("target_surface_ref"), str) and
+            re.fullmatch(r"surface:[0-9]+", mapping["target_surface_ref"]),
+            "identity gate original ref/UUID/pane binding changed")
+    return supervisor
+
+
 @contract_errors("prepared task")
 def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
@@ -218,12 +259,14 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(pack_ref["path"] == str(directory / "preflight" / "task-pack.json") and
             proof["notice"]["path"] == str(directory / "task-notice.txt"), "prepared task paths changed")
     pack = json_ref(pack_ref, "finalized task pack")
+    gate = json_ref(proof["identity_gate"], "identity gate")
+    supervisor = prepared_supervisor(campaign, node, gate)
     require(pack.get("draft") is False and pack.get("task_id") == info["task_id"] and
-            campaign_uuid(campaign, pack.get("executor_uuid")) == receiver["surface_uuid"] and pack.get("supervisor") == sender["surface_ref"] and
+            campaign_uuid(campaign, pack.get("executor_uuid")) == receiver["surface_uuid"] and pack.get("supervisor") == supervisor and
             pack.get("executor") == receiver["surface_uuid"] and
             pack.get("executors") == [dict(display="EXECUTOR_1", ordinal=1, provider="claude",
                                            surface_ref=receiver["surface_uuid"])] and
-            pack.get("callback_target") == sender["surface_ref"],
+            pack.get("callback_target") == supervisor,
             "pack task/executor/supervisor binding changed")
     require(pack.get("orchestration") == pack_extension(campaign, header, node, info), "pack differs from frozen task/input/scope")
     require(pack.get("authorization_source") == "user_message" and pack.get("authorization_record") == campaign["authorization"]["path"],
@@ -262,7 +305,6 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
         require(body["sha256"] in handshake_notice and body["path"] in handshake_notice, "notice omits pinned handshake body")
     ack_at = _native_message(reader, proof["handshake"]["ack_native"], "assistant", ack,
                              info["native_start"]["offset"], receiver_end)
-    gate = json_ref(proof["identity_gate"], "identity gate")
     validation = json_ref(proof["validation"], "harness validation")
     require(proof["identity_gate"]["path"] == str(directory / "preflight" / "identity-gate.json") and
             proof["validation"]["path"] == str(directory / "preflight" / "validation.json"), "preflight paths changed")
@@ -333,7 +375,7 @@ def verify_protocol(campaign, header, node, info, evidence, receiver_end, superv
                                uuid_semantics=campaign_version(campaign) == 3)
     cb = returned["attempt"]["binding"]
     expected_callback = dict(task_id=info["task_id"], completion_nonce=nonce, completion_callback=callback,
-                             callback_target=sender["surface_ref"], task_pack_sha256=pack_ref["sha256"],
+                             callback_target=pack["callback_target"], task_pack_sha256=pack_ref["sha256"],
                              report=evidence["report"]["path"], report_sha256=evidence["report"]["sha256"],
                              report_bytes=evidence["report"]["bytes"])
     require(all(cb.get(k) == v for k, v in expected_callback.items()), "callback pins a different report/pack/nonce")

@@ -58,6 +58,13 @@ hold advancement without extending the registered watchdog. A crash reuses the
 first failure evidence, never retries input. See [native failure closeout](
 docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).
 
+v3 adoption stores UUIDs without UI refs. The original C34 task pack still uses
+a `surface:<N>` supervisor and callback target. Resolve that ref only from the
+original pinned identity gate, checking both native roles/sessions and their
+workspace, surface and pane UUIDs. Callback evidence must match the verified
+pack target. Unmapped UI refs cannot establish that a sender targeted an
+unrelated receiver. Regression fixtures must preserve the real UUID-only shape.
+
 v3 live identity and campaign-to-native receipt checks compare parsed UUIDs:
 cmux may return uppercase while frozen campaigns use lowercase. Journal lookup
 uses the pinned controller's original uppercase caller; disarm retains original

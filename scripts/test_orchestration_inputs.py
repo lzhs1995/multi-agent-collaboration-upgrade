@@ -26,6 +26,29 @@ SAFE = shlex.join(["cmux-agent", "send", OTHER, "independent maintenance"])
 
 
 class SenderParsingTests(unittest.TestCase):
+    def test_uuid_only_session_cannot_classify_unbound_refs_as_unrelated(self):
+        receiver = {key: value for key, value in RECEIVER.items() if key != "surface_ref"}
+        for selector in (RECEIVER["surface_ref"], "surface:999999", "pane:123"):
+            with self.subTest(selector=selector):
+                call = dict(kind="helper", operation="send", surface=selector, text=TARGET)
+                with self.assertRaises(ContractError):
+                    require_unrelated(call, receiver, SENDER, (TARGET,))
+
+    def test_uuid_only_session_still_allows_exact_unrelated_uuid_or_session(self):
+        receiver = {key: value for key, value in RECEIVER.items() if key != "surface_ref"}
+        for selector in (OTHER, SENDER["session_id"]):
+            with self.subTest(selector=selector):
+                require_unrelated(dict(kind="helper", operation="send", surface=selector, text=TARGET),
+                                  receiver, SENDER, (TARGET,))
+
+    def test_uuid_only_session_rejects_business_input_to_original_uuid_or_session(self):
+        receiver = {key: value for key, value in RECEIVER.items() if key != "surface_ref"}
+        for key in ("surface_uuid", "pane_uuid", "session_id"):
+            with self.subTest(selector=key):
+                with self.assertRaises(ContractError):
+                    require_unrelated(dict(kind="helper", operation="send", surface=receiver[key], text=TARGET),
+                                      receiver, SENDER, (TARGET,))
+
     def check(self, source, *, name="exec", reject=False):
         def run():
             calls = invocation_calls(name, source)

@@ -84,8 +84,8 @@ class FakeRuntime(OfflineDisarmRuntime):
         self.hide_receipt = False
         self.saved_receipt = None
         self.handshake_nonce = "1234abcd"
-        self.handshake_root = co.root / "handshake-original"
-        self.dispatch_root = co.root / "dispatch-original"
+        self.handshake_root = co.root / "original-journals" / node_id / "handshake"
+        self.dispatch_root = co.root / "original-journals" / node_id / "dispatch"
         self.callback_settlements = []
         self.disarms = []
         self.executor_selector = self.f.clients[self.lane].session["surface_uuid"]
@@ -105,14 +105,13 @@ class FakeRuntime(OfflineDisarmRuntime):
             self.f.clients[self.lane].append(self.f.clients[self.lane].message("assistant", ack, at=utc_now()))
             write_json(root / "handshake-receipt.json", dict(task_id=task, status="PASS", executor_ack=True,
                 ack_nonce=self.handshake_nonce, ack_line=ack))
-            write_json(root / "identity-gate.json", dict(task_id=task, status="PASS", native_participants=[
-                dict(provider=c.session["provider"], surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
-                for k, c in self.f.clients.items() if k in ("codex", self.lane)]))
+            write_json(root / "identity-gate.json", self.f.identity_gate(task, self.lane))
             write_json(root / "validation.json", dict(task_id=task, status="PASS"))
         elif phase == "task-pack":
             write_json(root / "task-pack.json", dict(task_id=task, draft=True,
                 executor_uuid=self.f.clients[self.lane].session["surface_uuid"],
-                supervisor="surface:1", executor=self.executor_selector, callback_target="surface:1",
+                supervisor=self.f.surface_refs["codex"], executor=self.executor_selector,
+                callback_target=self.f.surface_refs["codex"],
                 executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=self.executor_selector)],
                 required_skill=str(Path(self.f.campaign["controller"]["path"]) / "SKILL.md"),
                 identity_gate=str(root / "identity-gate.json"), validation_evidence=str(root / "validation.json"),
@@ -208,6 +207,20 @@ class TransportTests(unittest.TestCase):
         mutated = dict(proof, identity_gate=write_json(proof["identity_gate"]["path"], changed))
         with self.assertRaisesRegex(ContractError, "both original native sessions"):
             verify_prepared(self.f.campaign, self.co.header, self.co.nodes["review"], self.info, mutated, fixtures=True)
+
+    def test_v2_pinned_supervisor_ref_cannot_be_rebound_through_a_changed_gate(self):
+        proof = self.transport.prepare()
+        pack, gate = json_ref(proof["pack"]), json_ref(proof["identity_gate"])
+        gate["supervisor"] = "surface:999"
+        for value in gate["workspace_proofs"].values():
+            value["caller_surface_ref"] = gate["supervisor"]
+        pack.update(supervisor=gate["supervisor"], callback_target=gate["supervisor"])
+        changed = dict(proof, identity_gate=write_json(proof["identity_gate"]["path"], gate),
+                       pack=write_json(proof["pack"]["path"], pack))
+        Path(proof["notice"]["path"]).write_text(task_notice(changed["pack"], pack))
+        changed["notice"] = file_ref(proof["notice"]["path"])
+        with self.assertRaisesRegex(ContractError, "binding changed"):
+            verify_prepared(self.f.campaign, self.co.header, self.co.nodes["review"], self.info, changed, fixtures=True)
 
     def test_unknown_submit_and_restart_never_send_again(self):
         self.transport.prepare()

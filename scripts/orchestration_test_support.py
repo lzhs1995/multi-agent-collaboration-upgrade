@@ -112,6 +112,8 @@ class CampaignFixture:
         self.root = private["paths"]["campaigns"] / "campaign" if private else base / "campaign"
         self.root.mkdir()
         self.clients = {}
+        self.surface_refs = {}
+        self.pane_refs = {}
         lanes = ("codex", "claude_a", "claude_b") if version == 3 else ("codex", "claude")
         workspace = str(uuid.uuid4())
         for index, lane in enumerate(lanes, 1):
@@ -120,8 +122,11 @@ class CampaignFixture:
             provider = "codex" if lane == "codex" else "claude"
             client = NativeFixture(directory, provider, session_id=str(uuid.uuid4()) if version == 3 else None)
             client.session.update(surface_uuid=str(uuid.uuid4()) if version == 3 else lane + "-surface",
-                                  pane_uuid=str(uuid.uuid4()) if version == 3 else lane + "-pane",
-                                  surface_ref=f"surface:{index}")
+                                  pane_uuid=str(uuid.uuid4()) if version == 3 else lane + "-pane")
+            self.surface_refs[lane] = f"surface:{index}"
+            self.pane_refs[lane] = f"pane:{index}"
+            if version == 2:
+                client.session["surface_ref"] = self.surface_refs[lane]
             if version == 3:
                 client.session.update(workspace_uuid=workspace, tty=f"ttys{index:03d}",
                                       process=dict(pid=100 + index, birth=[123456, index], executable="/fixture/cli"))
@@ -277,6 +282,35 @@ class CampaignFixture:
         ref = write_json(co.root / "nodes" / key / "accepted-evidence.json", evidence, exclusive=True)
         return co.accept(key, ref)
 
+    def identity_gate(self, task_id, lane):
+        """Model the original harness gate separately from UUID-only v3 sessions."""
+        sender, receiver = self.clients["codex"].session, self.clients[lane].session
+        workspace_ref, selector = "workspace:1", receiver["surface_uuid"]
+        native_uuid = lambda value: value.upper() if campaign_version(self.campaign) == 3 else value
+        proof = dict(caller_surface_uuid=native_uuid(sender["surface_uuid"]),
+                     caller_pane_uuid=native_uuid(sender["pane_uuid"]),
+                     workspace_uuid=native_uuid(sender["workspace_uuid"]),
+                     target_surface_uuid=native_uuid(receiver["surface_uuid"]),
+                     target_pane_uuid=native_uuid(receiver["pane_uuid"]),
+                     caller_surface_ref=self.surface_refs["codex"],
+                     target_surface_ref=self.surface_refs[lane], workspace_ref=workspace_ref)
+        return dict(task_id=task_id, status="PASS", workspace_ref=workspace_ref,
+                    workspace_uuid=native_uuid(sender["workspace_uuid"]),
+                    supervisor=self.surface_refs["codex"], supervisor_provider="codex",
+                    supervisor_surface_uuid=native_uuid(sender["surface_uuid"]),
+                    supervisor_pane_ref=self.pane_refs["codex"], executor=selector,
+                    executor_provider="claude", executor_surface_uuid=native_uuid(receiver["surface_uuid"]),
+                    executor_workspace_ref=workspace_ref, executor_pane_ref=self.pane_refs[lane],
+                    executors=[dict(surface_ref=selector, provider="claude",
+                                    surface_uuid=native_uuid(receiver["surface_uuid"]),
+                                    workspace_ref=workspace_ref, pane_ref=self.pane_refs[lane])],
+                    workspace_proofs={selector: proof},
+                    native_participants=[dict(role="supervisor" if key == "codex" else "executor",
+                                              provider=client.session["provider"],
+                                              surface_uuid=native_uuid(client.session["surface_uuid"]),
+                                              native_session_id=client.session["session_id"])
+                                         for key, client in self.clients.items() if key in ("codex", lane)])
+
     def prepare(self, co, key):
         _, data = co.state()
         info, node = data[key], co.nodes[key]
@@ -292,14 +326,13 @@ class CampaignFixture:
         ack_ref = client.append(client.message("assistant", ack, at=utc_now()))
         handshake = write_json(preflight / "handshake-receipt.json", dict(task_id=info["task_id"], status="PASS",
             executor_ack=True, ack_nonce=nonce, ack_line=ack))
-        gate = write_json(preflight / "identity-gate.json", dict(task_id=info["task_id"], status="PASS",
-            native_participants=[dict(provider=c.session["provider"], surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
-                                 for k, c in self.clients.items() if k in ("codex", node["executor"])]))
+        gate_body = self.identity_gate(info["task_id"], node["executor"])
+        gate = write_json(preflight / "identity-gate.json", gate_body)
         validation = write_json(preflight / "validation.json", dict(task_id=info["task_id"], status="PASS"))
         completion = secrets.token_hex(12)
         report = str(Path(info["output_root"]) / node["report"])
         pack = dict(draft=False, task_id=info["task_id"], executor_uuid=client.session["surface_uuid"],
-            supervisor=sender["surface_ref"], executor=client.session["surface_uuid"], callback_target=sender["surface_ref"],
+            supervisor=gate_body["supervisor"], executor=client.session["surface_uuid"], callback_target=gate_body["supervisor"],
             executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=client.session["surface_uuid"])],
             orchestration=pack_extension(self.campaign, co.header, node, info), authorization_source="user_message",
             authorization_record=self.campaign["authorization"]["path"],
@@ -345,7 +378,7 @@ class CampaignFixture:
         callback = self.clients["codex"].delivery(pack["completion_callback"], sender=self.clients[co.nodes[key]["executor"]].session,
             journal=path.with_name(path.stem + "-attempts"), receipt_path=path, at=utc_now(),
             task_id=info["task_id"], completion_nonce=pack["completion_nonce"], completion_callback=pack["completion_callback"],
-            callback_target=self.clients["codex"].session["surface_ref"], task_pack_sha256=info["prepared"]["pack"]["sha256"],
+            callback_target=pack["callback_target"], task_pack_sha256=info["prepared"]["pack"]["sha256"],
             report=report["path"], report_sha256=report["sha256"], report_bytes=report["bytes"])
         return dict(prepared=info["prepared"], delivery=info["delivery"], callback=callback)
 
