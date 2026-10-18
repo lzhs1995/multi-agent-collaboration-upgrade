@@ -74,6 +74,16 @@ request extra ACKs or count task notices/callbacks. A short helper body still
 uses a pinned MESSAGE_REFERENCE_V2 notice because the helper adds its header.
 Notice receipt does not prove body reading. Boundary labels do not establish
 active/idle or continuous-goal state; require actual native observations.
+New isolated clients receive a pinned `mac_upgrade_body_read.py` command that
+returns the complete verified body in their native tool result. The separate
+observer must authenticate the original receiver journal, input-intent fence,
+exact reader invocation and its complete successful matching result before
+reporting `BODY_READ_OBSERVED`. This means exposure in receiver context, not
+understanding, task acceptance or a native notice receipt. Queued notice,
+body exposure, subsequent action and business correctness remain separate.
+Truncated, yielded, duplicate, stale or unsupported tool records remain UNKNOWN;
+bounded scan coverage and original record offsets must be reported. Do not send
+extra messages or ACKs to improve the 192-sample denominator.
 See [active communication and its measured limits](docs/ASYNC-COMMUNICATION-VALIDATION.md).
 These instructions update this experimental skill only. The designated
 surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns

@@ -21,6 +21,7 @@ from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_materialize import hook_config, rendered_helper
 from upgrade_startup_contract import client_environment, readiness_prompt, validate_startup
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
+from upgrade_body_read import reader_instructions
 
 SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_native_roots.py", "upgrade_client_isolation.py", "upgrade_live_entry.py",
@@ -28,7 +29,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_hook_observer.py", "upgrade_input_gate.py", "upgrade_live_inspect.py", "upgrade_bootstrap.py",
            "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py",
            "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py",
-           "upgrade_handshake_capability.py")
+           "upgrade_handshake_capability.py", "upgrade_body_read.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -115,7 +116,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                 "after": {"sha256": digest(raw), "bytes": len(raw)}})
     for name in SUPPORT:
         raw = read_regular(support / name)
-        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py"):
+        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
         raw = private_imports(raw.decode()).encode()
@@ -179,7 +180,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
               + socket_notice + "Read " + str(controller / "SKILL.md") + ". "
               "Use the pinned private cmux-agent/harness for all collaboration. "
               "Never install skills/hooks, contact production sessions, create replacement clients, "
-              "change HOME or invoke another message sender. Do not claim adoption from a readiness probe.\n")
+              "change HOME or invoke another message sender. Do not claim adoption from a readiness probe.\n"
+              + reader_instructions(context["python"]["path"], controller, executable_pins["rtk"]["path"]))
     for name in ("AGENTS.md", "CLAUDE.md"):
         pins["work_" + name] = immutable_bytes(work / name, policy.encode())
     # This is an explicit startup choice for the newly authorized, OS-sandboxed

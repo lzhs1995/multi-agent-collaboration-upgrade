@@ -186,6 +186,32 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_materialized_body_reader_complete_result_inside_private_scope(self):
+        # Run the actual generated executable, not a copied parser or a mocked read.
+        from cmux_prompt_reference import plan, persist
+        from upgrade_body_read import reader_instructions
+        body = "STATUS: body-read-probe\n完整正文 ' $() ` end\n"
+        value = plan(body, "body-read-probe", self.paths["state"] / "body-read-fixture")
+        persist(value["reference"], body)
+        reader = Path(self.spec["controller"]) / "scripts/mac_upgrade_body_read.py"
+        self.assertIn("_upgrade_install_scope(live=True)", reader.read_text())
+        argv = [str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                sys.executable, "-B", str(reader), "--notice", value["text"]]
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        observed = json.loads(result.stdout)
+        self.assertEqual(observed["body"], body)
+        self.assertEqual(observed["reference"], value["reference"])
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            policy = Path(self.spec["pins"]["work_" + name]["path"]).read_text()
+            self.assertIn(reader_instructions(self.spec["pins"]["python"]["path"],
+                          self.spec["controller"], self.spec["pins"]["rtk"]["path"]), policy)
+        changed = value["text"].replace("BYTES=" + str(value["reference"]["bytes"]), "BYTES=1")
+        result = subprocess.run(argv[:-1] + [changed], capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_readonly_handshake_and_original_native_fences(self):
         controller = Path(self.spec["controller"]) / "scripts"
         probe = Path(__file__).with_name("upgrade_handshake_probe.py").read_text()

@@ -12,7 +12,8 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_client_probe", "upgrade_startup_contract", "upgrade_hook_observer",
     "upgrade_input_gate", "upgrade_live_inspect", "upgrade_bootstrap",
     "upgrade_process_inventory", "upgrade_socket_boundary", "upgrade_claude_ps",
-    "upgrade_standalone_identity", "upgrade_claude_registration", "upgrade_handshake_capability")}
+    "upgrade_standalone_identity", "upgrade_claude_registration", "upgrade_handshake_capability",
+    "upgrade_body_read")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
