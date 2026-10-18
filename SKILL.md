@@ -19,6 +19,13 @@ The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
+For provider capacity, usage-service success and HTTP 200 response headers alone
+do not establish model availability: a successful HTTP stream may contain only
+pings followed by an account/user concurrency error. Record the complete bounded
+stream outcome. Even two completed overlapping streams establish only that
+observation, not sustained capacity or native collaboration acceptance. Preserve
+these diagnostic requests separately from registered business/message samples;
+do not launch an unchanged campaign into a just-observed capacity refusal.
 Claude's default footer without a custom statusline is supported only when the
 matching complete borders are followed by the exact permissions row. Empty
 compose and idle turn remain separate checks; preserve drafts and reject unknown
@@ -215,6 +222,16 @@ header equality check and fresh state/ready reads. Independent status and every
 later action retain fresh authentication; this is not permission to cache a
 digest, skip an input gate or reuse authority across commands. Apply the same
 control-overhead changes to both benchmark arms and keep their original clocks.
+
+A private campaign may reuse the runtime it fully validated earlier in the same
+validation invocation for its immediate adoption check and pure session binding
+comparisons. Still authenticate the adoption proof afresh. Public live gates and
+each NativeReader retain independent complete runtime/adoption validation; no
+cross-action cache, caller-provided bypass or input gate is removed. Removing
+the redundant intermediate scan removes one transient-change observation point,
+so do not claim equivalence for every concurrent mutation interleaving. The
+measured four-pair local helper improvement is not end-to-end collaboration
+evidence; see the r22 report for method, failures and limits.
 
 Preserve structured exception chains and traceback frame locations in runner
 CLI refusals, without local variables or source lines. An unexplained filesystem

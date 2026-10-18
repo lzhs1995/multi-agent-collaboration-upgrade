@@ -172,12 +172,17 @@ def authenticated_native_root(session):
     return checked_path(root / ("sessions" if session["provider"] == "codex" else "projects"))
 
 
-def live_gate_v2(context_ref, runtime_ref, sessions, proof_ref):
-    _, runtime = validate_live_runtime(runtime_ref, context_ref=context_ref)
-    proof = validate_adoption(runtime_ref, proof_ref, runtime=runtime)
+def _match_adopted_sessions(runtime_ref, sessions, proof_ref, proof):
+    """Pure binding checks, never a substitute for runtime/adoption validation."""
     validate_sessions(sessions)
     for lane, session in sessions.items():
         require(identity_matches(session, proof["sessions"][lane])
                 and session.get("private_native") == dict(runtime=runtime_ref, adoption=proof_ref),
                 "CAMPAIGN_SESSION_NOT_ADOPTED")
+
+
+def live_gate_v2(context_ref, runtime_ref, sessions, proof_ref):
+    _, runtime = validate_live_runtime(runtime_ref, context_ref=context_ref)
+    proof = validate_adoption(runtime_ref, proof_ref, runtime=runtime)
+    _match_adopted_sessions(runtime_ref, sessions, proof_ref, proof)
     return proof

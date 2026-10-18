@@ -1,6 +1,6 @@
 # r22：真实首轮超时，候选修复与本机压力结果
 
-状态记录于 2026-10-19 02:39（Asia/Taipei）。原实验已终止：**1 TIMEOUT＋32 MISSING**，
+原实验终态记录于 2026-10-19 02:39（Asia/Taipei），后续诊断见下文。原实验已终止：**1 TIMEOUT＋32 MISSING**，
 业务 **0/33**、pilot **0/3**、pairs **0/15**；提效 **INSUFFICIENT_EVIDENCE**，成本 UNKNOWN。
 本机优化及回归已提交，不构成全量真实压力通过。连续 `/goal` 通信仍未验证。
 r21 保持原终态：1 FAILED＋32 MISSING，业务 0/33、pilot 0/3、pairs 0/15。
@@ -112,6 +112,71 @@ input fence 和完整 native 区间。大小写 UUID 比较只改变身份比较
 均符合预期（4.886 秒）：256 合法，重复通知、重复 call ID、空 binding、变化 intent
 各 64；封口后追加不改变旧区间，扩大区间必须识别重复。均为零模型、零 live 输入。
 
+## 原始延迟拆分与后续校验优化
+
+只读核验原生 journal 设备/inode、固定前缀、唯一完整 prepare/dispatch 工具脚本和
+正式通知原生记录后，得到以下原实验墙钟区间。单位为秒；列间不能相加为因果占比。
+
+| 区间 | inventory / Claude A | source_index / Claude B |
+| --- | ---: | ---: |
+| run start → prepare 调用 | 222.808 | 296.624 |
+| prepare 调用 → preflight intent | 40.163 | 38.130 |
+| preflight | 379.784 | 328.508 |
+| preflight 结束 → task-notice 生成结束 | 20.172 | 21.264 |
+| task-notice 生成结束 → dispatch 调用 | 127.670 | 140.392 |
+| dispatch 调用 → submit intent | 133.329 | 199.739 |
+| submit intent → native notice | 32.509 | 49.377 |
+| 完整 submit operation | 59.725 | 73.080 |
+| run start → native notice | 956.434 | 1074.033 |
+
+这些区间包含模型调度、控制验证、握手 ACK 等待和锁等待。原实验没有逐段 CPU/锁
+分析，二者份额仍 UNKNOWN，不能把完整 16/18 分钟归因于一个校验函数或上游限流。
+审计使用真实工具脚本的 `yield_time_ms=1000, max_output_tokens=8000`，没有拿默认
+生成脚本代替已发生输入。读取上限 16 MiB，零 input/runtime 写入；历史 fixture
+reader 仅用于核验原字节，不能作为新的 live 身份授权。
+
+02:45:29–02:45:36，Claude B 的原 callback 首次尝试留下
+`phase=NO_INPUT, events=[], error=EXPERIMENT_STOP_REQUESTED`。它发生在终止之后，
+不是补发、收件或业务验收，r22 超时及全部分母不变。首个延迟审计失败也原样保留。
+
+重复校验修复移除 `validate_private_campaign` 内第二次完整 runtime 扫描，立即使用
+本次已验证 runtime 做新的真实 adoption 校验和纯 session 对照。公开 `live_gate_v2`
+及三个 NativeReader 各自仍完整鉴权：完整 campaign 路径从五次扫描降为四次。
+没有新增 skip 参数、跨动作缓存或移除 dispatch 的锁后/输入前门禁。减少一次扫描
+也减少该时点对瞬态变更的观察，不承诺所有并发修改交错下的观察完全等价。
+
+最终四项新增测试使用真实 register/materialize/注册验证器，**4/4 PASS，20.035 秒**；
+同实现已有相关测试 **11/11 PASS**。此前包含 mock 注册的四项由此次替代，合计
+15 项不同测试，不计作 19 项。fixture 只读文件改写及过长临时路径的早期失败已
+记录，修复限于测试 fixture；真实 Claude 44 字节路径门槛、生产文件权限均保留。
+
+同一真实注册 fixture、同一当前 renderer、old/new 严格交替四对，局部 helper
+耗时中位 **0.264231 → 0.149669 秒**，配对节省中位 **0.114843 秒 / 41.9875%**；
+八次返回值 SHA 完全相同。adoption 为合成记录，binary 为无模型 fixture，零模型
+调用、零客户端启动；测量不含 readers、dispatch、网络或任务完成。四对观察不是
+置信下界，也不能与旧 renderer 的 17.281 秒 profile 相加。当前 renderer 下另一次
+对 r22 文件的 runtime profile 为 1.054682 秒（含 profiling 开销），也不是完整派发计时。
+
+## Provider 容量核验
+
+当前默认 Claude 端点 `https://k40.shengqainbang.cn` 的单次只读 `/v1/usage` 返回
+HTTP 200、`isValid=true`。这是用量服务接受 key 的证据，不是两个模型流可同时完成
+的证据。返回 `.usage.rpm=1` 是用量，不能解释为 RPM 上限；套餐名称不是权威到期
+字段。返回的订阅 expiry 为 `2026-10-19T11:17:24.559722+08:00`。接口没有提供
+并发上限或空闲槽数，因此当时实际并发容量仍 UNKNOWN。没有修改 key、渠道或设置。
+
+03:00–03:01 又执行一次预先记录的真实并发容量核验：两个原始流式请求同时发出，
+均用既定 `claude-opus-5-5`、xhigh，单请求固定上限 180 秒、4,096 输出 token，
+零重试、零 native 输入、零会话/设置变更。两条 HTTP 状态都是 **200**，但响应只有
+ping 后跟 error：A 在 58.250 秒返回 **account concurrency limit**，B 在 32.199 秒
+返回 **user concurrency limit**。均没有 `message_start` 或 `message_stop`，完成
+响应 **0/2**，双流容量 **NOT_ESTABLISHED**。这是流内 rate_limit_error，不能因为
+HTTP 200 写成模型成功，也不能把它叫作两条 HTTP 429 或无效 key。
+
+这两个独立诊断不计入 33 轮、15 对或 192 消息分母，不改变 r22 的终态。响应、事件
+时间和原请求已落盘。当前明确容量拒绝下不原样开新实验；下一次全量验证仍须先有
+可用并发的新证据，不能以不断重复请求或扩大时限代替解决容量问题。
+
 ## 原证据
 
 证据根：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
@@ -132,12 +197,22 @@ input fence 和完整 native 区间。大小写 UUID 比较只改变身份比较
 - `maintenance/r22-delivery/terminal-readout.json`：核验原 config、deadline、33 槽、15 对及七组 stop 的只读收尾。
 - `maintenance/r22-provider-observations/observation-0002.json`：原日志区间 SHA、原正式通知记录及 API error 偏移。
 - `maintenance/r22-communication/20261018T183910.850254Z-79776/observation.json`：原 v20 的 192 槽终态观察。
+- `maintenance/r22-latency-audit-01/FAILED.md` 与 `maintenance/r22-latency-audit-02/observation.json`：原始脚本匹配失败及修正后的墙钟拆分、迟到 NO_INPUT。
+- `maintenance/r22-control-profile-02/result.json`：当前 renderer 下的单次 runtime profile。
+- `maintenance/r22-development/runtime-validation-dedup-20261019/RESULT.md`、`benchmark-results.json`、`source-pins.json`：真实注册测试、八次局部计时、36 个源码 pin。
+- `maintenance/r22-provider-capacity-01/result.json`：单次只读用量接口结果，非模型并发证据。
+- `maintenance/r22-provider-dual-stream-01/result.json`、`A-response.bin` 与 `B-response.bin`：两条 HTTP 200 内的实际并发拒绝，原请求、意图和逐事件时间分别保存。
+- `maintenance/r22-development/surface40-latency-capacity-exchange-01/`：新实测请求、九项证据 pin、301 文件通信 release 核验，以及原生通知的零输入拒绝。
 
 配置：`/Users/lzhs/um/driver/config.json`，SHA256 `5a42d6d03a7b6f895ef0d44e32e6edac8ca37ae85e1733d49082cd06fafd4ccf`。
 
 共享 MAC 和论文精炼助手仍由指定 surface40 统一管理。本实验仅修改 upgrade，
-通过既有 maintenance 文件 inbox 交换实测发现。新增归因/UUID/限流发现已发布为
-`upgrade42-r22-attribution-provider-findings-20261019.json`；文件发布不证明对方已读。
+通过既有 maintenance 文件 inbox 交换实测发现。归因/UUID/限流发现已发布为
+`upgrade42-r22-attribution-provider-findings-20261019.json`；后续延迟、局部校验优化与
+HTTP 200 流内拒绝证据已另行发布为 `upgrade42-r22-latency-capacity-findings-20261019.json`。
+新通知沿 MAC 0.4.47 的授权同 pane 原生路径执行一次，在 metadata 阶段因
+`/Users/lzhs/.codex/app-server-control/app-server-control.sock` 不存在而返回
+`NO_INPUT`，input_operations=0。保留原次且不重发；文件发布不证明对方已读。
 
 ## 尚未完成的交付条件
 

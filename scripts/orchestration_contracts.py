@@ -37,7 +37,8 @@ def state_root(campaign):
 
 def validate_private_campaign(campaign, *, fixtures):
     from upgrade_experiment import arm_paths, live_gate, validate_sessions
-    from upgrade_live_runtime import live_gate_v2, validate_versioned_runtime
+    from upgrade_live_runtime import (_match_adopted_sessions, validate_adoption,
+                                      validate_versioned_runtime)
     context, runtime = validate_versioned_runtime(campaign["runtime"], context_ref=campaign["experiment"])
     paths = arm_paths(context, runtime["arm"])
     require(campaign.get("arm") == runtime["arm"], "campaign arm differs from its private controller")
@@ -55,8 +56,19 @@ def validate_private_campaign(campaign, *, fixtures):
         require(runtime["execution_mode"] == "offline" and campaign.get("client_isolation") is None,
                 "offline fixtures cannot impersonate active client adoption")
     else:
-        gate = live_gate if runtime["version"] == 1 else live_gate_v2
-        gate(campaign["experiment"], campaign["runtime"], campaign["sessions"], campaign.get("client_isolation"))
+        if runtime["version"] == 1:
+            live_gate(campaign["experiment"], campaign["runtime"], campaign["sessions"], campaign.get("client_isolation"))
+        else:
+            # This invocation already fully validated this runtime above. There
+            # is no input or authorization boundary between those scope checks
+            # and adoption; still read and authenticate adoption afresh here.
+            # Only the second bulk scan before adoption is removed. A transient
+            # artifact change/restoration at that old scan point is no longer
+            # separately observed. Every subsequent NativeReader and public
+            # live gate retains its own complete runtime validation.
+            proof_ref = campaign.get("client_isolation")
+            proof = validate_adoption(campaign["runtime"], proof_ref, runtime=runtime)
+            _match_adopted_sessions(campaign["runtime"], campaign["sessions"], proof_ref, proof)
         from upgrade_benchmark import validate_registered_campaign
         validate_registered_campaign(campaign)
     return context, runtime
