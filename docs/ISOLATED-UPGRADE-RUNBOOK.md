@@ -359,6 +359,41 @@ Then run the complete unchanged-source suite. Keep live original-log readback,
 offline regressions and component contention results distinct. Passing all
 three does not replace the still-unfinished live pilot and paired experiment.
 
+## r17 concurrent run-state coordination
+
+The original r17 inventory dispatch wrote its intent before trying the shared
+coordinator lock. Contention refused it before submit-task-pack began, leaving
+an observe-only attempt. Preserve that failed run and its intent; a corrected
+controller belongs to a fresh experiment.
+
+For v3, serialize shared-state writers with bounded acquisition of the original
+coordinator lock inode. Claims also own their node runner lock so duplicate
+actions fail immediately. New claim, PREPARED and DISPATCH_INTENT acquisition
+uses the remaining original work budget and stops on Stop, halt, closure or
+unknown clock. Recheck full authority and fresh state after obtaining the lock.
+Historical transitions, acceptance, repair and closeout use a separate fixed
+300-second acquisition cap without imposing a new-work gate. This cap bounds
+acquisition, not the transaction or total closeout duration. v2 and first run
+creation remain fail-fast, as do runner/transport/campaign action locks; the
+registry keeps its distinct five-second bound.
+
+Nested lock order is runner → transport → coordinator → registry. Validation
+can itself consume time: recheck the original work budget immediately before
+writing a new claim and before invoking external submission.
+
+Create a new dispatch-intent only while holding the shared lock after a fresh
+PREPARED check. Existing intents are observe-only, including after Stop. Keep
+the gap between the intent and event writes explicit: serialization does not
+make them one crash-atomic write. Never hold this lock while calling external
+harness or submit; those retain their own original-operation journals.
+
+Startup overhead may be reduced by reusing the freshly created Coordinator for
+observational status and one Codex NativeReader within a constructor. Fresh
+header, state, metadata and both EOF-pin reads remain required. Public action
+and input gates still authenticate independently. Both benchmark arms use the
+same optimization, with no clock change or digest cache. Regression results and
+lock pressure do not themselves establish live collaboration improvement.
+
 ## r16 native interruption before bootstrap consumption
 
 r16 adopted its three original clients at 2026-10-18T09:26:07Z. Its original

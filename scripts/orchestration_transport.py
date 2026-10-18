@@ -361,18 +361,25 @@ class Transport:
             if state in (State.DISPATCH_INTENT, State.UNCERTAIN):
                 return self._observe(info, reconcile=False)
             require(state == State.PREPARED, "finalize the pack before dispatch")
-            self.co._work_budget()
             intent_path = self.root / "dispatch-intent.json"
-            # Even a crash before the lifecycle transition cannot grant a new
-            # submit budget. The pre-existing intent becomes observe-only.
-            existed = intent_path.exists()
-            if not existed:
-                value = dict(version=2, operation="submit_task_pack", **task_identity(self.campaign, self.co.header, self.node),
-                             prepared=info["prepared"], controller_sha256=object_sha(self.campaign["controller"]),
-                             created_at=utc_now(), native_fence=NativeReader(self.receiver,
-                                                                          fixtures=self.co.fixtures).snapshot())
-                write_json(intent_path, value, exclusive=True)
-            self.co.transition(self.key, State.DISPATCH_INTENT, {"dispatch_intent": file_ref(intent_path)})
+            # Existing intents are historical even when a crash left no lifecycle
+            # event. They never grant another submit budget, including after Stop.
+            existed = os.path.lexists(intent_path)
+            with self.co.state_lock(new_work=not existed):
+                self.co._gate(new_work=not existed)
+                state, info = self.current()
+                require(state == State.PREPARED, "original dispatch state changed")
+                require(os.path.lexists(intent_path) == existed, "dispatch intent changed while acquiring state lock")
+                if not existed:
+                    value = dict(version=2, operation="submit_task_pack", **task_identity(self.campaign, self.co.header, self.node),
+                                 prepared=info["prepared"], controller_sha256=object_sha(self.campaign["controller"]),
+                                 created_at=utc_now(), native_fence=NativeReader(self.receiver,
+                                                                              fixtures=self.co.fixtures).snapshot())
+                    self.co._work_budget()
+                    write_json(intent_path, value, exclusive=True)
+                # Both records are serialized against other writers. A process
+                # crash between files is preserved; this is not crash atomicity.
+                self.co._append(self.key, State.DISPATCH_INTENT, {"dispatch_intent": file_ref(intent_path)})
             _, info = self.current()
             if existed:
                 return self._observe(info, reconcile=False)
@@ -380,6 +387,8 @@ class Transport:
             args = dict(surface=self.receiver["surface_uuid"], notice=info["prepared"]["notice"],
                         pack=pack, reconcile_only=False)
             try:
+                # Validation/lock wait cannot reset the original work deadline.
+                self.co._gate(new_work=True)
                 self.journal(info).once("submit-task-pack", args,
                     lambda _: self.runtime.submit(args["surface"], notice, pack["path"], reconcile_only=False))
                 return self._received(info)

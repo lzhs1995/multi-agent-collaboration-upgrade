@@ -172,7 +172,7 @@ def verify_run(campaign_ref, run_id, *, fixtures=False):
 
 
 def finish_run(co):
-    with exclusive_lock(co.root / "coordinator.lock"):
+    with co.state_lock():
         if (co.root / "finish.json").exists():
             return verify_run(co.campaign_ref, co.spec["run_id"], fixtures=co.fixtures)
         co._gate()

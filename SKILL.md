@@ -45,9 +45,19 @@ each live client separately from configuration and manual hook tests.
 
 Pressure acceptance requires both safety and successful independent work.
 Report every attempted reservation, semantic conflict and registry-lock timeout;
-zero double owners alone is insufficient. Only short registry transactions may
-wait up to five seconds for their lock. Action locks remain fail-fast, and no
-dispatch or callback is retried by this wait. See [pressure and experience
+zero double owners alone is insufficient. Short registry transactions may wait
+up to five seconds. The separate v3 run-state lock waits within the original
+remaining work budget for new claims/preparation/dispatch; Stop, halt or unknown
+clock refuses new work. Historical observation, acceptance and closeout have a
+separate 300-second lock-acquisition cap, preserving their original gates.
+Node action locks, v2 and initial creation remain fail-fast. Wait only for the
+original lock inode; run the fresh action gate after acquiring it, then execute
+the transaction at most once. No dispatch or callback is retried by this wait.
+Nested acquisition follows runner → transport → coordinator → registry;
+recheck the original work budget immediately before publishing a new claim.
+Publish a new dispatch intent only after acquiring the run-state lock and
+rechecking PREPARED; keep existing intents observe-only. The two evidence writes
+are serialized, not crash-atomic. See [pressure and experience
 controls](references/lessons.md#pressure-and-field-experience).
 
 Private Darwin discovery retains paired kernel BSD snapshots and the original
@@ -84,6 +94,14 @@ complete actual contents and checks before/after descriptor and path identity.
 No digest or stat cache is permitted. Drain all parallel checks before raising,
 preserving original exceptions; small batches retain serial fail-fast behavior.
 Measure local verification speed separately from end-to-end collaboration gains.
+
+Within one Coordinator construction, the Codex reader may be reused only with
+its second original-file metadata read and both EOF-pin checks retained. Start
+may form observational status from the Coordinator just created, with a fresh
+header equality check and fresh state/ready reads. Independent status and every
+later action retain fresh authentication; this is not permission to cache a
+digest, skip an input gate or reuse authority across commands. Apply the same
+control-overhead changes to both benchmark arms and keep their original clocks.
 
 Preserve structured exception chains and traceback frame locations in runner
 CLI refusals, without local variables or source lines. An unexplained filesystem

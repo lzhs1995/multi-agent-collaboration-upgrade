@@ -183,8 +183,13 @@ class ObservationTests(ReadOnlyObservationFixture):
         co = self.f.start()
         co.claim("review")
         self.f.prepare(co, "review")
-        with patch.object(Coordinator, "transition", side_effect=Crash()), self.assertRaises(Crash):
-            self.r.transport(co, "review").dispatch()
+        transport = self.r.transport(co, "review")
+        with patch.object(Coordinator, "_append", side_effect=Crash()), \
+             patch.object(transport.runtime, "submit") as submit, self.assertRaises(Crash):
+            transport.dispatch()
+        submit.assert_not_called()
+        self.assertTrue((transport.root / "dispatch-intent.json").is_file())
+        self.assertFalse((transport.root / "operations/submit-task-pack/intent.json").exists())
         row = self.row(self.observe(), "review")
         self.assertEqual(row["recorded_state"], "PREPARED")
         self.assertEqual(row["recommendation"]["action"], "observe-original-dispatch")

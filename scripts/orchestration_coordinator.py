@@ -5,6 +5,7 @@ retains both its lane and scope. Restarting a coordinator cannot resend it.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from contextlib import contextmanager
@@ -229,14 +230,18 @@ class Coordinator:
         require(self.header["queues"] == queues, "frozen FIFO queues changed")
         count(self.header["started_monotonic_ns"], "run clock")
         require(isinstance(self.header["boot_id"], str) and self.header["boot_id"], "run boot identity missing")
-        reader = NativeReader(self.campaign["sessions"]["codex"], fixtures=fixtures)
-        started = native_control(reader, self.header["start_native"],
+        codex_reader = NativeReader(self.campaign["sessions"]["codex"], fixtures=fixtures)
+        started = native_control(codex_reader, self.header["start_native"],
                                  control_script(self.campaign, campaign_ref, "start", self.spec["run_id"]))
         require(parse_time(self.header["started_at"]) == started <= parse_time(self.header["created_at"]),
                 "run start is not the original native invocation")
         require(set(self.header["native_start"]) == set(self.campaign["sessions"]), "native run lanes changed")
         for lane, session in self.campaign["sessions"].items():
-            reader = NativeReader(session, fixtures=fixtures)
+            if lane == "codex":
+                reader = codex_reader
+                reader.verify_metadata()
+            else:
+                reader = NativeReader(session, fixtures=fixtures)
             require(reader.verify_pin(self.header["native_start"][lane]) >= reader.verify_pin(session["freeze_fence"]),
                     "run predates campaign freeze")
         start_ref = self.header["start_native"]
@@ -249,6 +254,21 @@ class Coordinator:
         if campaign_version(self.campaign) == 3 and not self.fixtures:
             from orchestration_permit import work_budget
             work_budget(self.campaign, self.header)
+            runtime = json_ref(self.campaign["runtime"])
+            startup = json_ref(runtime["startup"])
+            require(not os.path.lexists(startup["stop_path"]), "experiment Stop forbids new work")
+
+    @contextmanager
+    def state_lock(self, *, new_work=False):
+        """v3 shared writers wait; v2 and node action locks retain fail-fast semantics."""
+        if campaign_version(self.campaign) == 2:
+            with exclusive_lock(self.root / "coordinator.lock"):
+                yield
+        else:
+            from orchestration_lock import coordinator_lock, new_work_guard
+            with coordinator_lock(self.root / "coordinator.lock",
+                                  remaining=new_work_guard(self) if new_work else None):
+                yield
 
     def _gate(self, *, new_work=False):
         validate_campaign(self.campaign_ref, fixtures=self.fixtures)
@@ -526,7 +546,9 @@ class Coordinator:
         return select_ready(self.plan, states, self.spec["strategy"], self.root / "work", self.header["queues"])
 
     def claim(self, node_id, *, provider=None):
-        with exclusive_lock(self.root / "coordinator.lock"):
+        require(node_id in self.nodes, "unknown frozen node")
+        # Claim has no outer Runner action lock. Acquire it here exactly once.
+        with exclusive_lock(self.root / "nodes" / node_id / "runner.lock"), self.state_lock(new_work=True):
             identity = self._gate(new_work=True)
             node = next((n for n in self.ready() if n["id"] == node_id), None)
             require(node is not None, "node is not ready; preserve active attempts")
@@ -548,6 +570,7 @@ class Coordinator:
             task_id = f"{self.plan['plan_id']}--{self.spec['run_id']}--{node_id}--a0001"
             attempt_id = f"{self.spec['run_id']}:{node_id}:a0001"
             native = NativeReader(self.campaign["sessions"][lane], fixtures=self.fixtures).snapshot()
+            self._work_budget()
             info = dict(task_id=task_id, attempt_id=attempt_id, output_root=str(output), mode=mode,
                         acceptance_nonce=secrets.token_hex(12), native_start=native, started_at=utc_now(),
                         gates=write_json(self.root / "nodes" / node_id / "claim-gates.json", gates, exclusive=True),
@@ -560,6 +583,7 @@ class Coordinator:
             self._check_claim(node_id, info, target, prior)
             # Intent precedes lease/output mutation. A crash never creates a
             # new nonce, task id or automatic second dispatch on restart.
+            self._work_budget()
             claim = write_json(self.root / "claims" / (node_id + ".json"), info, exclusive=True)
             self.leases.reserve(task_id, self.campaign["sessions"][lane]["session_id"],
                                 str(node_write_scope(self.root, node)), claim)
@@ -569,13 +593,14 @@ class Coordinator:
 
     def transition(self, node_id, state, data):
         require(state not in (State.LOCAL_RUNNING, State.PREPARING, State.ACCEPTED, State.FAILED_PRESERVED), "use claim/accept/settle for gated transitions")
-        with exclusive_lock(self.root / "coordinator.lock"):
-            self._gate()
+        new_work = state in (State.PREPARED, State.DISPATCH_INTENT)
+        with self.state_lock(new_work=new_work):
+            self._gate(new_work=new_work)
             return self._append(node_id, state, data)
 
     def accept(self, node_id, evidence_ref):
         from orchestration_evidence import verify_node
-        with exclusive_lock(self.root / "coordinator.lock"):
+        with self.state_lock():
             self._gate()
             states, data = self.state()
             require(states[node_id] == State.EVIDENCE_READY, "node is not ready for acceptance")
@@ -599,7 +624,8 @@ class Coordinator:
     def node_locks(self, key):
         """Own runner → transport → coordinator locks for one synchronous action.
 
-        Nonblocking and nonreentrant; lock files are persistent and must never
+        Node locks are nonblocking/nonreentrant; shared v3 state acquisition waits.
+        Lock files are persistent and must never
         be replaced/unlinked. A fork-only child can prolong the inherited lock;
         a surviving fork/exec descendant can outlive this ownership.
         Internal recovery helpers consume this ownership without reacquiring it.
@@ -607,7 +633,7 @@ class Coordinator:
         require(key in self.nodes, "unknown frozen node")
         root = self.root / "nodes" / key
         with exclusive_lock(root / "runner.lock"), exclusive_lock(root / "transport.lock"), \
-                exclusive_lock(self.root / "coordinator.lock"):
+                self.state_lock():
             yield
 
     def _repair_release_locked(self, key, info, terminal):

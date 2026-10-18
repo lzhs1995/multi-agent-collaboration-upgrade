@@ -95,7 +95,7 @@ def publish_continuation_locked(co, key, info, *, protocol=None):
     entering this function, preserving runner -> transport -> coordinator order.
     """
     path = continuation_path(co, key)
-    with exclusive_lock(co.root / "coordinator.lock"):
+    with co.state_lock():
         events = co.events()
         if path.exists():
             return observe_continuation(co, key, info, events)

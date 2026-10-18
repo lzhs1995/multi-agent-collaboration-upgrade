@@ -71,8 +71,8 @@ class Runner:
     def start(self, run_id):
         spec = self.spec(run_id)
         root = Path(self.campaign["root"]) / "runs" / run_id
-        Coordinator.create(root, self.ref, spec, fixtures=self.fixtures)
-        return self.status(run_id)
+        co = Coordinator.create(root, self.ref, spec, fixtures=self.fixtures)
+        return self._status_from_co(co)
 
     def status(self, run_id=None):
         if run_id is None:
@@ -92,7 +92,12 @@ class Runner:
             # An existing partial directory is never permission to restart it.
             return dict(run=spec, root=str(root), state="INCOMPLETE_START" if root.exists() else "NOT_STARTED",
                         closed=False, states={}, ready=[])
-        co = self.co(run_id)
+        return self._status_from_co(self.co(run_id))
+
+    @staticmethod
+    def _status_from_co(co):
+        # A returned status is observational; later actions retain their fresh gates.
+        require(read_json(co.root / "run.json") == co.header, "run header changed during status")
         states, _ = co.state()
         closed = (co.root / "finish.json").exists()
         return dict(run=co.spec, root=str(co.root), state="CLOSED" if closed else "STARTED",

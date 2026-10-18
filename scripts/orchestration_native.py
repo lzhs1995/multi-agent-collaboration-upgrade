@@ -193,6 +193,10 @@ class NativeReader:
                 from upgrade_live_runtime import authenticated_native_root
                 root = authenticated_native_root(session)
             require(root.resolve() in self.path.parents, "copied/non-native transcript cannot prove a CLI run")
+        self.verify_metadata()
+
+    def verify_metadata(self):
+        """Re-read the original metadata without retaining native file contents."""
         with self.open() as stream:
             found = False
             for _ in range(64):
@@ -206,11 +210,11 @@ class NativeReader:
                 require(isinstance(record, dict), "native metadata must be an object")
                 if self.provider == "codex" and record.get("type") == "session_meta":
                     meta = record.get("payload", {})
-                    require(meta.get("id", meta.get("session_id")) == session["session_id"], "native metadata session mismatch")
+                    require(meta.get("id", meta.get("session_id")) == self.session["session_id"], "native metadata session mismatch")
                     found = True
                     break
                 if self.provider == "claude" and record.get("sessionId"):
-                    require(record["sessionId"] == session["session_id"], "native metadata session mismatch")
+                    require(record["sessionId"] == self.session["session_id"], "native metadata session mismatch")
                     found = True
                     break
             require(found, "original native session metadata missing")

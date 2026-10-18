@@ -40,7 +40,7 @@ def fill_scaffold(campaign, header, node, info, scaffold, handshake, nonce):
 def collect_preparation_exit(transport):
     """Take the original locks before observing the returned preparation."""
     with exclusive_lock(transport.root / "runner.lock"), exclusive_lock(transport.root / "transport.lock"), \
-            exclusive_lock(transport.co.root / "coordinator.lock"):
+            transport.co.state_lock():
         transport.co._gate()
         state, info = transport.current()
         require(state.value == "BLOCKED", "original preparation must be blocked")
