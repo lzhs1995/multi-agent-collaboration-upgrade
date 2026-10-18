@@ -59,6 +59,66 @@ class NativeControlRequestTests(unittest.TestCase):
                 find_control(f.clients["codex"].reader, script)
 
 
+class UnstartedRunStatusTests(unittest.TestCase):
+    def test_not_started_status_is_read_only_and_allows_original_start(self):
+        for version in (2, 3):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                f = CampaignFixture(directory, version=version)
+                r = Runner(f.ref, fixtures=True)
+                before = sorted(str(p) for p in Path(directory).rglob("*"))
+                state = r.status("run-01")
+                self.assertEqual(state["state"], "NOT_STARTED")
+                self.assertFalse(state["closed"])
+                self.assertEqual(state["states"], {})
+                self.assertEqual(state["ready"], [])
+                self.assertIn("exec_script", r.start_script("run-01"))
+                self.assertEqual(sorted(str(p) for p in Path(directory).rglob("*")), before)
+                f.start()
+                self.assertEqual(r.status("run-01")["state"], "STARTED")
+
+    def test_partial_start_is_preserved_and_cannot_be_restarted(self):
+        for version in (2, 3):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                f = CampaignFixture(directory, version=version)
+                r = Runner(f.ref, fixtures=True)
+                root = f.root / "runs/run-01"
+                root.mkdir(parents=True)
+                evidence = root / "start-intent.json"
+                evidence.write_bytes(b'original incomplete start\n')
+                before = file_ref(evidence)
+                self.assertEqual(r.status("run-01")["state"], "INCOMPLETE_START")
+                with self.assertRaisesRegex(ContractError, "original run exists"):
+                    r.start_script("run-01")
+                self.assertEqual(file_ref(evidence), before)
+                self.assertFalse((root / "run.json").exists())
+
+    def test_unknown_run_and_damaged_paths_never_appear_not_started(self):
+        for version in (2, 3):
+            for case in ("unknown", "file_root", "root_symlink", "dangling_root", "header_symlink",
+                         "dangling_header", "malformed_header"):
+                with self.subTest(version=version, case=case), tempfile.TemporaryDirectory() as directory:
+                    f = CampaignFixture(directory, version=version)
+                    r = Runner(f.ref, fixtures=True)
+                    root = f.root / "runs/run-01"
+                    root.parent.mkdir()
+                    destination = f.root / "original"
+                    if case in ("root_symlink", "header_symlink"):
+                        destination.mkdir()
+                    if case in ("root_symlink", "dangling_root"):
+                        root.symlink_to(destination, target_is_directory=True)
+                    elif case == "file_root":
+                        root.write_text("preserved")
+                    elif case != "unknown":
+                        root.mkdir()
+                        header = root / "run.json"
+                        if case == "malformed_header":
+                            header.write_text('{"broken":')
+                        else:
+                            header.symlink_to(destination)
+                    with self.assertRaises(ContractError):
+                        r.status("absent-run" if case == "unknown" else "run-01")
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -119,6 +179,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.r.accept(self.run, "local", resume=True)["status"], "ACCEPTED")
         first = finish_run(self.co)
         self.assertEqual(finish_run(self.co), first)
+        self.assertEqual(self.r.status(self.run)["state"], "CLOSED")
         self.assertIsNone(self.r.claim(self.run, "local")["business_command"])
 
     def test_duplicate_native_acceptance_is_not_a_recovery_budget(self):

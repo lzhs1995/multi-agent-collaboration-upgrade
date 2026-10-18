@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 from orchestration_campaign import control_script, find_control, native_control, node_output
-from orchestration_contracts import campaign_version, evidence_class, state_root
+from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, evidence_class, state_root
 from orchestration_common import (canonical, checked_path, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
                                   read_ref, strict_json, tree_manifest, utc_now, verify_tree, within)
 from orchestration_native import (NativeReader, delivery_identity, native_text, require, verify_delivery, verify_no_input)
@@ -122,7 +122,8 @@ def task_scope(campaign, header, node, info):
 
 
 def dispatch_journal(campaign, info):
-    key = digest(json.dumps([campaign["sessions"]["codex"]["surface_uuid"], info["task_id"]]).encode())
+    caller = controller_uuid(campaign, campaign["sessions"]["codex"]["surface_uuid"])
+    key = digest(json.dumps([caller, info["task_id"]]).encode())
     return state_root(campaign) / "task-dispatch-v1" / key
 
 
@@ -218,7 +219,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
             proof["notice"]["path"] == str(directory / "task-notice.txt"), "prepared task paths changed")
     pack = json_ref(pack_ref, "finalized task pack")
     require(pack.get("draft") is False and pack.get("task_id") == info["task_id"] and
-            pack.get("executor_uuid") == receiver["surface_uuid"] and pack.get("supervisor") == sender["surface_ref"] and
+            campaign_uuid(campaign, pack.get("executor_uuid")) == receiver["surface_uuid"] and pack.get("supervisor") == sender["surface_ref"] and
             pack.get("executor") == receiver["surface_uuid"] and
             pack.get("executors") == [dict(display="EXECUTOR_1", ordinal=1, provider="claude",
                                            surface_ref=receiver["surface_uuid"])] and
@@ -252,7 +253,8 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     ack = f"PREFLIGHT_ACK|{info['task_id']}|claude:identity|READY|INLINE|{handshake.get('ack_nonce')}"
     require(handshake.get("ack_line") == ack and pack.get("callback") == ack, "preflight ACK nonce changed")
     handshake_notice = read_ref(proof["handshake"]["notice"]).decode()
-    handshake_delivery = verify_delivery(proof["handshake"]["delivery"], receiver, sender, handshake_notice, fixtures=fixtures)
+    handshake_delivery = verify_delivery(proof["handshake"]["delivery"], receiver, sender, handshake_notice, fixtures=fixtures,
+                                         uuid_semantics=campaign_version(campaign) == 3)
     body = handshake.get("dispatch_body_reference")
     if body:
         require(proof["handshake"].get("body") == {k: body[k] for k in ("path", "sha256", "bytes")}, "handshake body pin changed")
@@ -265,7 +267,8 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(proof["identity_gate"]["path"] == str(directory / "preflight" / "identity-gate.json") and
             proof["validation"]["path"] == str(directory / "preflight" / "validation.json"), "preflight paths changed")
     expected_participants = {(s["provider"], s["surface_uuid"], s["session_id"]) for s in (sender, receiver)}
-    observed = {(p.get("provider"), p.get("surface_uuid"), p.get("native_session_id")) for p in gate.get("native_participants", [])}
+    observed = {(p.get("provider"), campaign_uuid(campaign, p.get("surface_uuid")), p.get("native_session_id"))
+                for p in gate.get("native_participants", [])}
     require(gate.get("task_id") == info["task_id"] and gate.get("status") == "PASS" and observed == expected_participants,
             "identity gate does not bind both original native sessions")
     require(validation.get("status") == "PASS" and validation.get("task_id") == info["task_id"], "harness validation/task mismatch")
@@ -303,7 +306,7 @@ def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
     delivered = verify_delivery(bundle, campaign["sessions"][node["executor"]], campaign["sessions"]["codex"],
-                                prepared["notice"], fixtures=fixtures)
+                                prepared["notice"], fixtures=fixtures, uuid_semantics=campaign_version(campaign) == 3)
     binding = delivered["attempt"]["binding"]
     require(binding.get("task_id") == info["task_id"] and binding.get("marker") == info["task_id"] and
             binding.get("task_pack_sha256") == info["prepared"]["pack"]["sha256"], "dispatch task/pack hash mismatch")
@@ -326,7 +329,8 @@ def verify_protocol(campaign, header, node, info, evidence, receiver_end, superv
     receiver, sender = campaign["sessions"][node["executor"]], campaign["sessions"]["codex"]
     nonce, callback = pack["completion_nonce"], pack["completion_callback"]
     require(pack["report"] == evidence["report"]["path"], "callback report path changed")
-    returned = verify_delivery(proof["callback"], sender, receiver, callback, fixtures=fixtures)
+    returned = verify_delivery(proof["callback"], sender, receiver, callback, fixtures=fixtures,
+                               uuid_semantics=campaign_version(campaign) == 3)
     cb = returned["attempt"]["binding"]
     expected_callback = dict(task_id=info["task_id"], completion_nonce=nonce, completion_callback=callback,
                              callback_target=sender["surface_ref"], task_pack_sha256=pack_ref["sha256"],
@@ -500,7 +504,8 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
                         task_pack_sha256=info["prepared"]["pack"]["sha256"],
                         identity=delivery_identity(campaign["sessions"][lane], campaign["sessions"]["codex"]))
         original = verify_no_input(refs, campaign["sessions"][lane], campaign["sessions"]["codex"], notice, expected,
-                                   not_before=parse_time(intent["created_at"]).timestamp(), not_after=at.timestamp(), fixtures=fixtures)
+                                   not_before=parse_time(intent["created_at"]).timestamp(), not_after=at.timestamp(), fixtures=fixtures,
+                                   uuid_semantics=campaign_version(campaign) == 3)
         require(intent["native_fence"]["offset"] <= original["native_offset"] <= ends[lane],
                 "zero-input attempt is outside settlement fence")
         # Handshake is not business dispatch. No useful task call may exist at

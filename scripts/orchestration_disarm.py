@@ -19,6 +19,8 @@ from pathlib import Path
 from orchestration_common import (ContractError, checked_path, digest, evidence_names, file_ref, json_ref,
                                   object_sha, parse_time, read_json, read_regular, strict_json, utc_now, write_json)
 from orchestration_native import require
+from orchestration_contracts import campaign_uuid, campaign_version
+from orchestration_native import identity_uuid
 
 MAX_MARKERS = 64
 MAX_CALLERS = 16
@@ -101,17 +103,18 @@ def marker_paths(frozen):
     return root / workspace / (collaboration + ".json"), root / (workspace + ".json")
 
 
-def validate_frozen(frozen, task_id, workspace, controller_sha256):
+def validate_frozen(frozen, task_id, workspace, controller_sha256, *, uuid_semantics=False):
     require(set(frozen) == {"version", "task_id", "workspace_uuid", "supervisor_uuid", "controller_sha256",
                            "active_root", "state_root", "marker", "callers", "frozen_at"} and
             type(frozen["version"]) is int and frozen["version"] == 1 and frozen["task_id"] == task_id and
-            frozen["workspace_uuid"] == workspace and frozen["controller_sha256"] == controller_sha256,
+            identity_uuid(frozen["workspace_uuid"], uuid_semantics=uuid_semantics) ==
+            identity_uuid(workspace, uuid_semantics=uuid_semantics) and frozen["controller_sha256"] == controller_sha256,
             "frozen disarm identity/controller changed")
     component(workspace, "workspace")
     checked_path(frozen["active_root"])
     checked_path(frozen["state_root"])
     marker = snapshot_value(frozen["marker"], frozen["marker"]["path"])
-    require(isinstance(marker, dict) and marker.get("task_id") == task_id and marker.get("workspace_uuid") == workspace,
+    require(isinstance(marker, dict) and marker.get("task_id") == task_id and marker.get("workspace_uuid") == frozen["workspace_uuid"],
             "frozen marker target changed")
     collaboration = marker.get("collaboration_id")
     component(collaboration, "collaboration id")
@@ -144,8 +147,9 @@ def workspace_snapshots(active_root, workspace, *, required=()):
 
 
 def freeze_original(campaign, task_id, harness, lifecycle, reask):
-    workspace = campaign["sessions"]["codex"]["workspace_uuid"]
-    require(harness._workspace_key() == workspace, "scoped disarm workspace changed")
+    workspace = harness._workspace_key()
+    require(campaign_uuid(campaign, workspace) == campaign_uuid(campaign, campaign["sessions"]["codex"]["workspace_uuid"]),
+            "scoped disarm workspace changed")
     # /tmp itself is a trusted platform alias; child aliases remain forbidden.
     active_root = runtime_root(harness._ACTIVE_DIR, platform_tmp=True)
     state_root = runtime_root(reask.root())
@@ -159,8 +163,11 @@ def freeze_original(campaign, task_id, harness, lifecycle, reask):
     require(len(v2) == 1, "one original v2 marker must be frozen before disarm")
     row, marker = v2[0]
     require(all(same_marker(marker, other) for _, other in matches), "another marker uses the original task id")
+    owners = [p["surface_uuid"] for p in marker["participants"] if p.get("role") == "supervisor"]
+    require(len(owners) == 1 and campaign_uuid(campaign, owners[0]) ==
+            campaign_uuid(campaign, campaign["sessions"]["codex"]["surface_uuid"]), "original marker supervisor changed")
     value = dict(version=1, task_id=task_id, workspace_uuid=workspace,
-                 supervisor_uuid=campaign["sessions"]["codex"]["surface_uuid"],
+                 supervisor_uuid=owners[0],
                  controller_sha256=object_sha(campaign["controller"]), active_root=str(active_root),
                  state_root=str(state_root), marker=row, callers=marker_callers(marker), frozen_at=utc_now())
     validate_frozen(value, task_id, workspace, object_sha(campaign["controller"]))
@@ -188,7 +195,7 @@ def state_paths(frozen, caller):
 
 def observe_original(campaign, frozen, harness, lifecycle, reask):
     marker = validate_frozen(frozen, frozen["task_id"], campaign["sessions"]["codex"]["workspace_uuid"],
-                             object_sha(campaign["controller"]))
+                             object_sha(campaign["controller"]), uuid_semantics=campaign_version(campaign) == 3)
     require(harness._workspace_key() == frozen["workspace_uuid"] and
             str(runtime_root(harness._ACTIVE_DIR, platform_tmp=True)) == frozen["active_root"] and
             str(runtime_root(reask.root())) == frozen["state_root"], "original disarm runtime roots changed")
@@ -355,7 +362,7 @@ def invoke_recovery(campaign, frozen, action, harness, lifecycle, reask):
     before = observe_original(campaign, frozen, harness, lifecycle, reask)
     require(classify(before, frozen) == "LEAKED_RESERVATION", "leaked reservation release no longer eligible")
     marker = validate_frozen(frozen, frozen["task_id"], campaign["sessions"]["codex"]["workspace_uuid"],
-                             object_sha(campaign["controller"]))
+                             object_sha(campaign["controller"]), uuid_semantics=campaign_version(campaign) == 3)
     value = lifecycle.task_boundary(marker, "RELEASED")
     return dict(action=action, before=before, controller_result=value, observation_atomic_with_action=False)
 

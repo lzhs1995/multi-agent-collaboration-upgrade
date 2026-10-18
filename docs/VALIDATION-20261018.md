@@ -5,6 +5,38 @@
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
+## r10 身份大小写与完整生命周期修复
+
+r10 三客户端已于 01:43:07Z 全部 ADOPTED；01:48:08Z 原 Codex 的唯一
+start 因 `identity/process/transcript changed` 被拒绝，业务未派发。
+仍为 pilot 0/3、pairs 0/15、closures 0/33，不计通过。
+三客户端真实内核/原生日志只读诊断证明：进程、会话、TTY、日志文件身份及
+私有配置根均相同，仅 workspace/surface/pane UUID 大小写不同。
+证据：`validation/r10-identity-live-01/result.json`，input_operations=0。
+
+r10 已于 02:10:47Z 按原 1,800 秒单轮 watchdog HALTED/TIMEOUT，原 driver
+exit 2，02:11:17Z 生成最终报告；原会话、controller 和唯一 start 保留。
+
+首批 live UUID 和单轮未启动状态修复已通过 **1,774/1,774** 完整回归，
+0 failures/errors/skips，732.507 秒，243 个监测文件未变。随后自审继续修复
+campaign 与 native handshake/dispatch/callback、pack/gate/scaffold、disarm
+之间的 UUID 比较。日志使用原 guard 大写 caller 定位；释放保留原 marker 路径
+和 caller 拼写，不改原证据、fence、内容哈希或大小写敏感的 reservation key。
+v2 保持原严格身份比较；v3 的非 UUID 字段仍严格匹配。
+
+本轮 **69/69 定向回归通过，158.494 秒**，包含两个 Claude 并行派发、真实
+producer 形态的原生证据、回调验收、释放和续派的五节点离线生命周期，以及
+身份替换、原 fence 改动、marker 替换、非 UUID 字段改变等负例。首轮新测试
+fixture 使用固定 nonce 导致日志重叠的失败保留，已改为每任务独立 nonce。
+本轮新增边界修复的完整回归已通过 **1,781/1,781**，0 failures/errors/skips，
+执行器总耗时 1,157.603 秒（suite 1,152.986 秒），244 个监测文件测试前后
+SHA 完全一致。原工具进程 exit 0，未修改内部超时，未重复启动测试。
+证据：`validation/r8-pressure-and-full/uuid-lifecycle-full-01/result.json`；
+完整日志 SHA256 为 `f9d7062284bc7c7169ee8d0bea09a3dbe8968164b2fb37f74d2fa107adc1f1b0`。
+以上均为离线验证，live_model_requests=0；本段实际结果在测试结束后更新，
+作为单独记录的文档变动，不声称它参与了此前全测。
+用户的全面授权持续有效；完整回归后继续独立冻结实验，无须重复确认。
+
 ## 新版 Claude 注册兼容修复（08:58 更新）
 
 r9 已按原 900 秒启动 watchdog 收口，保留三个原会话及全部结果：pilot 0/3、

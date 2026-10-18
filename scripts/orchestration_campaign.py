@@ -13,7 +13,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from orchestration_common import (checked_path, contract_errors, count, digest, file_ref, finite, json_ref,
+from orchestration_common import (ContractError, checked_path, contract_errors, count, digest, file_ref, finite, json_ref,
                                   parse_time, read_ref, verify_tree, within)
 from orchestration_native import NativeReader, native_text, require
 from orchestration_planner import ID_RE, executor_providers, validate_plan
@@ -284,6 +284,7 @@ def collect_live_sessions(campaign):
             # reader already owns its private-root implementation.
             within(Path(native.private_roots.__file__).resolve(), root)
             codex["native_config_root"] = str(native.private_roots.process_root("codex", proof["client"]))
+            canonical_live_uuids(codex)
         observed = dict(codex=codex)
         for lane, session in campaign["sessions"].items():
             if lane == "codex":
@@ -295,16 +296,28 @@ def collect_live_sessions(campaign):
                              transcript={k: bound["transcript"][k] for k in ("path", "device", "inode")})
             if private_live:
                 receiver["native_config_root"] = bound["native_config_root"]
+                canonical_live_uuids(receiver)
             observed[lane] = receiver
         return observed
     finally:
         sys.path.pop(0)
 
 
+def canonical_live_uuids(session):
+    """v3 freezes UUIDs in lowercase; cmux and the transport return uppercase."""
+    import uuid
+    for key in ("workspace_uuid", "surface_uuid", "pane_uuid"):
+        try:
+            session[key] = str(uuid.UUID(session[key]))
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise ContractError(f"invalid live {key}") from exc
+
+
 def require_live_identity(campaign):
     observed = collect_live_sessions(campaign)
     require(set(observed) == set(campaign["sessions"]), "original live session lanes missing")
     for lane, actual in observed.items():
-        require(all(campaign["sessions"][lane].get(k) == v for k, v in actual.items()),
-                f"original {lane} identity/process/transcript changed; do not retarget")
+        changed = sorted(k for k, v in actual.items() if campaign["sessions"][lane].get(k) != v)
+        require(not changed,
+                f"original {lane} identity/process/transcript changed ({', '.join(changed)}); do not retarget")
     return observed

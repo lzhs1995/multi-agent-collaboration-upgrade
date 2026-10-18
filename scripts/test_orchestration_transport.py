@@ -83,6 +83,7 @@ class FakeRuntime(OfflineDisarmRuntime):
         self.fail_submit = False
         self.hide_receipt = False
         self.saved_receipt = None
+        self.handshake_nonce = "1234abcd"
         self.handshake_root = co.root / "handshake-original"
         self.dispatch_root = co.root / "dispatch-original"
         self.callback_settlements = []
@@ -98,12 +99,12 @@ class FakeRuntime(OfflineDisarmRuntime):
         self.calls.append(phase)
         if phase == "preflight":
             root.mkdir()
-            ack = f"PREFLIGHT_ACK|{task}|claude:identity|READY|INLINE|1234abcd"
+            ack = f"PREFLIGHT_ACK|{task}|claude:identity|READY|INLINE|{self.handshake_nonce}"
             self.f.clients[self.lane].delivery("PREFLIGHT " + ack, sender=self.f.clients["codex"].session,
                 journal=self.handshake_root, at=utc_now())
             self.f.clients[self.lane].append(self.f.clients[self.lane].message("assistant", ack, at=utc_now()))
             write_json(root / "handshake-receipt.json", dict(task_id=task, status="PASS", executor_ack=True,
-                ack_nonce="1234abcd", ack_line=ack))
+                ack_nonce=self.handshake_nonce, ack_line=ack))
             write_json(root / "identity-gate.json", dict(task_id=task, status="PASS", native_participants=[
                 dict(provider=c.session["provider"], surface_uuid=c.session["surface_uuid"], native_session_id=c.session["session_id"])
                 for k, c in self.f.clients.items() if k in ("codex", self.lane)]))

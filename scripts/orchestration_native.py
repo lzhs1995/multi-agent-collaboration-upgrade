@@ -423,25 +423,46 @@ def original_attempts(refs):
     return [json_ref(ref, "dispatch attempt") for ref in refs]
 
 
+def identity_uuid(value, *, uuid_semantics=False):
+    """Normalize only explicit v3 UUID comparisons, never stored evidence."""
+    if not uuid_semantics:
+        return value
+    require(isinstance(value, str), "identity UUID must be a string")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise ContractError("invalid identity UUID") from exc
+
+
+def same_delivery_identity(actual, expected, *, uuid_semantics=False):
+    if not uuid_semantics:
+        return actual == expected
+    require(isinstance(actual, dict) and set(actual) == set(expected), "native identity fields changed")
+    return all(identity_uuid(actual[k], uuid_semantics=True) == identity_uuid(v, uuid_semantics=True)
+               for k, v in expected.items())
+
+
 def delivery_identity(receiver, sender):
     return dict(workspace_uuid=receiver["workspace_uuid"], caller_surface_uuid=sender["surface_uuid"],
                 target_surface_uuid=receiver["surface_uuid"], target_pane_uuid=receiver["pane_uuid"])
 
 
-def check_native_binding(binding, receiver, sender, text, *, fixtures=False):
+def check_native_binding(binding, receiver, sender, text, *, fixtures=False, uuid_semantics=False):
     require(binding.get("schema") == "native-delivery-v1", "original native binding required")
     require(binding.get("provider") == receiver["provider"] and binding.get("session_id") == receiver["session_id"],
             "receiver session mismatch")
     require(binding.get("process") == receiver["process"] and binding.get("tty") == receiver["tty"],
             "receiver process/birth/TTY mismatch")
-    require(binding.get("identity") == delivery_identity(receiver, sender), "native workspace/surface/pane binding mismatch")
+    require(same_delivery_identity(binding.get("identity"), delivery_identity(receiver, sender),
+                                   uuid_semantics=uuid_semantics), "native workspace/surface/pane binding mismatch")
     require(binding.get("payload_sha256") == digest(text.encode()), "payload hash changed")
     reader = NativeReader(receiver, fixtures=fixtures)
     return reader.verify_pin(binding["transcript"])
 
 
 @contract_errors("zero-input history")
-def verify_no_input(refs, receiver, sender, text, expected_binding, *, not_before, not_after, fixtures=False):
+def verify_no_input(refs, receiver, sender, text, expected_binding, *, not_before, not_after, fixtures=False,
+                    uuid_semantics=False):
     """Only a completed, positively zero-input task operation may release a lane.
 
     Ordinary message journals lack these operation clocks. They deliberately do
@@ -453,13 +474,18 @@ def verify_no_input(refs, receiver, sender, text, expected_binding, *, not_befor
     for attempt in attempts:
         require(attempt.get("phase") == "NO_INPUT" and attempt.get("events") == [],
                 "uncertain input cannot release a lease")
-        require(attempt.get("binding") == expected_binding, "zero-input task/pack/notice/endpoint binding changed")
+        actual = attempt.get("binding", {})
+        require(isinstance(actual, dict) and set(actual) == set(expected_binding) and
+                all(actual[k] == v for k, v in expected_binding.items() if k != "identity") and
+                same_delivery_identity(actual.get("identity"), expected_binding["identity"], uuid_semantics=uuid_semantics),
+                "zero-input task/pack/notice/endpoint binding changed")
         started = finite(attempt.get("started_at_epoch"), "attempt start time")
         ended = finite(attempt.get("ended_at_epoch"), "attempt end time")
         b = attempt.get("native_binding", {})
         bound = finite(b.get("bound_at_epoch"), "native binding time")
         require(previous_end <= started <= bound <= ended <= not_after, "zero-input operation chronology invalid")
-        offset = check_native_binding(b, receiver, sender, text, fixtures=fixtures)
+        require(actual.get("identity") == b.get("identity"), "original zero-input identities differ")
+        offset = check_native_binding(b, receiver, sender, text, fixtures=fixtures, uuid_semantics=uuid_semantics)
         require(offset >= last_offset, "zero-input native fence moved backwards")
         require(isinstance(attempt.get("error"), str) and attempt["error"], "zero-input terminal error missing")
         previous_end, last_offset = ended, offset
@@ -467,7 +493,7 @@ def verify_no_input(refs, receiver, sender, text, expected_binding, *, not_befor
 
 
 @contract_errors("native delivery")
-def verify_delivery(bundle, receiver, sender, text, *, fixtures=False):
+def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_semantics=False):
     """Check the complete original attempt list, fence and exact native input."""
     receipt = json_ref(bundle["receipt"], "delivery receipt")
     refs = bundle["attempts"]
@@ -475,7 +501,8 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False):
     for prior in attempts[:-1]:
         require(prior.get("phase") == "NO_INPUT" and prior.get("events") == [], "uncertain input was resent")
         require(prior.get("binding") == attempts[-1].get("binding"), "attempt binding changed")
-        check_native_binding(prior.get("native_binding", {}), receiver, sender, text, fixtures=fixtures)
+        check_native_binding(prior.get("native_binding", {}), receiver, sender, text, fixtures=fixtures,
+                             uuid_semantics=uuid_semantics)
     attempt = attempts[-1]
     require(receipt.get("attempt") == refs[-1]["path"] and receipt.get("confirmed") is True, "receipt not bound to original attempt")
     b = attempt.get("native_binding", {})
@@ -490,7 +517,9 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False):
     require(b.get("provider") == receiver["provider"] and b.get("session_id") == receiver["session_id"], "receiver session mismatch")
     require(b.get("process") == receiver["process"] and b.get("tty") == receiver["tty"], "receiver process/birth/TTY mismatch")
     expected_identity = delivery_identity(receiver, sender)
-    require(b.get("identity") == expected_identity and attempt.get("binding", {}).get("identity") == expected_identity, "native workspace/surface/pane binding mismatch")
+    require(b.get("identity") == attempt.get("binding", {}).get("identity") and
+            same_delivery_identity(b.get("identity"), expected_identity, uuid_semantics=uuid_semantics),
+            "native workspace/surface/pane binding mismatch")
     require(b.get("payload_sha256") == digest(text.encode()), "payload hash changed")
     process = b.get("process", {})
     require(count(process.get("pid"), "receiver pid") > 0, "invalid receiver pid")

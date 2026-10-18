@@ -14,7 +14,7 @@ from orchestration_common import (canonical, contract_errors, digest, evidence_n
 from orchestration_evidence import (dispatch_journal, node_directory, pack_extension, task_scope,
                                     task_sources, verify_prepared)
 from orchestration_native import NativeReader, require
-from orchestration_contracts import campaign_version, evidence_class, state_root
+from orchestration_contracts import campaign_uuid, campaign_version, evidence_class, state_root
 
 STAGES = ("preflight", "task-pack", "fill-pack", "finalize-pack", "task-notice")
 HARNESS_STAGES = {"preflight", "task-pack", "finalize-pack"}
@@ -191,7 +191,8 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     require(pack["completion_nonce"] == config["completion_nonce"], "final pack transport nonce changed")
     scaffold = json_ref(proof["scaffold"])
     receiver = campaign["sessions"][node["executor"]]
-    require(scaffold.get("executor") == scaffold.get("executor_uuid") == receiver["surface_uuid"] and
+    require(scaffold.get("executor") == receiver["surface_uuid"] and
+            campaign_uuid(campaign, scaffold.get("executor_uuid")) == receiver["surface_uuid"] and
             scaffold.get("executors") == pack["executors"], "original scaffold executor identity changed")
     handshake = json_ref(prepared["handshake"]["receipt"])
     filled = fill_scaffold(campaign, header, node, info, scaffold, handshake, config["completion_nonce"])

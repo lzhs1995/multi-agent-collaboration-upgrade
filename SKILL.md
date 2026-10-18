@@ -45,6 +45,17 @@ hold advancement without extending the registered watchdog. A crash reuses the
 first failure evidence, never retries input. See [native failure closeout](
 docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).
 
+v3 live identity and campaign-to-native receipt checks compare parsed UUIDs:
+cmux may return uppercase while frozen campaigns use lowercase. Journal lookup
+uses the pinned controller's original uppercase caller; disarm retains original
+marker paths and caller spelling. Never normalize stored evidence or reservation
+hashes. This never relaxes exact process, native session, TTY, transcript, fence,
+receipt-to-attempt or private configuration checks. Before
+starting a permitted run, inspect the top-level `status --run RUN` state;
+`NOT_STARTED` allows the original start, while `INCOMPLETE_START` preserves the
+partial attempt and forbids replay. See [r10 startup findings](
+docs/ISOLATED-UPGRADE-RUNBOOK.md#r10-uuid-case-and-unstarted-status).
+
 For zero-input identity refusals, read [native caller inventory failures](references/native-caller-inventory.md).
 Repair discovery before retrying a handshake; retain kernel/UUID authentication
 and distinguish local bridge failure from executor availability.

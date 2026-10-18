@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from orchestration_campaign import anchored_ref, control_script, find_control, validate_campaign
-from orchestration_common import (ContractError, exclusive_lock, file_ref, json_ref, read_json,
+from orchestration_common import (ContractError, checked_path, exclusive_lock, file_ref, json_ref, read_json,
                                   tree_manifest, utc_now, write_json)
 from orchestration_coordinator import Coordinator, State
 from orchestration_contracts import campaign_version, evidence_class
@@ -83,10 +83,20 @@ class Runner:
                     "INCOMPLETE_START" if root.exists() else "NOT_STARTED")
                 rows.append(dict(spec, state=state))
             return dict(campaign=self.ref, evidence_class=self.campaign["evidence_class"], runs=rows)
+        spec = self.spec(run_id)
+        root = checked_path(Path(self.campaign["root"]) / "runs" / run_id)
+        header = checked_path(root / "run.json")
+        require(not root.exists() or root.is_dir(), "run root must be a directory")
+        if not header.exists():
+            # Status is also the entrypoint before the first native start.
+            # An existing partial directory is never permission to restart it.
+            return dict(run=spec, root=str(root), state="INCOMPLETE_START" if root.exists() else "NOT_STARTED",
+                        closed=False, states={}, ready=[])
         co = self.co(run_id)
         states, _ = co.state()
         closed = (co.root / "finish.json").exists()
-        return dict(run=co.spec, root=str(co.root), closed=closed, states={k: s.value for k, s in states.items()},
+        return dict(run=co.spec, root=str(co.root), state="CLOSED" if closed else "STARTED",
+                    closed=closed, states={k: s.value for k, s in states.items()},
                     ready=[] if closed else [n["id"] for n in co.ready()])
 
     def drafts(self, run_id):

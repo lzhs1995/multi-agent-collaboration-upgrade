@@ -20,7 +20,7 @@ from orchestration_common import (ContractError, checked_path, contract_errors, 
                                   object_sha, parse_time, read_json, read_ref, utc_now, verify_tree, within,
                                   write_bytes_once, write_json)
 from orchestration_coordinator import State
-from orchestration_contracts import campaign_version, state_root
+from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, state_root
 from orchestration_disarm import (Recovery, freeze_original, invoke_disarm, invoke_recovery, observe_original,
                                   original_result, validate_frozen, validate_result)
 from orchestration_evidence import (dispatch_journal, node_directory, pack_extension, task_identity,
@@ -169,8 +169,10 @@ def disarm_sources(campaign, campaign_ref, directory, task_id, terminal):
     """Validate immutable sources without reading the lease (avoids a cycle)."""
     frozen_ref = file_ref(checked_path(directory / "disarm-frozen.json"))
     frozen = json_ref(frozen_ref)
-    validate_frozen(frozen, task_id, campaign["sessions"]["codex"]["workspace_uuid"], object_sha(campaign["controller"]))
-    require(frozen["supervisor_uuid"] == campaign["sessions"]["codex"]["surface_uuid"], "frozen marker owner changed")
+    validate_frozen(frozen, task_id, campaign["sessions"]["codex"]["workspace_uuid"], object_sha(campaign["controller"]),
+                    uuid_semantics=campaign_version(campaign) == 3)
+    require(campaign_uuid(campaign, frozen["supervisor_uuid"]) ==
+            campaign_uuid(campaign, campaign["sessions"]["codex"]["surface_uuid"]), "frozen marker owner changed")
     args = dict(task_id=task_id, terminal=terminal, frozen=frozen_ref)
     operation = directory / "operations/scoped-disarm"
     intent_ref = file_ref(checked_path(operation / "intent.json"))
@@ -223,7 +225,8 @@ def journal_bundle(directory, receipt=None):
 
 
 def handshake_journal(campaign, nonce):
-    key = digest(json.dumps([campaign["sessions"]["codex"]["surface_uuid"], nonce], sort_keys=True).encode())
+    caller = controller_uuid(campaign, campaign["sessions"]["codex"]["surface_uuid"])
+    key = digest(json.dumps([caller, nonce], sort_keys=True).encode())
     return state_root(campaign) / "message-dispatch-v1" / key
 
 
@@ -436,7 +439,8 @@ class Transport:
                     pack_ref["path"], str(reader.path), line))
             bundle = journal_bundle(journal, receipt)
             verify_delivery(bundle, self.campaign["sessions"]["codex"], self.receiver,
-                            pack["completion_callback"], fixtures=self.co.fixtures)
+                            pack["completion_callback"], fixtures=self.co.fixtures,
+                            uuid_semantics=campaign_version(self.campaign) == 3)
             return bundle
 
     def disarm(self):
@@ -464,7 +468,7 @@ class Transport:
             frozen_ref = file_ref(checked_path(frozen_path))
             frozen = json_ref(frozen_ref)
             validate_frozen(frozen, info["task_id"], self.campaign["sessions"]["codex"]["workspace_uuid"],
-                            object_sha(self.campaign["controller"]))
+                            object_sha(self.campaign["controller"]), uuid_semantics=campaign_version(self.campaign) == 3)
             args = dict(task_id=info["task_id"], terminal=terminal_ref, frozen=frozen_ref)
             if not (operation / "intent.json").exists():
                 require(not recovery_root.exists(), "recovery has no original disarm intent")

@@ -4,13 +4,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from orchestration_common import checked_path, json_ref, within
-from orchestration_native import require
+from orchestration_native import identity_uuid, require
 
 
 def campaign_version(campaign):
     value = campaign.get("version")
     require(type(value) is int and value in (2, 3), "campaign version must be 2 or 3")
     return value
+
+
+def campaign_uuid(campaign, value):
+    return identity_uuid(value, uuid_semantics=campaign_version(campaign) == 3)
+
+
+def controller_uuid(campaign, value):
+    """The pinned v3 workspace guard emits uppercase UUIDs for journal keys."""
+    return campaign_uuid(campaign, value).upper() if campaign_version(campaign) == 3 else value
 
 
 def evidence_class(campaign, stem, fixtures):

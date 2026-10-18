@@ -19,17 +19,18 @@ from test_orchestration_native import NativeFixture
 class OfflineDisarmRuntime:
     """Private marker/state files; never imports or calls a shared controller."""
 
-    def __init__(self, campaign, root, *, executor_id=None):
+    def __init__(self, campaign, root, *, executor_id=None, native_uuid_uppercase=False):
         from types import SimpleNamespace
         from orchestration_disarm import marker_callers
         self.campaign, self.root = campaign, Path(root).resolve()
         self.executor_id = executor_id
+        self.native_uuid = lambda value: value.upper() if native_uuid_uppercase else value
         self.active, self.states = self.root / "active", self.root / "states"
         self.active.mkdir(parents=True, exist_ok=True)
         self.states.mkdir(parents=True, exist_ok=True)
         self.disarms, self.recoveries = [], []
         self.marker = None
-        workspace = campaign["sessions"]["codex"]["workspace_uuid"]
+        workspace = self.native_uuid(campaign["sessions"]["codex"]["workspace_uuid"])
         self.disarm_harness = SimpleNamespace(_ACTIVE_DIR=self.active, _workspace_key=lambda: workspace,
                                               disarm_task=self._remove)
         self.lifecycle = SimpleNamespace(marker_callers=marker_callers, marker_locks=lambda marker: contextlib.nullcontext(),
@@ -43,9 +44,9 @@ class OfflineDisarmRuntime:
         if self.marker is None:
             self.marker = dict(task_id=task_id,
                 collaboration_id="fixture-" + digest(task_id.encode())[:20],
-                workspace_uuid=self.campaign["sessions"]["codex"]["workspace_uuid"],
+                workspace_uuid=self.native_uuid(self.campaign["sessions"]["codex"]["workspace_uuid"]),
                 participants=[dict(role="supervisor" if lane == "codex" else "executor",
-                                   surface_uuid=session["surface_uuid"])
+                                   surface_uuid=self.native_uuid(session["surface_uuid"]))
                               for lane, session in self.campaign["sessions"].items()
                               if self.executor_id is None or lane in ("codex", self.executor_id)])
             write_json(self.active / self.marker["workspace_uuid"] / (self.marker["collaboration_id"] + ".json"),

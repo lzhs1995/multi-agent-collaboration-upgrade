@@ -20,7 +20,7 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
-        self.campaign = dict(controller={"offline": True}, sessions={
+        self.campaign = dict(version=2, controller={"offline": True}, sessions={
             "codex": dict(workspace_uuid="WORKSPACE", surface_uuid="SUPERVISOR"),
             "claude": dict(surface_uuid="ABC-EXECUTOR")})
         self.runtime = OfflineDisarmRuntime(self.campaign, self.root / "runtime")

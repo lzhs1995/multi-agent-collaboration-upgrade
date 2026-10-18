@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from orchestration_campaign import METRICS, ORDER, collect_live_sessions, validate_campaign
+from orchestration_campaign import METRICS, ORDER, collect_live_sessions, require_live_identity, validate_campaign
 from orchestration_common import ContractError, digest, file_ref, json_ref, parse_time, read_json, utc_now, write_json
 from orchestration_coordinator import Coordinator, State, strategy_probe
 from orchestration_evidence import verify_node
@@ -453,6 +453,86 @@ class PromotionTests(unittest.TestCase):
 
 
 class IdentityAdapterTests(unittest.TestCase):
+    def private_identity(self):
+        import uuid
+        workspace = str(uuid.uuid4())
+        sessions = {}
+        for i, lane in enumerate(("codex", "claude_a", "claude_b"), 1):
+            sessions[lane] = dict(provider="codex" if lane == "codex" else "claude",
+                session_id=str(uuid.uuid4()), tty=f"ttys{i:03d}",
+                process=dict(pid=100 + i, birth=[12345, i], executable="/native/cli",
+                             file_identity=dict(device=1, inode=10 + i)),
+                workspace_uuid=workspace, surface_uuid=str(uuid.uuid4()), pane_uuid=str(uuid.uuid4()),
+                transcript=dict(path=f"/native/{lane}.jsonl", device=1, inode=20 + i),
+                native_config_root=f"/private/{lane}")
+        campaign = dict(version=3, controller={"path": "/pinned/controller"}, sessions=sessions)
+        live = copy.deepcopy(sessions)
+        for index, row in enumerate(live.values()):
+            for key in ("workspace_uuid", "surface_uuid", "pane_uuid"):
+                row[key] = row[key].upper() if index != 1 else row[key][:18].upper() + row[key][18:]
+        return campaign, live
+
+    def collect_and_require(self, campaign, live):
+        codex = live["codex"]
+        raw = {"client": codex["process"]}
+        public = dict(session=codex["session_id"], tty=codex["tty"],
+                      foreground={"thread_id": codex["session_id"]})
+        caller = {a: codex[b] for a, b in (("workspace_id", "workspace_uuid"),
+                   ("surface_id", "surface_uuid"), ("pane_id", "pane_uuid"))}
+        def target(_bridge, surface, purpose):
+            self.assertEqual(purpose, "ORCHESTRATION_IDENTITY_READ_ONLY")
+            lane = next(k for k, v in campaign["sessions"].items() if v["surface_uuid"] == surface)
+            row = live[lane]
+            return dict(row, identity=dict(workspace_uuid=row["workspace_uuid"],
+                target_surface_uuid=row["surface_uuid"], target_pane_uuid=row["pane_uuid"]))
+        native = SimpleNamespace(_public_process=Mock(return_value=codex["process"]),
+            _transcript_path=Mock(return_value=codex["transcript"]["path"]),
+            _pin_file=Mock(return_value=codex["transcript"]), bind_target=Mock(side_effect=target),
+            private_roots=SimpleNamespace(__file__="/pinned/controller/scripts/upgrade_native_roots.py",
+                process_root=Mock(return_value=codex["native_config_root"])))
+        guard = SimpleNamespace(caller_snapshot=Mock(return_value=({"caller": caller}, None, None, public)))
+        daemon = SimpleNamespace(collect=Mock(return_value=raw))
+        with patch("orchestration_campaign.controller_modules", return_value=(object(), native, guard, daemon)):
+            return require_live_identity(campaign)
+
+    def test_v3_three_lane_uppercase_and_mixed_uuid_round_trip(self):
+        campaign, live = self.private_identity()
+        before = copy.deepcopy(campaign)
+        self.assertEqual(self.collect_and_require(campaign, live), campaign["sessions"])
+        self.assertEqual(campaign, before)
+
+    def test_v3_changed_uuid_process_session_tty_or_transcript_still_refused(self):
+        import uuid
+        mutations = {
+            **{key: (lambda row, k=key: row.update({k: str(uuid.uuid4())}))
+               for key in ("workspace_uuid", "surface_uuid", "pane_uuid", "session_id")},
+            "pid": lambda row: row["process"].update(pid=999),
+            "birth": lambda row: row["process"].update(birth=[999, 1]),
+            "executable": lambda row: row["process"].update(executable="/different/cli"),
+            "file_identity": lambda row: row["process"]["file_identity"].update(inode=999),
+            "tty": lambda row: row.update(tty="ttys999"),
+            "native_config_root": lambda row: row.update(native_config_root="/different/root"),
+            **{f"transcript_{key}": (lambda row, k=key, v=value: row["transcript"].update({k: v}))
+               for key, value in (("path", "/different/log"), ("device", 999), ("inode", 999))},
+        }
+        for lane in ("codex", "claude_a", "claude_b"):
+            for field, mutate in mutations.items():
+                with self.subTest(lane=lane, field=field):
+                    campaign, live = self.private_identity()
+                    mutate(live[lane])
+                    with self.assertRaises(ContractError):
+                        self.collect_and_require(campaign, live)
+
+    def test_v3_invalid_live_uuids_fail_closed_through_collection(self):
+        for lane in ("codex", "claude_a", "claude_b"):
+            for key in ("workspace_uuid", "surface_uuid", "pane_uuid"):
+                for value in (None, True, 12, "", "not-a-uuid"):
+                    with self.subTest(lane=lane, key=key, value=value):
+                        campaign, live = self.private_identity()
+                        live[lane][key] = value
+                        with self.assertRaisesRegex(ContractError, f"invalid live {key}"):
+                            self.collect_and_require(campaign, live)
+
     def test_raw_proof_goes_to_snapshot_without_second_public_conversion(self):
         raw = {"client": {"pid": 123}}
         public = dict(session="original-codex", tty="ttys073", foreground={"thread_id": "original-codex"})

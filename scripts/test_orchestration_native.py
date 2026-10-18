@@ -17,7 +17,8 @@ EPOCH = parse_time(STAMP).timestamp()
 
 
 class NativeFixture:
-    def __init__(self, root, provider="claude", *, session_id=None):
+    def __init__(self, root, provider="claude", *, session_id=None, native_uuid_uppercase=False):
+        self.native_uuid_uppercase = native_uuid_uppercase
         self.root = Path(root).resolve()
         sid = session_id or ("42977dde-eb08-4900-aad1-1d20db13ff17" if provider == "claude" else "01a13a5f-2412-7012-a872-501c8f75fda9")
         self.path = self.root / (sid + ".jsonl")
@@ -53,6 +54,8 @@ class NativeFixture:
         self.receipt_path = Path(receipt_path) if receipt_path is not None else self.journal / "receipt.json"
         identity = dict(workspace_uuid=self.session["workspace_uuid"], caller_surface_uuid=sender["surface_uuid"],
                         target_surface_uuid=self.session["surface_uuid"], target_pane_uuid=self.session["pane_uuid"])
+        if self.native_uuid_uppercase:
+            identity = {k: v.upper() for k, v in identity.items()}
         b = dict(schema="native-delivery-v1", identity=identity, tty=self.session["tty"],
                  process=self.session["process"], provider=self.provider, session_id=self.session["session_id"],
                  transcript=self.reader.snapshot(), bound_at_epoch=epoch, payload_sha256=digest(text.encode()))

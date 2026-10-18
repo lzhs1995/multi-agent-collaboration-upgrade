@@ -358,3 +358,46 @@ cursor budget, changed file/pins, crash recovery and full-denominator reporting.
 Then run the complete unchanged-source suite. Keep live original-log readback,
 offline regressions and component contention results distinct. Passing all
 three does not replace the still-unfinished live pilot and paired experiment.
+
+## r10 UUID case and unstarted status
+
+r10 adopted the original Codex and both Claude clients, but its unique native
+start failed before business dispatch. The frozen v3 identity uses lowercase
+UUIDs; cmux tree and workspace proof returned uppercase. All three original
+processes, native sessions, TTYs, transcript paths/device/inodes and private
+configuration roots still matched. Read-only kernel/tree diagnosis under the
+original control sandbox verified that only the three UUID fields differed.
+That diagnostic authenticates targets, not the original foreground caller.
+
+Canonicalize only the v3 live workspace/surface/pane UUID fields using UUID
+parsing before comparing against the frozen campaign. Invalid UUIDs still fail;
+different UUIDs, sessions, process birth, executable, file identity, TTY,
+transcript or private roots still fail. Keep v2 compatibility behavior unchanged.
+Never revise the original campaign/controller or repeat its unique start.
+
+`status --run RUN` must work before the first start and remain read-only. A
+missing run directory is `NOT_STARTED`; an existing directory without a header
+is `INCOMPLETE_START` and cannot be restarted. Symlinks, non-directory roots and
+malformed headers are errors, not permission for a new start. Supervisor
+instructions refer explicitly to top-level `state`, distinct from node `states`.
+
+Validate the complete collection-to-comparison path for all three lanes and
+check real Coordinator states for both v2 and v3. Freeze a separately tested
+source for the next authorized experiment. Startup uses the original 900-second
+window; after a run permit, its original 1800-second watchdog applies even if
+business start failed. Never extend it or reinterpret waiting as progress.
+
+The same v3 UUID boundary applies to native handshake/dispatch/callback receipts,
+pack `executor_uuid`, identity-gate participants and frozen disarm ownership.
+Keep raw receipt-to-attempt identities, input fences and content hashes exact.
+The pinned workspace guard emits uppercase caller UUIDs, so journal lookup must
+use that producer spelling before hashing; scaffold argv selectors remain exact.
+Freeze disarm from the actual harness workspace and original marker supervisor,
+then retain their spelling for marker paths and case-sensitive reservation keys.
+Do not migrate old paths or rewrite evidence to make comparisons succeed.
+
+`test_orchestration_uuid` exercises uppercase native evidence against lowercase
+campaigns in both directions, concurrent Claude lanes, callback acceptance,
+release and dependent follow-up through a complete five-node offline lifecycle.
+It also rejects changed identities, altered fences, marker substitutions and
+changed non-UUID bindings. These fixtures do not prove live client completion.

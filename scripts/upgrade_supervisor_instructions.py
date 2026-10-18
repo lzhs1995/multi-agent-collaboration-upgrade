@@ -51,7 +51,8 @@ For EACH run in the order above:
    original evidence and continue to your next registered run, never restart that closed run.
    SCHEDULE_ENDED or STOPPED_INPUT means stop new work. Observe/reconcile original attempts and
    complete any provably safe closeout that remains possible, then report the actual boundary.
-2. On PERMIT_READY, inspect `status`. If this run is NOT_STARTED, call `start-script --run RUN`.
+2. On PERMIT_READY, inspect `status --run RUN`. Read its top-level `state` (not node `states`).
+   If this run is NOT_STARTED, call `start-script --run RUN`.
    Execute the returned COMPLETE exec_script EXACTLY ONCE as a native functions.exec tool call,
    including its final LF. Do not wrap, trim, regenerate, evaluate in a shell, or reconstruct it.
    The verifier compares every byte of that original native tool input. If the call yields,
