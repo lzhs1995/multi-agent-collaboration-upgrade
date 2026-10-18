@@ -154,6 +154,26 @@ cannot prove that each earlier device-change refusal had the same cause.
 Pressure runners also must separate per-scan invariants from whole-run activity,
 and retain partial result serialization failures alongside complete raw attempts.
 
+## r19 executor navigation latency
+
+The original Claude nodes took 885.253 and 1039.065 seconds from formal native
+task reception to their first business command. Those commands themselves took
+0.695 and 0.481 seconds through native tool-result return. There were 19 and 24
+tools before business execution, including missing readiness-file discovery and
+callback CLI discovery. Distinguish that whole interval from measured tool CPU
+time; it also includes model response latency. Two nodes cannot predict all 33
+slots or demonstrate a scheduling speedup.
+
+New v3 scopes bind preparation/adoption inputs and give the exact callback argv
+from the frozen Python, controller and task-pack paths. Freeze outputs first,
+invoke once, and collect the original process. A pane lock refusal still needs
+honest classification; it is not fixed by command text and never grants a blind
+send retry. Automatic v3 advisory hooks permit truthful stopping while callback
+confirmation, independent acceptance and release remain separate requirements.
+
+Evidence: `maintenance/r19-latency-audit/`; callback instruction regression:
+`validation/r19-executor-guidance-01/` (35/35, zero model requests/input).
+
 ## r19 checker stdin isolation
 
 The original source_index candidate failed after callback reception: CPython

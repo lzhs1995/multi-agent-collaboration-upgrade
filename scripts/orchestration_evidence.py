@@ -114,6 +114,8 @@ def node_directory(campaign, header, node):
 
 
 def task_scope(campaign, header, node, info):
+    import shlex
+
     instruction = "\nRead the exact pinned work request: " + info["work_request"]["path"] + "."
     if campaign_version(campaign) == 3:
         instruction += ("\nVerify preparation_inputs pins before work. Its role_map and pane_inventory bind this task; "
@@ -121,17 +123,31 @@ def task_scope(campaign, header, node, info):
                         "Use those pinned files for startup evidence; do not rediscover configuration or rerun startup. "
                         "Historical adoption does not replace current identity or callback delivery checks.")
     if campaign.get("workload"):
-        import shlex
         argv = ["rtk", "proxy", campaign["python"]["path"], "-B", campaign["workload"]["path"],
                 "--request", info["work_request"]["path"], "--request-sha256", info["work_request"]["sha256"],
                 "--output-root", info["output_root"]]
         instruction += "\nExecute this bounded local business command once: " + shlex.join(argv)
+    callback_instruction = ""
+    if campaign_version(campaign) == 3:
+        callback_argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
+                         str(Path(campaign["controller"]["path"]) / "scripts/cmux_bridge.py"),
+                         "submit-completion-callback", "--task-pack",
+                         str(node_directory(campaign, header, node) / "preflight/task-pack.json")]
+        callback_instruction = (
+            "\nAfter verifying and freezing all deliverables including the report, invoke this original "
+            "task-bound callback command once: " + shlex.join(callback_argv) +
+            "\nUse login:false and workdir=" + repr(campaign["root"]) +
+            ". This is the pinned controller entrypoint; no callback CLI search is needed. "
+            "If the command yields, collect that same process until it returns. "
+            "An uncertain return permits only original-attempt observation, never another send. "
+            "The command retains its live identity, report and native reception checks.")
     return (node["scope"] + instruction + "\nWrite only these deliverables under " + info["output_root"] + ": " +
             json.dumps(node["deliverables"], ensure_ascii=False) +
             ". Verify the orchestration input hashes before work. Preserve the assigned CLI session and model. "
             "Freeze all outputs before the report-bound callback; no output writes after the callback. "
             "No replacement agents, API calls, source/shared-runtime writes, reasks or continuing loops. "
-            "Use rtk for shell commands. Then remain available for a fresh finalized task pack.")
+            "Use rtk for shell commands." + callback_instruction +
+            " Then remain available for a fresh finalized task pack.")
 
 
 def dispatch_journal(campaign, info):

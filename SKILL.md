@@ -48,6 +48,13 @@ and business acceptance remain unverified. Never backfill an already dispatched
 pack to conceal a missing input.
 See [task-pack field findings](references/lessons.md#r19-task-pack-input-completeness).
 
+New v3 task scopes also provide the exact frozen-controller callback command,
+including the original pack path, after the report-freeze instructions. Executors
+collect that one original invocation instead of discovering a callback CLI.
+An uncertain result or pane contention does not authorize another send. This
+addresses observed task-navigation overhead, not measured end-to-end efficiency;
+same-pane callback contention and real pilot acceptance remain separate checks.
+
 Independent checkers receive canonical request bytes through a read-only file
 descriptor from unique private campaign scratch, removed before child execution
 and cleaned on exit. Do not use `subprocess.run(input=...)` inside the private
