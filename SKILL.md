@@ -74,6 +74,13 @@ request extra ACKs or count task notices/callbacks. A short helper body still
 uses a pinned MESSAGE_REFERENCE_V2 notice because the helper adds its header.
 Notice receipt does not prove body reading. Boundary labels do not establish
 active/idle or continuous-goal state; require actual native observations.
+New freezes use metrics version 3 to attribute registered ordinary messages.
+Exclude only the exact original native record backed by its unique sender
+helper call, complete pinned body, original receiver binding and input fence.
+Duplicate, changed or missing evidence stays unclassified; never exempt a
+message prefix. Preserve original UUID bytes and hashes while comparing UUID
+identity semantically; ambiguous original journal locations remain UNKNOWN.
+Older metrics versions and frozen campaigns keep their original interpretation.
 New isolated clients receive a pinned `mac_upgrade_body_read.py` command that
 returns the complete verified body in their native tool result. The separate
 observer must authenticate the original receiver journal, input-intent fence,

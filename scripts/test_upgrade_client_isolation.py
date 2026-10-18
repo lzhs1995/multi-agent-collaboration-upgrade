@@ -83,6 +83,37 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             toml(None)
 
+    def test_profile_checks_changed_filesystem_again_on_each_render(self):
+        writable = self.root / "writable"
+        writable.mkdir()
+        pinned = writable / "pinned"
+        pinned.mkdir()
+        first = sandbox_profile([writable], [pinned])
+        self.assertIn(b"deny file-write-unlink", first)
+        pinned.rmdir()
+        pinned.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(ContractError):
+            sandbox_profile([writable], [pinned])
+        pinned.unlink()
+        pinned.mkdir()
+        self.assertEqual(sandbox_profile([writable], [pinned]), first)
+
+    def test_profile_nested_roots_preserve_exclusions_and_parent_protection(self):
+        writable = self.root / "private"
+        nested = writable / "nested"
+        pinned = nested / "目录" / "file"
+        sibling = self.root / "private-sibling" / "file"
+        rendered = sandbox_profile([writable, nested, writable], [pinned, sibling, pinned]).decode()
+        exclusion = "(require-not (subpath " + toml(str(pinned)) + "))"
+        self.assertEqual(rendered.count(exclusion), 2)
+        self.assertNotIn("(require-not (subpath " + toml(str(sibling)), rendered)
+        protected = {line for line in rendered.splitlines() if line.startswith("(deny file-write-unlink ")}
+        self.assertEqual(protected, {"(deny file-write-unlink (literal " + toml(str(p)) + "))"
+                                     for p in (writable, nested, pinned.parent)})
+        for immutable in (writable, writable.parent, nested):
+            with self.subTest(immutable=immutable), self.assertRaises(ContractError):
+                sandbox_profile([nested], [immutable])
+
     def test_unrecognised_wrapper_refuses_before_publication(self):
         with self.assertRaises(ContractError):
             patch_cmux_wrapper("codex", b"#!/bin/bash\nexec codex\n", Path("/usr/bin/true"), self.paths)

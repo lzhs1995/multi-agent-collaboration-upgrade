@@ -20,6 +20,7 @@ import re
 import stat
 import sys
 import time
+from uuid import UUID
 
 from cmux_prompt_reference import verify, wire_reference
 from upgrade_body_read import read_command
@@ -422,7 +423,43 @@ def default_row(sample, reason):
                 sender_runtime='UNKNOWN', receiver_runtime='UNKNOWN', reasons=[reason], evidence={})
 
 
+def canonical_identity(identity):
+    keys = {'workspace_uuid', 'caller_surface_uuid', 'target_surface_uuid', 'target_pane_uuid'}
+    need(isinstance(identity, dict) and set(identity) == keys, 'IDENTITY_FIELDS_CHANGED')
+    result = {}
+    for key, value in identity.items():
+        need(isinstance(value, str) and str(UUID(value)) == value.lower(), 'IDENTITY_UUID_CHANGED')
+        result[key] = str(UUID(value))
+    return result
+
+
+def original_journal(state, identity, marker):
+    """Adapter UUIDs are lowercase; bridge journals preserve cmux UUID case.
+
+    Do not rewrite either producer's hashes. Current producers emit canonical
+    lower/uppercase UUIDs; two original directories are ambiguous and refused.
+    """
+    caller = canonical_identity(identity)['caller_surface_uuid']
+    candidates = [state / 'message-dispatch-v1' / sha(json.dumps([value, marker], sort_keys=True))
+                  for value in sorted({caller, caller.upper()})]
+    present = [path for path in candidates if path.exists() or path.is_symlink()]
+    need(len(present) <= 1, 'AMBIGUOUS_ORIGINAL_JOURNAL_UUID_CASE')
+    return present[0] if present else state / 'message-dispatch-v1' / sha(json.dumps([caller, marker], sort_keys=True))
+
+
+def original_dispatch_binding(attempt, journal, identity, marker, payload):
+    """Compare UUID semantics only; authenticate every original hashed byte."""
+    binding = attempt.get('binding', {})
+    raw_identity = binding.get('identity')
+    need(canonical_identity(raw_identity) == canonical_identity(identity), 'DISPATCH_IDENTITY_CHANGED')
+    expected = dict(identity=raw_identity, marker=marker, payload_sha256=sha(payload))
+    need(binding == expected and journal.name == sha(json.dumps(
+        [raw_identity['caller_surface_uuid'], marker], sort_keys=True)), 'DISPATCH_BINDING_CHANGED')
+    return expected
+
+
 def expected_intent(sample, identity):
+    identity = canonical_identity(identity)
     spec = dict(schema='cmux-agent-bridge-adapter-v1', identity=identity, mode='send',
                 message=sample['body'], request_id=sample['request_id'])
     marker = 'CMUX_HELPER_' + sha(canonical(spec))
@@ -442,9 +479,9 @@ def observe_sample(observer, sample, info):
         return row
     sessions = campaign['sessions']
     sender, receiver = sessions[sample['sender']], sessions[sample['receiver']]
-    identity = dict(workspace_uuid=receiver['workspace_uuid'], caller_surface_uuid=sender['surface_uuid'],
-                    target_surface_uuid=receiver['surface_uuid'], target_pane_uuid=receiver['pane_uuid'])
-    need(sender['workspace_uuid'] == receiver['workspace_uuid'], 'CAMPAIGN_WORKSPACE_MISMATCH')
+    identity = canonical_identity(dict(workspace_uuid=receiver['workspace_uuid'], caller_surface_uuid=sender['surface_uuid'],
+                    target_surface_uuid=receiver['surface_uuid'], target_pane_uuid=receiver['pane_uuid']))
+    need(str(UUID(sender['workspace_uuid'])) == identity['workspace_uuid'], 'CAMPAIGN_WORKSPACE_MISMATCH')
     spec, marker, channel = expected_intent(sample, identity)
     state = Path(info['state_root'])
     intent_path = state / 'cmux-agent-adapter-v1/targets' / channel / 'intents' / (marker + '.json')
@@ -458,7 +495,7 @@ def observe_sample(observer, sample, info):
              'EXACT_REQUEST_OR_IDENTITY_CHANGED')
         payload = intent['payload']
         need(sha(payload) == intent['payload_sha256'], 'ORIGINAL_PAYLOAD_PIN_CHANGED')
-        full = '[CMUX-AGENT][delivery:' + marker + '][from:' + sender['surface_uuid'] + ']\n' + sample['body']
+        full = '[CMUX-AGENT][delivery:' + marker + '][from:' + identity['caller_surface_uuid'] + ']\n' + sample['body']
         reference = intent['body_reference']
         need(reference['path'] == str(state / 'message-bodies-v1' / (sha(full) + '.txt'))
              and reference['sha256'] == sha(full) and reference['bytes'] == len(full.encode())
@@ -472,7 +509,7 @@ def observe_sample(observer, sample, info):
         verify(reference, full)
         row['attempt'] = 'ORIGINAL_INTENT_PRESENT'
         row['reasons'] = []
-        journal = state / 'message-dispatch-v1' / sha(json.dumps([sender['surface_uuid'], marker], sort_keys=True))
+        journal = original_journal(state, identity, marker)
         receipt = None
         receipt_path = journal / 'receipt.json'
         if receipt_path.exists():
@@ -489,8 +526,7 @@ def observe_sample(observer, sample, info):
         path = attempts[0]
         attempt, ap = json_file(path)
         row['evidence']['dispatch_attempt'] = ap
-        expected_binding = dict(identity=identity, marker=marker, payload_sha256=sha(payload))
-        need(attempt.get('binding') == expected_binding, 'DISPATCH_BINDING_CHANGED')
+        expected_binding = original_dispatch_binding(attempt, journal, identity, marker, payload)
         row['original_phase_observed'] = attempt.get('phase')
         if attempt.get('error'):
             # Keep an exact-file pin and only a bounded diagnostic; arbitrary exception text is not refusal proof.
@@ -500,7 +536,7 @@ def observe_sample(observer, sample, info):
         elif attempt.get('phase') == 'REFUSED':
             row['refusal'] = 'REFUSED_OBSERVED'
         b = attempt.get('native_binding')
-        need(isinstance(b, dict) and b.get('identity') == identity, 'NO_ORIGINAL_NATIVE_BINDING')
+        need(isinstance(b, dict) and b.get('identity') == expected_binding['identity'], 'NO_ORIGINAL_NATIVE_BINDING')
         proofs = []
         if receipt:
             need(receipt.get('binding') == expected_binding and receipt.get('native_binding') == b

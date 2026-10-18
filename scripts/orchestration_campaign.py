@@ -49,6 +49,15 @@ METRICS_V3 = {
     "failures": "retain_all_runs_recovery_provider_wait_and_cleanup",
 }
 
+# New campaigns opt in explicitly; frozen v3 campaigns retain version 2's
+# intervention semantics and their byte-for-byte original closeout summaries.
+METRICS_V3_COMMUNICATION = {
+    **METRICS_V3,
+    "version": 3,
+    "interventions": "unclassified_user_inputs_are_unmeasured; status_queries_reported_separately; "
+                     "exact_registered_communication_with_original_sender_intent_fence_and_native_record_excluded",
+}
+
 
 def anchored_ref(path, expected_sha256):
     require(isinstance(expected_sha256, str) and SHA.fullmatch(expected_sha256),
@@ -132,7 +141,7 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     require(campaign.get("third_party_api") is False and campaign.get("replacement_sessions") is False,
             "only the explicitly bound original CLI sessions may own model calls")
     require(campaign.get("decision_provider") == "rules", "live campaign uses frozen rules provider")
-    require(campaign.get("metrics") == (METRICS if version == 2 else METRICS_V3),
+    require(campaign.get("metrics") in ((METRICS,) if version == 2 else (METRICS_V3, METRICS_V3_COMMUNICATION)),
             "measurement definitions were not frozen")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,
             "approved promotion threshold is 15 percent")

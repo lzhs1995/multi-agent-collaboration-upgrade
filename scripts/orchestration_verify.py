@@ -10,7 +10,7 @@ import statistics
 import time
 from pathlib import Path
 
-from orchestration_campaign import ORDER, validate_campaign
+from orchestration_campaign import METRICS_V3_COMMUNICATION, ORDER, validate_campaign
 from orchestration_common import (boot_id, contract_errors, count, file_ref, json_ref, object_sha, parse_time, read_json,
                                   read_ref, utc_now, write_json, exclusive_lock)
 from orchestration_contracts import campaign_version, evidence_class
@@ -113,6 +113,13 @@ def derive_run(co, native_end, *, closeout_clock=None):
         measurement_end = closeout_clock
     else:
         require(closeout_clock is None, "v2 measurements cannot adopt v3 closeout clocks")
+    communication = None
+    if co.campaign["metrics"] == METRICS_V3_COMMUNICATION:
+        from upgrade_communication_attribution import attribute_inputs
+        communication = attribute_inputs(co.campaign, co.header, native_end, readers,
+                                         not_after=measurement_end["at"])
+        exempt = {object_sha(item["native_record"]) for item in communication["inputs"]}
+        unknown = [ref for ref in unknown if object_sha(ref) not in exempt]
     elapsed_wall = (parse_time(measurement_end["at"]) - parse_time(co.header["started_at"])).total_seconds()
     require(elapsed_wall >= 0, "negative original elapsed time")
     same_boot = all(e["boot_id"] == co.header["boot_id"] for e in [*events, measurement_end])
@@ -141,6 +148,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
             duplicate_dispatches=0, reasks=0 if not unknown else None))
     if closeout_clock is not None:
         result["closeout_clock"] = closeout_clock
+    if communication is not None:
+        result["metrics"]["automated_communication_inputs"] = communication
     return result
 
 

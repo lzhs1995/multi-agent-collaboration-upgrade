@@ -189,12 +189,17 @@ def sandbox_profile(writable, readonly=(), *, tty=None):
     denied = sorted({str(checked_path(p)) for p in readonly})
     require(roots, "at least one private writable root required")
     require(all(x not in ("/", str(Path.home())) for x in roots), "broad writable root refused")
-    require(not any(Path(p) == Path(root) or Path(p) in Path(root).parents
-                    for root in roots for p in denied),
+    # Only lexical relationships of paths already authenticated above are
+    # reused within this rendering. No filesystem authority or digest is cached.
+    root_paths = {Path(root) for root in roots}
+    denied_paths = {Path(path) for path in denied}
+    root_ancestors = {parent for root in root_paths for parent in root.parents}
+    require(not denied_paths.intersection(root_paths | root_ancestors),
             "writable root is inside an immutable boundary")
+    parents = {path: tuple(map(str, Path(path).parents)) for path in denied}
     lines = ["(version 1)", "(allow default)", "(deny file-write*)"]
     for root in roots:
-        nested = [p for p in denied if Path(root) in Path(p).parents]
+        nested = [p for p in denied if root in parents[p]]
         filters = ["(subpath " + toml(root) + ")"] + [
             "(require-not (subpath " + toml(p) + "))" for p in nested]
         lines.append("(allow file-write* (require-all " + " ".join(filters) + "))")
@@ -211,9 +216,10 @@ def sandbox_profile(writable, readonly=(), *, tty=None):
     ancestors = set()
     for path in denied:
         lines.append("(deny file-write* (subpath " + toml(path) + "))")
-        for parent in Path(path).parents:
-            if any(parent == Path(root) or Path(root) in parent.parents for root in roots):
-                ancestors.add(str(parent))
+        chain = parents[path]
+        for root in roots:
+            if root in chain:
+                ancestors.update(chain[:chain.index(root) + 1])
     for path in sorted(ancestors):
         lines.append("(deny file-write-unlink (literal " + toml(path) + "))")
     return ("\n".join(lines) + "\n").encode()
