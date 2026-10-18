@@ -1,5 +1,21 @@
 # 2026-10-18 压力测试与真实协作验证
 
+## 2026-10-18T14:15Z 唯一r20已启动
+
+已按持续有效的全面授权启动原计划：7组、33槽、3轮pilot、15对比较；不替换失败会话。
+watchdog于14:14:58Z确认原截止，driver随后唯一启动，14:14:59Z发布pilot-01 permit，
+14:15:01Z返回LAUNCH_RETURNED。当前NOT_READY，尚未取得三客户端实际adoption或业务通过。
+**通过0/33、pilot0/3、pairs0/15；效率未证明，成本UNKNOWN。**
+配置固定整体截止为**2026-10-18T16:12:42.783438Z**，结果报告最迟16:23Z交付；
+提前失败则按原次停止并保留所有槽，不自动r21、不延长截止。
+
+独立watchdog及driver直接写各自日志并使用独立进程session，父runner退出不会打断
+watchdog的stdout；原runner异常或子进程无终态退出触发stop/halt/report。
+外部wrapper的5项检查通过，包括短命父进程退出后子进程继续写日志；均无模型请求。
+这不证明远端在途请求取消，原会话及lease继续保留。
+固定config SHA256：`768e902bf5fdf568755f5f460a568bd0cc85d9d9a9155aa104a65cb9acf1d72c`。
+执行原件：E下`execution/r20-original-driver/`；实验根`/Users/lzhs/uk`。
+
 ## 2026-10-18T14:11Z 有界最终候选
 
 最新受影响联合回归 **138/138 PASS，48.407秒，零失败/错误/跳过**；全部受检Python源码前后SHA一致。
