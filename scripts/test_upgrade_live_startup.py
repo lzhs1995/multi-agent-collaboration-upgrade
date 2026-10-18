@@ -52,6 +52,123 @@ class MaterializedStartupTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_actual_controller_default_footer_and_tip_input_boundaries(self):
+        controller = Path(self.spec["controller"]) / "scripts"
+        fixtures = Path(__file__).resolve().parent.parent / "verification/fixtures"
+        screens = [(fixtures / ("claude-default-" + lane + "-20261018.txt")).read_text()
+                   for lane in ("a", "b")]
+        code = r'''
+import ast, json, sys, time, uuid, hashlib
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, CONTROLLER)
+import cmux_bridge as b
+import cmux_native_delivery as native
+assert Path(b.__file__).parent == Path(CONTROLLER)
+screens = SCREENS
+permissions = "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
+tip = "  ⎿ \u00a0Tip: Use /clear to start fresh when switching topics and free up context"
+def before(screen, text):
+    rows = screen.splitlines()
+    start = b._claude_bordered_compose(screen)["start"]
+    rows[start - 1:start - 1] = text.splitlines()
+    return "\n".join(rows) + "\n"
+def draft(screen, text):
+    rows = screen.splitlines()
+    start = b._claude_bordered_compose(screen)["start"]
+    rows[start] = "❯ " + text
+    return "\n".join(rows) + "\n"
+with patch.object(b, "send_text") as paste, patch.object(b, "send_key") as key:
+    for screen in screens:
+        assert b.receiver_input_kind(screen) == "AGENT_TUI"
+        assert b.compose_block_text(screen) == ""
+        assert not b._queued_or_active_input(screen)
+        b.require_clearable_agent_input(screen, "offline-peer")
+        for spinner in ("✢ Brewing… (1m 2s)", "✻ Compacting conversation…", "✢ Brewing…", "· Thinking..."):
+            for hints in (tip, tip + "\n\n◎ /goal active (59m)"):
+                active = before(screen, spinner + "\n" + hints)
+                assert b.compose_block_is_empty(active)
+                assert b._queued_or_active_input(active)
+                try:
+                    b.require_clearable_agent_input(active, "offline-peer")
+                except b.DispatchUnconfirmed:
+                    pass
+                else:
+                    raise AssertionError("active turn accepted")
+        for done in ("✻ Brewed for 3m", "✢ Brewing…\nFinished reviewing."):
+            assert not b._queued_or_active_input(before(screen, done + "\n" + tip))
+        for text in ("retain draft", permissions, "\n  " + tip, "  spaced\t正文  "):
+            pending = draft(screen, text)
+            assert b.compose_block_text(pending) == text
+            with patch.object(b, "read_screen", return_value=pending):
+                try:
+                    b._submit_terminal_once("offline-peer", "STATUS: new-token")
+                except b.DispatchUnconfirmed:
+                    pass
+                else:
+                    raise AssertionError("draft accepted")
+        for suffix in (" unknown", "\n  " + permissions):
+            unknown = screen.replace(permissions, permissions + suffix)
+            assert b._claude_bordered_compose(unknown) is None
+        assert b._queued_or_active_input(before(screen, "Messages to be submitted after completion:\n  queued"))
+    paste.assert_not_called()
+    key.assert_not_called()
+# Real transformed receipt reader, real fixture files, original EOF fences.
+# This checks receipt semantics only; no live process or live reception claim.
+native_root = Path(NATIVE_ROOT)
+log_root = native_root / "projects/offline-chrome-receipts"
+log_root.mkdir(parents=True)
+payload = "STATUS: materialized-exact-receipt"
+for kind in ("none", "changed", "queue", "stale", "exact"):
+    sid = str(uuid.uuid4())
+    log = log_root / (sid + ".jsonl")
+    def append(record):
+        with log.open("a") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    def user(text):
+        return dict(type="user", sessionId=sid, timestamp=datetime.now(timezone.utc).isoformat(),
+                    message=dict(role="user", content=text))
+    append(dict(type="system", sessionId=sid))
+    binding = dict(schema=native.SCHEMA, provider="claude", session_id=sid,
+        native_config_root=str(native_root), bound_at_epoch=time.time(),
+        payload_sha256=hashlib.sha256(payload.encode()).hexdigest(),
+        identity={k:str(uuid.uuid4()) for k in native.IDENTITY_KEYS},
+        transcript=native._pin_file(log, "claude", sid))
+    if kind == "stale":
+        append(user(payload))
+    fence = native.capture_paste_fence(binding)
+    intent_at = time.time()
+    if kind in ("exact", "changed"):
+        append(user(payload if kind == "exact" else payload + " changed"))
+    elif kind == "queue":
+        append(dict(type="attachment", sessionId=sid, timestamp=datetime.now(timezone.utc).isoformat(),
+                    attachment=dict(type="queued_command", prompt=payload)))
+    result = native.probe(binding, payload, paste_fence=fence, not_before=intent_at)
+    assert result["confirmed"] is (kind == "exact"), (kind, result)
+    if kind == "queue":
+        assert result["state"] == "NATIVE_QUEUED"
+    if kind == "exact":
+        assert native.validate_proof(binding, payload, result["native_proof"],
+                                     paste_fence=fence, not_before=intent_at)
+# Keep the fixed base native route byte-for-byte after full materialization.
+source = Path(b.__file__).read_text()
+base = Path(BASE).read_text()
+for name in ("_submit_text_once", "_submit_terminal_once", "_observe_native"):
+    snippets = [ast.get_source_segment(t, next(n for n in ast.parse(t).body
+                if getattr(n, "name", None) == name)) for t in (source, base)]
+    assert snippets[0] == snippets[1], name
+print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/receipt-fences")
+'''.replace("CONTROLLER", repr(str(controller))).replace("SCREENS", repr(screens)).replace(
+            "BASE", repr(str(SOURCE / "scripts/cmux_bridge.py"))).replace(
+            "NATIVE_ROOT", repr(self.spec["clients"]["claude_a"]["native_root"]))
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MATERIALIZED_CLAUDE_CHROME_PASS", result.stdout)
+
     def test_full_materialization_has_distinct_roots_and_real_observer_marker_only(self):
         self.assertEqual(set(self.spec["clients"]), set(LANES))
         for lane, client in self.spec["clients"].items():

@@ -153,8 +153,54 @@ def _terminal_reads(text):
     return edit_nodes(text, edits)
 
 
+def claude_measured_chrome(text):
+    """Add measured default-footer/Tip support without replacing the base bridge.
+
+    The fixed base owns native Codex delivery and newer HUD layouts. Only two
+    exact source spans may change; unknown or already-patched shapes refuse.
+    """
+    from orchestration_common import ContractError
+    markers = {
+        "_claude_bordered_compose": (
+            '    if not footer:\n        return None\n',
+            '    if not footer:\n        return None\n' + r'''    # Exact measured default chrome, strictly outside both complete borders.
+    if len(footer) == 1 and footer[0] in (
+            "⏵⏵ bypass permissions on (shift+tab to cycle)",
+            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"):
+        first = re.sub(r"^\s*❯[ \u00a0]?", "", rows[start], count=1)
+        return {"body": "\n".join([first, *rows[start + 1:end]]),
+                "footer": footer, "before": rows[:start - 1], "start": start, "end": end}
+'''),
+        "_queued_or_active_input": (
+            '        screen = next((row for row in reversed(claude["before"]) if row.strip()), "")\n',
+            r'''        # Skip only complete hint chrome before the composer, never prose/drafts.
+        before = list(claude["before"])
+        while before and (not before[-1].strip()
+                          or re.fullmatch(r"\s*⎿\s+Tip:[ \t]+[^\r\n]+", before[-1])
+                          or re.fullmatch(rf"\s*◎\s+/goal active\s+\({_CLAUDE_DURATION}\)\s*", before[-1])):
+            before.pop()
+        screen = before[-1] if before else ""
+        if re.fullmatch(r"\s*[·✻✢✳✶✽◐◑◒◓]\s+(?:[A-Za-z][A-Za-z-]*|Compacting (?:conversation|context))(?:…|\.\.\.)\s*", screen):
+            return True
+'''),
+    }
+    edits = []
+    for name, (old, new) in markers.items():
+        nodes = [n for n in ast.parse(text).body
+                 if isinstance(n, ast.FunctionDef) and n.name == name]
+        if len(nodes) != 1:
+            raise ContractError("private Claude chrome function shape changed: " + name)
+        node = nodes[0]
+        original = ast.get_source_segment(text, node)
+        if new in original:
+            raise ContractError("private Claude chrome already patched: " + name)
+        edits.append((node, replace_once(original, old, new)))
+    return edit_nodes(text, edits)
+
+
 def live_gates(name, text):
     if name == "cmux_bridge.py":
+        text = claude_measured_chrome(text)
         for original in ('proof = pin_workspace(params["surface_id"])', 'proof = pin_workspace(args[index])'):
             text = replace_once(text, original, original +
                 "\n        from upgrade_input_gate import check_input\n        check_input(proof)")
@@ -206,5 +252,7 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("original_input_adoption_gate_or_automatic_hook_observer")
     if name == "mac_harness.py":
         changes.append("structured_experiment_startup_double_gate")
+    if name == "cmux_bridge.py":
+        changes.append("measured_claude_default_footer_and_tip")
     compile(text, name, "exec", dont_inherit=True)
     return text, changes

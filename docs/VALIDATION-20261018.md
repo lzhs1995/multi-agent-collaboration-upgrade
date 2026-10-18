@@ -1,9 +1,82 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**组件压力与本地完整回归通过；真实协作提效仍未证明。**
+当前结论：**组件压力通过；生成控制器修复后的完整回归1,804/1,804通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## r11 默认 Claude 页脚误判与修复
+
+`default-footer-tip-full-01` 原进程已正常结束：**1,799/1,799**，零失败、错误和
+跳过；总耗时1,395.260秒，245个监测文件SHA不变。日志SHA为
+`df42e3c62817a1a818bec145ce759e283009e50f0c974413ed7d8ceb69630d47`。
+
+进一步检查发现，实际实验从固定MAC 0.4.34 base生成controller，单改工作仓库
+bridge不会进入实际客户端。已在`upgrade_live_patch.py`为base的两个解析函数
+增加精确source-shape转换；没有整文件覆盖，也没有丢失base的原生Codex投递。
+新增转换测试验证仅两处函数变化、投递函数逐字保留、未知/重复形状拒绝；另用
+真实Seatbelt子进程加载实际生成controller，检查两份原始实屏、Tip/spinner、
+正文、草稿零输入、队列以及真实fixture日志原EOF fence后的精确回执。
+这里的真实子进程和生成代码不代表模型会话或真实投递已经通过。
+
+新增4项与原18项合计**22/22**定向通过，零失败、错误和跳过，14.899秒。
+证据`validation/r12-materialized-chrome-focused-01/`。最终完整回归使用独立目录
+`validation/r8-pressure-and-full/materialized-chrome-full-03/`，原进程已正常结束。
+**1,804/1,804通过**，零失败、错误和跳过；执行器耗时1144.898秒，
+246个监测文件测试前后SHA完全一致。未放宽内部超时，未跳过用例。
+完整日志SHA256：`1afe54174535c7ed2b01d9c65ffcaeb8691d0ca9c9920ca2e4d02ae824ef5b87`。
+本结果为离线回归，live_model_requests=0；本文在结束后更新并单独固定。
+此前full-02因诊断器对StringIO调用fileno而零测试退出，exit1、6.432秒，
+counts=null、246文件未变。原结果保留；新外部runner仅将栈诊断输出绑定到
+独立真实文件描述符，不改产品源码、测试断言或测试内部超时。
+候选审查将逐组检查生成bridge的转换记录及实际函数字节，不能只检查支持模块pin。
+
+首次生成控制器完整回归 `materialized-chrome-full-01` 完成987项后停在
+`test_eventual_acquisition_runs_body_once`。系统采样显示主线程等待工作线程退出，
+工作线程阻塞于Python RLock；SIGINT取得原traceback，确认3秒争用信号断言
+失败后，ThreadPoolExecutor清理仍在等待。随后仅终止原测试子进程：returncode=-15，
+1203.776秒，counts=null，246个监测文件SHA不变。本轮不是PASS。
+在独立诊断子进程中，显式持有unittest.mock全局RLock可复现同一等待；它证明
+测试观察器依赖Mock锁，不足以证明原suite为何留下该锁。测试观察器改为直接
+替换普通函数，仍调用真实flock并保持全部争用、inode和截止时间断言。新增
+回归确保观察器不依赖Mock调用记录锁。未修改产品锁实现或内部超时。
+诊断、原系统采样及前后回归保存在`validation/r12-test-observer-lock-01/`
+及原完整回归相邻证据；最终完整回归现包含1804项。
+
+指定经验会话的 [PR39](https://github.com/lzhs1995/multi-agent-collaboration/pull/39)
+固定 commit `41065d1ccd2c70fc82ef7d04fd810edc85f22d94` 提供 spinner 后跟
+完整 `⎿ Tip:` 的案例。本地实际复现三种活动状态被误判为空闲，证据保存在
+`validation/experience-0436-review-01/upgrade-before.json`。修复仅在 composer
+之前略过完整 Tip/goal 提示，并窄匹配无计时器 spinner；正文和草稿不被过滤。
+经验材料已用于本地复现与修复；指定原询问仍无双向回复。
+
+默认页脚的 14 项定向回归通过后，旧 `default-footer-full-01` 完整回归因发现
+上述新缺陷而主动停止：原子进程 SIGINT，returncode=-2，300.365 秒，245 个
+监测文件未变，counts=null。它是部分回归，不能记为 PASS 或测试内部超时。
+新增四项经验回归首轮 17/18 通过；唯一失败是测试误把清理前置检查当成
+拒绝全部草稿的提交入口，改为实际 `submit_text` 零输入检查，产品规则未放宽。
+纠正后 **18/18 定向回归通过，1.384 秒**。最新完整回归使用独立目录
+`validation/r8-pressure-and-full/default-footer-tip-full-01/`，已收取通过，详见本节开头。
+
+r11 三客户端均已 ADOPTED，原 Codex 唯一 start 成功，UUID 大小写修复通过
+真实启动。双 Claude 在默认状态栏布局下被旧 parser 误判为 COMPOSE_OCCUPIED，
+两项 preflight 均失败：token_sent=false、clear_attempts=0、clear_key_count=0。
+旧 parser 要求 model 状态行，而实际完整边框后只有默认权限提示。原 driver
+于 03:17:16Z 生成 HALTED/FAILED 最终报告并 exit 2；pilot 0/3、pairs 0/15、
+closures 0/33，原三会话、原控制器、失败及全部注册分母保留。
+
+只读捕获的两份原始屏幕位于 `validation/r11-default-footer-live-01/`，
+03:15:47Z，input_operations=0；对应 SHA 为
+`e512b4961023f38ec5c8f2330699ba50dfbbd69cdb588d903fbc464ca366e983`、
+`3231def4788525f486985c5d2ed4e612db59d27af69c3af5abcdcf6992f946c7`。
+工作源码仅增加完整匹配边框后唯一精确默认权限提示的解析分支。草稿、未知/
+截断页脚、排队和活跃回合仍由原门禁处理，未热改冻结 controller。
+
+新增回归覆盖原始实屏、派生草稿/活动/队列/边框负例、正式 bridge-test 和
+submit_text 入口，以及精确原生回执和缺失/改写/队列回执。首轮两个失败是
+测试把普通消息允许首次排队的行为错当成握手探针禁止输入；已改为核验实际
+握手入口，产品发送规则未修改。修复后的最终回归结果另行记载，旧版本
+1,781 项全测不能直接作为这次修复后的通过证据。
 
 ## r10 身份大小写与完整生命周期修复
 
@@ -155,9 +228,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. 独立 Codex caller 修复已通过 1,762 项完整回归。下一步是新私有 controller
-   的活跃客户端采用及真实投递验证；保留原 r8 终态，不自动替换或重放。
-   原会话已有成功回合，但仍需真实连续负载验证服务的稳定性。
+1. r11因默认Claude页脚误判而FAILED/HALTED，pilot 0/3、pairs 0/15、
+   closures 0/33。当前页脚、Tip/spinner与实际生成controller修复已通过
+   1,804项完整回归；下一步冻结v11并启动独立r12。沿用用户全面授权，
+   不重复询问；保留全部旧会话、控制器、失败和分母，不重放原driver。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
@@ -173,18 +247,18 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 | 证据 | 路径 |
 | --- | --- |
-| 最新完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/standalone-full-01/` |
+| 最新完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/materialized-chrome-full-03/` |
 | 修复前完整回归 | `validation/r8-pressure-and-full/repair-full-04/` |
 | 修复后完整压力及原压力更正 | `validation/r8-pressure-and-full/multiprocess-stress-02/result.json`、`validation/r8-pressure-and-full/multiprocess-stress-01-correction.json` |
 | 压力执行脚本 | `validation/r8-pressure-and-full/stress_components_v2.py` |
 | r8 原生错误与只读新 detector 验证 | `validation/r8-native-provider-failure/terminal-error-01.json`、`validation/r8-native-provider-failure/readonly-watch-02.json` |
 | 定向回归 | `validation/r8-native-provider-failure/focused-02/` |
 | 经验询问诊断 | `maintenance/standalone-caller-v1/hook-discovery-diagnosis-02.json` |
-| 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-06.json` |
+| 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-26.json` |
 
-原实验最终报告：`/Users/lzhs/u8/driver/final-report.json`，结论
-`INSUFFICIENT_EVIDENCE`；原 halt：`/Users/lzhs/u8/schedule/halt.json`。
-最新全测日志 SHA256：`b45030878f6d7c5205f3a780988356d6dcf915316b4c0b5d72ac23a774243e13`。
+最近原实验最终报告：`/Users/lzhs/ub/driver/final-report.json`；原 halt：
+`/Users/lzhs/ub/schedule/halt.json`。r11已FAILED/HALTED；没有真实提效通过结论。
+最新全测日志 SHA256：`1afe54174535c7ed2b01d9c65ffcaeb8691d0ca9c9920ca2e4d02ae824ef5b87`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；
 失败模块复核 100/100 通过不抹除原失败。失败收口新增测试曾因 fixture 缺字段

@@ -57,6 +57,22 @@ Claude 状态栏的识别只在完整匹配边框之外进行。已测可选计�
 `CLAUDE.md | 规则 | MCPs | 钩子` 中的规则数不能误算为草稿；相同文字
 出现在输入框内仍是原文。未知字段或残缺边框保留 UNKNOWN，禁止清空绕过。
 空输入与空闲回合分别核验，识别修复不改变完整草稿及原生接收门禁。
+2026-10-18 两只隔离 Claude 的默认页脚没有自定义 model 状态行。只有完整
+等宽边框后的唯一精确行 `⏵⏵ bypass permissions on (shift+tab to cycle)`
+（可带精确后缀 ` · ← for agents`）可被识别；相同文字在框内仍为草稿。
+额外、未知或截断页脚不通过。握手探针对活跃/排队保持零输入拒绝；普通消息
+既有首次提交规则不变，排队仍不等于原生收到，不触发重发或补键。
+指定经验会话发布的 [PR39](https://github.com/lzhs1995/multi-agent-collaboration/pull/39)
+（固定 commit `41065d1ccd2c70fc82ef7d04fd810edc85f22d94`）提供了 spinner
+后跟完整 `⎿ Tip:` 的案例。本地复现确认该提示会遮住活动状态。现在仅从
+composer 前倒序跳过空行、完整 Tip 行和精确 goal 状态行；不越过任意正文。
+无计时器 spinner 限定为活动符号＋单英文词或 `Compacting conversation/context`
+＋省略号。已完成的 `Brewed for` 等状态仍为空闲；框内相同内容逐字保留。
+这些是离线复现及入口验证，不是对方回复或真实投递通过的证明。
+私有实验controller由固定base生成，必须在materialization中精确转换上述两个
+解析函数；不能以工作仓库bridge已修复代替实际生成产物检查，也不能整文件覆盖
+而丢失base的原生Codex输入。实际生成controller须通过草稿零输入、活动状态、
+队列和原EOF fence后的精确回执测试，并逐字核对原投递函数保留。
 完整边框外的同行时间字段可带精确提示 `new task? /clear to save N tokens`（N 仅为 ASCII 整数，或整数/一位小数加小写 `k`）；正文同字仍是草稿，未知提示及折叠草稿仍不授权输入。
 
 ## 原次恢复共用最多一次补键

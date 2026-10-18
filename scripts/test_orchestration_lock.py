@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import NonCallableMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from orchestration_common import ContractError, exclusive_lock, write_json
@@ -54,7 +54,9 @@ class LockTests(unittest.TestCase):
                 raise
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            with patch('orchestration_common.fcntl.flock', side_effect=observe):
+            # Observe the real OS call directly. MagicMock call recording takes
+            # a process-wide RLock before observe can signal the main thread.
+            with patch('orchestration_common.fcntl.flock', new=observe):
                 future = pool.submit(operation)
                 try:
                     self.assertTrue(contended.wait(3), 'worker did not contend')
@@ -71,6 +73,10 @@ class LockTests(unittest.TestCase):
 
     def test_eventual_acquisition_runs_body_once(self):
         self.assertEqual(self.wait_then_release(self.enter_once), 'entered')
+
+    def test_observer_does_not_wait_for_mock_recording_lock(self):
+        with NonCallableMock._lock:
+            self.assertEqual(self.wait_then_release(self.enter_once), 'entered')
 
     def test_replaced_or_deleted_path_cannot_admit_old_inode(self):
         for replacement in ('file', 'missing', 'symlink'):

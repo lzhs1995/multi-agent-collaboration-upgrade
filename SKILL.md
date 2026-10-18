@@ -19,6 +19,19 @@ The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
+Claude's default footer without a custom statusline is supported only when the
+matching complete borders are followed by the exact permissions row. Empty
+compose and idle turn remain separate checks; preserve drafts and reject unknown
+or truncated footer structure. Complete Claude `⎿ Tip:` and goal chrome before
+the composer cannot hide a live spinner, including measured timerless activity.
+Skip only those hint rows; never skip arbitrary prose or composer content.
+The live materializer applies the same two measured parser changes to its pinned
+base controller with exact source-shape checks. Preserve the base's native Codex
+delivery and other status layouts; copying an older whole bridge is not a repair.
+Validate the generated controller itself, including draft refusal and original
+native receipt fences, before starting clients.
+See the measured rules in
+[verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
 [2026-10-18 validation report](docs/VALIDATION-20261018.md).
