@@ -38,11 +38,16 @@ callback目标绑定及未映射ref零输入判定；v2原ref兼容保持。
 这项离线原证据验证不改变r12终态或已完成轮数。
 
 r13外部准备脚本已独立审查；导出时另核对49个未纳入本轮监测的文件与已验证
-v11原件SHA/bytes一致。后续使用独立v12 export及私有根 `/Users/lzhs/ud`，
-沿现有全面授权执行7组、33轮、15对；此时尚未启动，不宣称真实业务通过。
+v11原件SHA/bytes一致。已使用独立v12 export及私有根 `/Users/lzhs/ud`，
+沿现有全面授权启动7组、33轮、15对的原注册实验。
+05:49:16Z，pilot原1 Codex＋2 Claude全部ADOPTED；原生readiness、实际自动
+hooks、内核隔离及输入能力分别核验。05:50:44Z发布bootstrap，原Codex已
+从原等待进程取得BOOTSTRAP_READY。05:51:00Z只读观察仍为pilot 0/3、
+pairs 0/15、closures 0/33；没有halt，尚不能宣称真实业务或提效通过。
+唯一driver继续运行，不重启prepare/authorize/driver，不接管实验Codex的工具。
 本节为全测结束后的结果文档更新，不改变已测试的可执行源码。
 
-指定经验会话最新零输入观察为 `request-observation-33.json`，05:34:38Z；
+指定经验会话最新零输入观察为 `request-observation-35.json`，05:51:20Z；
 未收到双向回复。PR39 实景 parser 经验已复现吸收，不能据此宣称沟通全部完成。
 
 ## r12 历史启动记录（终态以上节为准）
@@ -290,9 +295,9 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r11因默认Claude页脚误判而FAILED/HALTED，旧失败分母保留。修复已通过
-   1,804项完整回归，v11已冻结，r12真实三客户端全部ADOPTED，pilot-01
-   唯一正式start已成功。继续原driver；不重复授权、不重放启动或派发。
+1. r12因UUID-only真实格式缺陷而FAILED/HALTED，旧失败分母保留。修复已通过
+   1,811项完整回归，v12已冻结；r13真实三客户端全部ADOPTED，bootstrap已
+   发布。继续r13唯一原driver；不重复授权、不重放启动或派发。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
@@ -308,18 +313,19 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 | 证据 | 路径 |
 | --- | --- |
-| 最新完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/materialized-chrome-full-03/` |
+| 最新完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/v3-contract-full-01/` |
 | 修复前完整回归 | `validation/r8-pressure-and-full/repair-full-04/` |
 | 修复后完整压力及原压力更正 | `validation/r8-pressure-and-full/multiprocess-stress-02/result.json`、`validation/r8-pressure-and-full/multiprocess-stress-01-correction.json` |
 | 压力执行脚本 | `validation/r8-pressure-and-full/stress_components_v2.py` |
 | r8 原生错误与只读新 detector 验证 | `validation/r8-native-provider-failure/terminal-error-01.json`、`validation/r8-native-provider-failure/readonly-watch-02.json` |
 | 定向回归 | `validation/r8-native-provider-failure/focused-02/` |
 | 经验询问诊断 | `maintenance/standalone-caller-v1/hook-discovery-diagnosis-02.json` |
-| 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-26.json` |
+| 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
+| r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/ub/driver/final-report.json`；原 halt：
-`/Users/lzhs/ub/schedule/halt.json`。r11已FAILED/HALTED；没有真实提效通过结论。
-最新全测日志 SHA256：`1afe54174535c7ed2b01d9c65ffcaeb8691d0ca9c9920ca2e4d02ae824ef5b87`。
+最近已结束实验的最终报告：`/Users/lzhs/uc/driver/final-report.json`；原 halt：
+`/Users/lzhs/uc/schedule/halt.json`。r12已FAILED/HALTED；r13运行中，没有真实提效通过结论。
+最新全测日志 SHA256：`2257307bdd610afc5e6cbf79948a7da2a4bcd75725b0ce943f12a7ab262d494a`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；
 失败模块复核 100/100 通过不抹除原失败。失败收口新增测试曾因 fixture 缺字段
