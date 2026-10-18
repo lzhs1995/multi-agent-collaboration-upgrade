@@ -153,3 +153,39 @@ refusals: without the internal before/after pins, later causal reproduction
 cannot prove that each earlier device-change refusal had the same cause.
 Pressure runners also must separate per-scan invariants from whole-run activity,
 and retain partial result serialization failures alongside complete raw attempts.
+
+## r19 task-pack input completeness
+
+Both real r19 pilot packs were finalized with missing `role_map` and
+`pane_inventory` files. All 85 source entries in each pack existed. Claude B
+actually tried to read the declared role map and received `File does not exist`.
+The preparation chain ran preflight, scaffold, fill and finalize; preflight did
+not invoke the commands that generate the two files, and finalization plus
+`verify_prepared` did not validate them. Schema-required path strings do not
+establish input availability or correct task/identity bindings.
+
+Before future finalization, generate and bind these declared inputs and verify
+their contents. Keep report and completion receipt as future outputs. Do not
+repair an in-flight pack by adding files after dispatch or claim that this
+documentation implements the missing runtime checks. The measured workload and
+dedicated callback implementations do not directly read these two fields, so
+their absence alone does not establish the cause of a whole-round timeout.
+The executor report requires a role-map reference, and the independent sentinel
+has its own role-map validation; those obligations still require real evidence.
+
+The original startup adoption was already verified, but neither pack provided
+its direct proof reference. Both executors performed extra startup/hook reads.
+Future packs should carry the verified adoption path, hash and bytes, with a
+clear instruction to read that proof and check the assigned native identity.
+Preserve fresh input gates and evaluate subsequent contradictory observations;
+an old adoption PASS never overrides a current failure. A differently scoped
+`runtime-adoption-v1` unverified record does not by filename alone disprove the
+original live adoption. The observed extra work is not a measured causal share
+of total delay or proof of an end-to-end speedup from the proposed change.
+
+Keep the registered round deadline and an explicit delivery cutoff. When the
+agreed stopping condition is reached, publish failed and missing slots plus
+remaining defects. Do not start another version cycle merely to defer delivery.
+The r19 audit and stdout-summary candidate remain separate evidence: the latter
+reduces displayed bytes in a local measurement, with no demonstrated model cost
+or business latency improvement and no change to the frozen live experiment.

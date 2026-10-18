@@ -1,9 +1,57 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**r18 在双 Claude 非提交探针清理失败，业务0/33。诊断增强50/50受影响验证通过；r19已独立启动，尚无业务通过。既有组件压力与1,886案例组合覆盖保留，真实协作提效仍未证明。**
+当前结论（2026-10-18T13:04:15Z）：**r19 已 HALTED/TIMEOUT，原 driver exit2：1轮超时＋32轮未执行，完整通过0/33、pilot0/3、pairs0/15。双Claude均产出业务文件，但未在1800秒内完成回调及独立验收闭环。真实协作提效未证明；按交付边界结束本轮，不自动启动r20或下一版本。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## r19 现场任务包诊断与有界交付
+
+原首轮固定截止13:03:53.754Z；原driver在13:03:58.467766Z的首次超时
+观察写入HALTED/TIMEOUT，13:04:06.933904Z生成final-report并exit2。
+没有延长注册预算、重放或启动下一permit。全部33轮仍在分母，1 TIMEOUT、
+32 MISSING；measured/verified/passing_runs均为0，cost_status=UNKNOWN，
+结论INSUFFICIENT_EVIDENCE。全量真实压力及配对验收未完成。
+
+13:04:15只读核验：inventory与source_index均有result.json/report.md，
+但两个节点仍DISPATCHED、callback receipt均不存在、closures=0且无finish。
+原主管13:00:02的一次核收曾因“original callback has not opened its
+delivery lock”拒绝；13:04仍在处理原回调。后续历史核收或晚到产物不能
+追改已发布超时结果。旧模型会话和原controller保留，不将driver退出
+冒充三会话关闭或所有资源已释放。
+
+原报告：`/Users/lzhs/uj/driver/final-report.json`，25,117 bytes，SHA256
+`00ddd7b99d3eff1666a798d3777558dc412c7b9e3904a25777d808d9ed8d43e3`。
+独立只读摘要：E下`maintenance/r19-delivery/terminal-readout.json`，SHA256
+`618349e8449bccc960a23532d0da1e578803e4cfe1593f653d570ef08abbb657`。
+交付入口为同目录`STATUS.md`；当前PR保持Draft，不具备生产采用依据。
+
+原首轮于12:33:53.754Z开始，Claude B/A分别于12:42:05.824Z和
+12:42:09.125Z完成握手。inventory及source_index均已DISPATCHED，原主管
+取得NATIVE_RECEIVED。12:57:57Z仍无正式业务产物、callback或独立验收。
+保留原1800秒上限；不将仍在执行Read/Bash计作完成轮次。
+
+只读审计发现两份已finalized任务包都声明不存在的role_map和pane_inventory；
+每包85条source_entries全部存在。Claude B于12:45:36.828Z真实收到role-map
+读取失败。preflight没有调用生成这两个文件的命令，finalize及verify_prepared
+也不验证它们。业务命令和dedicated callback不直接读取这两字段，因此该
+缺陷不能独自证明整轮延迟根因。原adoption已PASS，但包内没有直接证明引用，
+两Claude额外查找startup/hook证据。12:57开始查阅业务实现与核对任务输入。
+
+SKILL及lessons已吸收声明输入完整性、启动证明可见性和固定交付边界要求；
+**产品准备流程修复尚未实施，原r19包与控制器未热改**。具体审计位于E下
+`maintenance/r19-task-pack-path-audit.md`，SHA256
+`eae2a90e2c365f68fe6e90583c6f2f7bec1e89e7be42b7ff8386c7f3d78b3d38`。
+
+另有未应用的显式next-action stdout摘要候选，15/15定向测试及强化flag
+单项复验通过；父审计核对14/14证据文件pin。输出29,812→3,820字符，
+减少87.19%，但完整落盘验pin增加约1.17ms；不是token、费用或端到端
+协作提效。原next-action耗时及模型等待未改善。候选及完整边界见E下
+`maintenance/r19-overhead-candidate/REVIEW.md`。
+
+指定经验会话原请求保留；12:58:54原增量观察85读至当时EOF，无匹配回件。
+PR39实测案例已吸收，但双向咨询未完成。当前文档改动未重新运行已完成
+的回归/组件压力，也不追称已被冻结v17或先前测试覆盖。
 
 ## r18 探针失败与 r19 诊断增强（2026-10-18T12:29Z）
 

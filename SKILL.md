@@ -36,6 +36,16 @@ See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
 [2026-10-18 validation report](docs/VALIDATION-20261018.md).
 
+The r19 field audit found finalized packs referencing missing role-map and
+surface-inventory inputs. For future preparation, generate and validate declared
+inputs before finalization, including their task and native identity bindings;
+do not confuse future report/callback outputs with required existing inputs.
+Provide the already verified startup adoption proof and an explicit executor
+reading responsibility without replacing fresh live identity checks. These are
+measured preparation requirements; the current runtime does not yet enforce
+them. Never backfill an already dispatched pack to conceal a missing input.
+See [task-pack field findings](references/lessons.md#r19-task-pack-input-completeness).
+
 For v3, automatic workflow hooks run through the pinned advisory wrapper.
 Unresolved callbacks, reservation, reask or review state do not block ordinary
 tools or Stop. Legacy gate descriptions below are explicit diagnostics, never a
