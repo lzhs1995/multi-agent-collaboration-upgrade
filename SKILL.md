@@ -48,6 +48,15 @@ and business acceptance remain unverified. Never backfill an already dispatched
 pack to conceal a missing input.
 See [task-pack field findings](references/lessons.md#r19-task-pack-input-completeness).
 
+Independent checkers receive canonical request bytes through a read-only file
+descriptor from unique private campaign scratch, removed before child execution
+and cleaned on exit. Do not use `subprocess.run(input=...)` inside the private
+Darwin audit: its anonymous write pipe has no authenticated filesystem path.
+Never bypass this by allowing arbitrary FIFOs or swallowing `EBADF`. Preserve
+checker pins, timeout, output validation and one invocation per action; a repair
+does not reopen a failed historical attempt. See
+[checker input isolation](references/lessons.md#r19-checker-stdin-isolation).
+
 For v3, automatic workflow hooks run through the pinned advisory wrapper.
 Unresolved callbacks, reservation, reask or review state do not block ordinary
 tools or Stop. Legacy gate descriptions below are explicit diagnostics, never a

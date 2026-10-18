@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from orchestration_campaign import control_script, find_control, native_control, node_output
@@ -167,10 +168,23 @@ def run_checker(campaign, request):
     read_ref(campaign["checker"], "trusted checker")
     within(campaign["checker"]["path"], campaign["adapter"]["path"])
     verify_tree(campaign["adapter"])
-    result = subprocess.run([campaign["python"]["path"], "-I", "-B", campaign["checker"]["path"]],
-                            input=canonical(request), capture_output=True,
-                            cwd=campaign["adapter"]["path"], timeout=campaign["checker_timeout_seconds"],
-                            env={"PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"}, check=False)
+    # input= opens an anonymous pipe for writing in the parent. Darwin's
+    # descriptor path audit cannot authenticate that pipe as a private file.
+    # Use one exclusive private scratch directory and a read-only stdin instead;
+    # retain the original scope guard and never retry a failed checker. Scratch
+    # is outside the business output tree and cleaned on success or failure.
+    with tempfile.TemporaryDirectory(prefix=".checker-request-", dir=checked_path(campaign["root"])) as scratch:
+        request_path = Path(scratch) / "request.json"
+        with request_path.open("xb") as stream:
+            stream.write(canonical(request))
+        with request_path.open("rb") as stream:
+            require(stream.read() == canonical(request), "checker scratch request changed")
+            stream.seek(0)
+            request_path.unlink()  # Child receives only the already-open read-only descriptor.
+            result = subprocess.run([campaign["python"]["path"], "-I", "-B", campaign["checker"]["path"]],
+                                    stdin=stream, capture_output=True,
+                                    cwd=campaign["adapter"]["path"], timeout=campaign["checker_timeout_seconds"],
+                                    env={"PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"}, check=False)
     require(len(result.stdout) <= 1024 * 1024 and len(result.stderr) <= 1024 * 1024,
             "checker output exceeds bounded evidence size")
     require(result.returncode == 0, "trusted checker failed: " + result.stderr.decode(errors="replace")[:500])

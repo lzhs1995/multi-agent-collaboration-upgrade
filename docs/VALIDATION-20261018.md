@@ -1,9 +1,53 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论（2026-10-18T13:24Z）：**任务包准备修复已通过411项受影响回归及本机并发压力。真实r19仍为HALTED/TIMEOUT，原driver exit2：1轮超时＋32轮未执行，完整通过0/33、pilot0/3、pairs0/15。双Claude均产出业务文件，但未在1800秒内完成回调及独立验收闭环。真实协作提效未证明；本轮验证结束，不自动启动r20或下一版本。**
+当前结论（2026-10-18T13:38Z）：**任务包准备修复已通过411项受影响回归及本机并发压力；独立验收器匿名管道输入修复已通过55/55受影响回归及8进程400次真实macOS沙箱调用压力，测试全部结束。真实r19仍为HALTED/TIMEOUT，原driver exit2：1轮超时＋32轮未执行，完整通过0/33、pilot0/3、pairs0/15。双Claude均产出业务文件，原回调已逐字核验，但未在1800秒内完成独立验收闭环。真实协作提效未证明；本轮交付不自动启动r20或下一版本。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## 独立验收器输入修复与原始时间证据
+
+原source_index candidate在13:05:38.958Z退出2，异常链精确指向
+run_checker → subprocess.run(input=...) → io.open(p2cwrite, 'wb') →
+private audit → fd_path → Darwin F_GETPATH，errno=9。
+本机原生匿名pipe的fstat成功，F_GETPATH却返回EBADF；具名FIFO可取得真实路径。
+不把EBADF解释为描述符必已关闭，不全局放行FIFO。
+
+修复只改当前仓库run_checker：在campaign根下创建独占scratch，写入并核对
+canonical请求，打开只读stdin并删除请求路径，再调用原checker一次。
+退出清理本次scratch，不污染业务output；原scope、pin、timeout、返回结果
+验收及输出重哈希规则保留。原r19代码及产物不变，修复不能补认成功。
+
+按原attempt的NATIVE_INPUT_INTENT、EOF/prefix/tail、path/device/inode、
+完整native record SHA及逐字payload核验两个callback：
+
+| 节点 | 原生接收时间 UTC | 相对原截止 |
+|---|---|---|
+| source_index / Claude B | 13:03:46.256 | 提前7.498秒 |
+| inventory / Claude A | 13:12:58.984 | 晚545.230秒 |
+
+原主管两路prepare分别364.367和414.218秒，dispatch分别64.702和69.680秒。
+这是原命令时间，不是互不重叠的总耗时分解；匿名管道问题不能解释全部准备/等待延迟。
+证据在E下`maintenance/r19-checker-stdin/`，包含原失败记录pin、callback
+原始fence核验、Darwin描述符复现、29条原命令时间及未改变的final-report SHA。
+本轮受影响回归 **55/55，零失败/错误/跳过，49.727秒**，254个受检文件
+前后SHA一致。覆盖run、v3、continuation、isolation与5项新checker测试。
+新增测试使用实际materialized审计及Seatbelt，验证大Unicode请求的完整字节与EOF、
+只读且已unlink的stdin、stdout/stderr、单次非零退出、超时回收及外部写入拒绝。
+
+真实本机压力为 **8个OS worker，每个50次，共400次checker调用**：
+**320次正常成功、64次预期非零退出、16次预期超时，全部符合断言**；另有
+8次旧匿名管道EBADF复现。8个worker共同执行区间5.952秒，不声称始终8个
+checker同时运行。worker批次12.056秒、含启动收集共14.759秒；所有checker
+子进程已回收，scratch无遗留，业务树未变，225个Python源码前后SHA一致。
+独立只读审计逐lane核对50个不同iteration及结果，未发现交付阻断。
+
+证据：E下`validation/r19-checker-stdin-regression-01/`与
+`validation/r19-checker-stdin-pressure-01/`；外部脚本为
+`preparation/validate-r19-checker-stdin.py`及`preparation/pressure-r19-checker-stdin.py`。
+完整回归日志SHA256：`c9045f05a80cbb9c0795d0ee40edcbd21dc67b5609f1a772d594456d9e854407`。
+上述验证模型请求与输入操作均为0，不计入33轮真实协作成绩。没有重跑原411项批次；
+本节结果在测试后更新，交付manifest分别记录文档变化与保持一致的受测Python源码。
 
 ## 任务包准备修复与本机压力交付（2026-10-18T13:24Z）
 
@@ -744,14 +788,13 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r17 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY∩UID 与
-   devfs 设备身份修复、现存三 TTY 只读压力、2,500 场景已经通过；原生中断
-   监控修复另行通过1,861项完整回归。协调锁及构造开销修复已整合并通过28项
-   定向验证及1,886案例组合覆盖；下一步冻结独立r18实验，
-   不重放旧次启动或派发，不把已通过结果归于后续未测试的新代码。
-   r13 原 candidate EBADF 仍未归因，诊断改进不等于已修复原根因。
-2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
-   cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
+1. r19已HALTED/TIMEOUT，原driver已退出。声明输入缺失及独立checker管道故障
+   已修复并完成本机验证；仍需解释并减少准备、派发及模型等待的完整延迟。
+   两个callback已按原native证据核验，不能追改超时。当前没有全量模型实验运行；
+   也未证明所有旧模型进程均已退出。本轮以修复及报告交付结束，不自动启动r20。
+2. 真实业务成功仍需同三会话pilot连续3/3，然后12 warm＋3 cold pairs；
+   最多7组、33 slots、同时最多两个Claude执行业务。现无可信成功交付ETA，
+   不用新一轮启动或重复本机测试延后本轮交付。既有全面授权保留，无需重复询问。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
    warm 配对改善中位数需至少 15%，各 workload 中位退化不超过 5%；成本增长
    超过 10% 披露，缺失 usage 记 UNKNOWN。不得用组件提速代替这些门槛。
@@ -785,8 +828,8 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/uh/driver/final-report.json`；原 halt：
-`/Users/lzhs/uh/schedule/halt.json`。r17已HALTED/FAILED，没有真实提效通过结论。
+最近已结束实验的最终报告：`/Users/lzhs/uj/driver/final-report.json`。
+r19已HALTED/TIMEOUT，没有真实提效通过结论；r17等更早报告继续保留。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；

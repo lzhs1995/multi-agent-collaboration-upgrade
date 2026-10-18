@@ -154,6 +154,29 @@ cannot prove that each earlier device-change refusal had the same cause.
 Pressure runners also must separate per-scan invariants from whole-run activity,
 and retain partial result serialization failures alongside complete raw attempts.
 
+## r19 checker stdin isolation
+
+The original source_index candidate failed after callback reception: CPython
+3.14 `subprocess.run(input=...)` opened an anonymous pipe write descriptor, and
+the unchanged private audit called Darwin F_GETPATH on it. Actual anonymous
+pipe descriptors passed fstat but returned errno 9 from F_GETPATH; a named FIFO
+returned its real filesystem path. EBADF here does not prove a closed fd.
+
+The current checker uses a unique private campaign scratch directory, writes
+and verifies the canonical request, opens it read-only and unlinks its pathname
+before passing stdin to the one original child invocation. The temporary
+directory is cleaned on success or exception, never placed in business outputs.
+Keep the audit unchanged: external regular files, named FIFOs, symlinks and
+unbound descriptors are not exemptions. Keep checker/Python/adapter pins,
+timeout, result validation and post-execution output rehashing.
+
+Original native input fences and exact callback records were independently
+verified: source_index received at 13:03:46.256Z, inventory at 13:12:58.984Z.
+The deadline was 13:03:53.754Z; subsequent receipts and the new fix do not change
+the original 1 TIMEOUT + 32 MISSING or establish business acceptance. The errno 9
+trace explains the later independent-checker failure, not all preceding delay.
+Evidence: `maintenance/r19-checker-stdin/` in the 20261014-v1 evidence root.
+
 ## r19 task-pack input completeness
 
 Both real r19 pilot packs were finalized with missing `role_map` and
