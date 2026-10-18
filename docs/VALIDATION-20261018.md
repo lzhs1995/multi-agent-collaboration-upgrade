@@ -1,6 +1,51 @@
 # 2026-10-18 压力测试与真实协作验证
 
-## 2026-10-18T14:15Z 唯一r20已启动
+## 2026-10-18T14:52Z r20 已结束：未通过真实验收
+
+**原 r20 为 HALTED/TIMEOUT：1 TIMEOUT＋32 MISSING；完整业务 0/33、pilot 0/3、
+pairs 0/15。协作提效未证明，成本 UNKNOWN。没有全量模型实验继续运行。**
+首轮截止 14:51:18.091Z；原 driver 于 14:51:20.240704Z 发布超时 halt，
+14:51:20.592124Z–14:51:20.630143Z 七组均发布 STOPPED_INPUT，
+最终报告于 14:51:22Z 可用。原 runner、driver、watchdog 均 exit 2，
+watchdog_failed=false。这是首轮失败后的提前收尾，没有等待或延长整体截止。
+停止新输入不证明远端请求已取消、旧模型进程已退出或 lease 已释放。
+
+外部只读 closeout 核对配置 SHA、全部 33 槽与 15 对、原 runner 日志、
+七组 stop 和 halt，未改 runtime、未派发或接受业务。
+原报告 `/Users/lzhs/uk/driver/final-report.json`，SHA256
+`9a2d324a4462223e95ae3fc684de3a0b78536eb010fd96f28691284af71573a5`；
+复核 `maintenance/r20-delivery/terminal-readout.json`（相对于下方证据根 E）。
+
+局部真实结果：Codex→Claude A 的 inventory 通知、Claude A→active Codex
+的原 callback 均已有逐字原生接收证明，后者正式 receipt 的原次只读核收
+也通过。inventory 报告自报 PASS、82 条，尚未独立业务验收，不能计整轮通过。
+source_index 的 dispatch 在输入前身份采集中失败：PID 88823、
+`before_path_bsd_1`、`kernel terminal member exited`。未产生该派发的 input
+intent；不能归因 busy、`/goal` 或 key。原生错误切片及独立核验位于
+`maintenance/r20-dispatch-audit/`。
+
+本仓已澄清运行中双向通信规则，去除忙时不得通信及当前 Codex Tab 排队的
+误导指引；保留原生身份、草稿和去重边界。**本次只有文档更新，新增全量 busy/
+`/goal` 压力尚未执行**；没有改冻结 v18 或共享技能。active Codex 的一次成功
+不能外推 busy Claude 或持续 `/goal`。原 callback intent→native 25.905 秒，
+native→正式 receipt 237.361 秒，分别计量，不混称传输耗时。
+完整规则与未完成矩阵见 [运行中通信验证](ASYNC-COMMUNICATION-VALIDATION.md)。
+
+surface40 更正后的维护联络因目标 socket 缺失以 NO_INPUT 结束；文件请求及
+审查报告已进入其原 maintenance inbox，尚无约定回复，不声称充分双向沟通完成。
+本次不自动 r21、不替换或重放，旧会话、控制器、失败与分母保留。
+以下各节均为对应时间的历史状态，不能作为当前仍在运行的证明。
+
+## 2026-10-18T14:22Z r20首轮正式开始（历史）
+
+原三客户端于14:18:40Z全部ADOPTED，自动hook和隔离门禁已核验；14:18:58Z完成bootstrap发布。
+原Codex于14:21:18.091Z唯一调用pilot-01 start，原生命令在14:21:29.978Z以exit0/STARTED返回。
+当前业务完整验收仍为**0/33、pilot0/3、pairs0/15**；首次start不是业务通过。
+首轮原截止14:51:18.091Z，整体截止16:12:42.783438Z，最终报告最迟16:23Z；不顺延、不自动r21。
+14:22Z原driver、watchdog与三客户端均存活。证据：E下`maintenance/r20-progress/observation-0004.json`。
+指定经验观察93未取得可验证双向回复；不将已吸收PR39经验冒充此次回复。
+
+## 2026-10-18T14:15Z 唯一r20已启动（历史）
 
 已按持续有效的全面授权启动原计划：7组、33槽、3轮pilot、15对比较；不替换失败会话。
 watchdog于14:14:58Z确认原截止，driver随后唯一启动，14:14:59Z发布pilot-01 permit，
@@ -838,10 +883,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r19已HALTED/TIMEOUT，原driver已退出。声明输入缺失及独立checker管道故障
-   已修复并完成本机验证；仍需解释并减少准备、派发及模型等待的完整延迟。
-   两个callback已按原native证据核验，不能追改超时。当前没有全量模型实验运行；
-   也未证明所有旧模型进程均已退出。本轮以修复及报告交付结束，不自动启动r20。
+1. r20已HALTED/TIMEOUT，原runner/driver/watchdog均已返回，七组stop已核验。
+   需修复本轮TTY成员退出导致的身份采集拒绝，并减少准备、派发和核收延迟。
+   r19与r20各自的超时保持原样；当前没有全量模型实验运行，也未证明所有旧
+   模型进程均已退出。本轮以真实结果和通信规则交付结束，不自动启动r21。
 2. 真实业务成功仍需同三会话pilot连续3/3，然后12 warm＋3 cold pairs；
    最多7组、33 slots、同时最多两个Claude执行业务。现无可信成功交付ETA，
    不用新一轮启动或重复本机测试延后本轮交付。既有全面授权保留，无需重复询问。
@@ -850,6 +895,9 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
    超过 10% 披露，缺失 usage 记 UNKNOWN。不得用组件提速代替这些门槛。
 4. 获取指定经验会话的实际回复，核对其案例、失败条件和证据，再做相应实地验证。
    当前消息入口不可用不应阻止独立修复，也不允许声称沟通已经完成。
+5. 执行[运行中双向通信矩阵](ASYNC-COMMUNICATION-VALIDATION.md)：特别核实初次
+   握手探针、持续`/goal`、busy Claude、并发callback、队列实际消费与公平性。
+   当前规则澄清不是这些条件的实测通过，更不是共享版本已经采用。
 
 ## 可复核证据
 
@@ -878,8 +926,8 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/uj/driver/final-report.json`。
-r19已HALTED/TIMEOUT，没有真实提效通过结论；r17等更早报告继续保留。
+最近已结束实验的最终报告：`/Users/lzhs/uk/driver/final-report.json`。
+r20已HALTED/TIMEOUT，没有真实提效通过结论；r19及更早报告继续保留。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；

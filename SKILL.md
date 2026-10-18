@@ -36,6 +36,21 @@ See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
 [2026-10-18 validation report](docs/VALIDATION-20261018.md).
 
+For v3, ordinary work in progress is not a reason to delay an authorized
+coordination message in either direction. Submit ready information through the
+bound supported input route; the receiving agent decides how to integrate it.
+Do not pause native `/goal` merely to create an idle communication window.
+Communication, task acceptance, write ownership and composer clearing are
+separate operations. Keep fresh identity, draft, original-attempt and native
+receipt checks; an accepted queue entry is not proof of consumption.
+Reuse a valid handshake instead of running a write-and-clear bridge probe for
+every message. An initial handshake whose probe cannot run remains unverified;
+do not bypass it or claim a read-only replacement already exists.
+See [active communication and its measured limits](docs/ASYNC-COMMUNICATION-VALIDATION.md).
+These instructions update this experimental skill only. The designated
+surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns
+retain their original controllers; documentation does not hot-reload clients.
+
 The r19 field audit found finalized packs referencing missing role-map and
 surface-inventory inputs. New v3 preparation now generates both with the original
 harness before task-pack finalization and verifies their pinned contents, task,
@@ -279,7 +294,8 @@ not an OS sandbox against arbitrary self-written socket clients.
 2. Run `scripts/mac_harness.py preflight` with an explicit task id, absolute
    artifact root, and the existing executor surface. This covers setup, identity,
    visible naming, non-submitting bridge proof, handshake and validation. Do not
-   refresh a healthy handshake mid-command or stack another task behind work.
+   refresh a healthy handshake mid-command. Coordination messages may arrive
+   during work; a new formal task still needs its own scope and reservation.
 3. For formal plan consensus, record at least three non-blocking review rounds
    and require `consensus-check` PASS. Each round needs its own real artifact and
    hash. Earlier objections must be explicitly resolved, not hidden by a later
@@ -360,7 +376,8 @@ current evidence for authorized follow-up; never ask the user to relay to a boun
   observation is a supervisor budget limitation, not executor silence. Recover a
   late genuine ACK against the original task/provider/nonce without resending.
 - **Keys and queue entries do not prove reception.** Bind the exact receiver
-  process/session/transcript and a fresh EOF fence at the original PASTE_INTENT.
+  process/session/transcript and a fresh EOF fence at the original
+  NATIVE_INPUT_INTENT (Codex) or PASTE_INTENT (Claude).
   Only a new whole native user record after that fence, exactly equal to the
   payload including whitespace, yields NATIVE_RECEIVED. Claude queued_command
   remains pending. For Codex, use its bound native control socket once with the
@@ -477,7 +494,7 @@ execution in the active client; a manual script exit is a separate offline check
 
 ## 双向投递与高效协作维护
 
-执行[原生投递与有界等待](references/verified-compose-delivery.md)：原 PASTE_INTENT 新鲜 EOF fence 后的完整 native user 才确认收到；排队仍 pending。原次恢复共用一次补键，封口保留 task-bound 诊断与零输入核收。默认 idle Stop 不要求求派；另行保留用户明确授权的每60秒新 marker 主动求派及其配套 hook，直到主管答复、新派发或 operator stop。
+执行[原生投递与有界等待](references/verified-compose-delivery.md)：原 NATIVE_INPUT_INTENT（Codex）或 PASTE_INTENT（Claude）新鲜 EOF fence 后的完整 native user 才确认收到；排队仍 pending。当前 Codex 原生输入无重发或补键预算；只有符合原控制器条件的历史终端尝试共用一次补键。封口保留 task-bound 诊断与零输入核收。默认 idle Stop 不要求求派；另行保留用户明确授权的每60秒新 marker 主动求派及其配套 hook，直到主管答复、新派发或 operator stop。
 
 ### Stop hook reentry
 

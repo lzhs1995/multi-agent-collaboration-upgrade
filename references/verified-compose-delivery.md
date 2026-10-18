@@ -8,6 +8,12 @@
 不与默认有界 persist 混为一谈。执行使用原任务固定的完整控制器；
 文档更新不迁移在途任务，不证明已安装或已在真实客户端通过。
 
+v3 双向普通通信不以对方 idle 为前提，不为握手或通信暂停原生 `/goal`。
+信息就绪后使用绑定的受支持入口提交，由接收者协调任务；消息接收、任务接受、
+写入权限和清草稿分别判断。有效握手不为每条消息重复写入/清除探针；初次握手
+探针受阻仍记未验证，当前没有已验证的只读握手替代入口。实际边界与待测矩阵见
+[运行中通信验证](../docs/ASYNC-COMMUNICATION-VALIDATION.md)。
+
 ## 只有原接收端新增的完整 user 记录能确认收到
 
 输入前，原 controller 必须把以下信息固定到原 attempt，并在输入和核收时复核：
@@ -18,10 +24,11 @@
   字节和边界哈希。只能从目标进程/会话绑定该文件，不能按日期、mtime
   或全局 marker 搜索选择一个看似匹配的会话。
 - 完整 payload 及其 SHA、原 task/nonce、任务包和报告等适用 pins。
-  `PASTE_INTENT` 必须在真实输入前持久化，并固定当时新鲜 EOF fence。
+  Codex 的 `NATIVE_INPUT_INTENT` 或 Claude 的 `PASTE_INTENT` 必须在真实输入前
+  持久化，并固定当时新鲜 EOF fence。
 
 只有**同一 workspace/surface/process/session/transcript，在原
-PASTE_INTENT 的新鲜 EOF fence 之后新增、全文完全相等的 native user**
+NATIVE_INPUT_INTENT / PASTE_INTENT 的新鲜 EOF fence 之后新增、全文完全相等的 native user**
 才为 `NATIVE_RECEIVED`。保留空格、制表符、空行、换行和字面转义；
 不得 trim、拼接多个记录、只查子串/nonce 或用引用替代完整入站记录。
 assistant、tool、hook 输出和用户引用旧消息都不是本次入站证据。
@@ -38,16 +45,25 @@ assistant、tool、hook 输出和用户引用旧消息都不是本次入站证�
 旧尝试缺少输入前 binding/fence 时，拒绝追补；不重发、不把当前 EOF
 冒充过去的输入边界。报告被发现、被读取与消息被收到是不同事实。
 
-## 首次输入只有一次粘贴和一次提交键
+## 当前 v3 Codex 使用原生输入
+
+绑定原接收 thread 的控制 socket，查询当前 metadata 和 canAcceptDirectInput。
+active/inProgress 使用一次 `turn/steer` 和新鲜 expectedTurnId；idle 使用一次
+`turn/start`，不改变设置。先固定完整 request、身份和原输入意图，再执行输入。
+未知状态、turn race、身份变化或 socket 不可用时拒绝；不操作 Codex composer、
+不粘贴、不发 Enter/Tab，也不回退终端队列。RPC 接受不等于原生接收；错误、
+超时或不确定返回只允许对原次零输入核收，没有重发或补键预算。
+
+## Claude 首次终端输入只有一次粘贴和一次提交键
 
 复用受保护 bridge。首次输入前确认 agent TUI 和空 composer；SHELL、
 UNKNOWN、压缩、重连、外来草稿或未识别结构不得输入。原 attempt 只粘贴
 一次，再有界只读等待**完整且稳定的原草稿**。等待耗尽就保留原次，不按键。
 
-忙碌 Codex 若明确显示 `tab to queue message`，且完整原草稿及已测
-Codex 结构均匹配，首次直接使用 `tab`。其他清晰且受支持的提交状态使用
-`enter`。不先给忙碌 Codex 一个可能被解释为换行的 Enter；不另造
-Ctrl+Enter 或裸键绕路。Tab 结果仍是 pending，直到原生 user 证据成立。
+Claude 完整稳定的原草稿通过后，首次使用受支持的 `enter`。正常 active/queued
+不是正式新消息的一律禁发条件；真实草稿、压缩、重连、未知结构继续受保护。
+不另造 Ctrl+Enter 或裸键绕路。客户端排队仍是 pending，直到原生 user 证据成立。
+旧 Codex Tab 分支仅说明历史控制器，不能用于当前 v3 新输入或恢复。
 
 每次粘贴/按键前都重核身份，按键意图在动作前持久化。折叠粘贴摘要、残缺
 首帧和未知 footer 不能证明完整草稿。已测显示等价只用于草稿保护，
@@ -75,7 +91,9 @@ composer 前倒序跳过空行、完整 Tip 行和精确 goal 状态行；不越
 队列和原EOF fence后的精确回执测试，并逐字核对原投递函数保留。
 完整边框外的同行时间字段可带精确提示 `new task? /clear to save N tokens`（N 仅为 ASCII 整数，或整数/一位小数加小写 `k`）；正文同字仍是草稿，未知提示及折叠草稿仍不授权输入。
 
-## 原次恢复共用最多一次补键
+## 历史终端原次恢复共用最多一次补键
+
+本节仅适用于原控制器支持的历史终端尝试；当前 Codex 原生输入没有补键路径。
 
 ### Current status and nested hook identity
 
