@@ -81,7 +81,13 @@ def task_sources(campaign, header, node, info):
     sources = [ref["path"] for ref in campaign["inputs"]]
     sources.extend(ref["path"] for dep in verify_dependencies(campaign, header, node, info) for ref in dep["output_files"])
     require(json_ref(info["work_request"]) == work_request(campaign, header, node, info), "work request changed")
-    return sources + [info["work_request"]["path"]]
+    sources.append(info["work_request"]["path"])
+    if campaign_version(campaign) == 3:
+        from orchestration_pack_inputs import input_paths
+        sources.extend(input_paths(campaign, header, node).values())
+        if campaign.get("client_isolation") is not None:
+            sources.extend([campaign["runtime"]["path"], campaign["client_isolation"]["path"]])
+    return sources
 
 
 def pack_extension(campaign, header, node, info):
@@ -108,6 +114,11 @@ def node_directory(campaign, header, node):
 
 def task_scope(campaign, header, node, info):
     instruction = "\nRead the exact pinned work request: " + info["work_request"]["path"] + "."
+    if campaign_version(campaign) == 3:
+        instruction += ("\nVerify preparation_inputs pins before work. Its role_map and pane_inventory bind this task; "
+                        "client_adoption points directly to the original external startup proof and runtime. "
+                        "Use those pinned files for startup evidence; do not rediscover configuration or rerun startup. "
+                        "Historical adoption does not replace current identity or callback delivery checks.")
     if campaign.get("workload"):
         import shlex
         argv = ["rtk", "proxy", campaign["python"]["path"], "-B", campaign["workload"]["path"],
@@ -261,6 +272,9 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     pack = json_ref(pack_ref, "finalized task pack")
     gate = json_ref(proof["identity_gate"], "identity gate")
     supervisor = prepared_supervisor(campaign, node, gate)
+    if campaign_version(campaign) == 3:
+        from orchestration_pack_inputs import verify_inputs
+        verify_inputs(campaign, header, node, info, pack, gate, fixtures=fixtures)
     require(pack.get("draft") is False and pack.get("task_id") == info["task_id"] and
             campaign_uuid(campaign, pack.get("executor_uuid")) == receiver["surface_uuid"] and pack.get("supervisor") == supervisor and
             pack.get("executor") == receiver["surface_uuid"] and

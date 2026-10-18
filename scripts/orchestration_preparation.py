@@ -2,7 +2,7 @@
 
 Collection/settlement hold runner, transport, then coordinator locks. Verification is pure so
 the same evidence can also be replayed while validating terminal event history.
-An absent dispatch is insufficient without all five original returned stages.
+An absent dispatch is insufficient without all original returned stages.
 """
 from __future__ import annotations
 
@@ -17,10 +17,15 @@ from orchestration_native import NativeReader, require
 from orchestration_contracts import campaign_uuid, campaign_version, evidence_class, state_root
 
 STAGES = ("preflight", "task-pack", "fill-pack", "finalize-pack", "task-notice")
-HARNESS_STAGES = {"preflight", "task-pack", "finalize-pack"}
+V3_STAGES = ("preflight", "map", "surface-inventory", "task-pack", "fill-pack", "finalize-pack", "task-notice")
+HARNESS_STAGES = {"preflight", "map", "surface-inventory", "task-pack", "finalize-pack"}
 
 
-def fill_scaffold(campaign, header, node, info, scaffold, handshake, nonce):
+def preparation_stages(campaign):
+    return V3_STAGES if campaign_version(campaign) == 3 else STAGES
+
+
+def fill_scaffold(campaign, header, node, info, scaffold, handshake, nonce, *, fixtures=False):
     """Reconstruct the historical pre-finalization bytes without rewriting them."""
     require(scaffold.get("draft") is True and scaffold.get("task_id") == info["task_id"],
             "original scaffold required")
@@ -34,6 +39,11 @@ def fill_scaffold(campaign, header, node, info, scaffold, handshake, nonce):
         completion_callback=f"DONE|{info['task_id']}|{nonce}|REPORT={report}",
         executor_model="preserve-current-model", model_command=None,
         orchestration=pack_extension(campaign, header, node, info))
+    if campaign_version(campaign) == 3:
+        from orchestration_pack_inputs import pin_inputs, verify_inputs
+        pack["preparation_inputs"] = pin_inputs(campaign, header, node, pack)
+        gate = json_ref(file_ref(pack["identity_gate"]))
+        verify_inputs(campaign, header, node, info, pack, gate, fixtures=fixtures)
     return pack
 
 
@@ -55,7 +65,7 @@ def collect_preparation_exit_locked(transport, info):
     file_ref(root / "handshake-notice.txt")
     proof = dict(version=1,
         operations={name: {part: file_ref(root / "operations" / name / (part + ".json"))
-                           for part in ("intent", "result")} for name in STAGES},
+                           for part in ("intent", "result")} for name in preparation_stages(transport.campaign)},
         transport=file_ref(root / "transport.json"), scaffold=file_ref(root / "original-scaffold.json"),
         history=dict(run=file_ref(transport.co.root / "run.json"),
                      claim=file_ref(transport.co.root / "claims" / (transport.key + ".json")),
@@ -167,16 +177,17 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     for path in (root / "dispatch-intent.json", dispatch_journal(campaign, info)):
         require(not path.exists() and not path.is_symlink(), "business dispatch intent/journal exists; preserve the lease")
     entries = list((root / "operations").iterdir())
-    allowed = set(STAGES) | ({"scoped-disarm"} if terminal is not None else set())
+    stages = preparation_stages(campaign)
+    allowed = set(stages) | ({"scoped-disarm"} if terminal is not None else set())
     require(all(p.is_dir() and not p.is_symlink() for p in entries) and
-            set(STAGES) <= {p.name for p in entries} <= allowed,
+            set(stages) <= {p.name for p in entries} <= allowed,
             "unexpected or incomplete original preparation operations")
     if any(p.name == "scoped-disarm" for p in entries):
         # Source validation must not read the lease: lease validation itself
         # replays this preparation proof. Preserve original ERROR/absence while
         # the separate bounded recovery supplies the final release proof.
         disarm_sources(campaign, header["campaign"], root, info["task_id"], terminal)
-    require(set(proof["operations"]) == set(STAGES), "all five original stages required")
+    require(set(proof["operations"]) == set(stages), "all original preparation stages required")
     for field, name in (("transport", "transport.json"), ("scaffold", "original-scaffold.json")):
         require(proof[field]["path"] == str(root / name), "preparation source path changed")
     config = json_ref(proof["transport"])
@@ -195,7 +206,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
             campaign_uuid(campaign, scaffold.get("executor_uuid")) == receiver["surface_uuid"] and
             scaffold.get("executors") == pack["executors"], "original scaffold executor identity changed")
     handshake = json_ref(prepared["handshake"]["receipt"])
-    filled = fill_scaffold(campaign, header, node, info, scaffold, handshake, config["completion_nonce"])
+    filled = fill_scaffold(campaign, header, node, info, scaffold, handshake, config["completion_nonce"], fixtures=fixtures)
     historical_bytes = canonical(filled)
     historical_ref = dict(path=prepared["pack"]["path"], sha256=digest(historical_bytes), bytes=len(historical_bytes))
     changed = {key for key in set(filled) | set(pack) if filled.get(key) != pack.get(key)}
@@ -205,7 +216,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
             "finalization changed fields beyond the original harness contract")
     previous = parse_time(info["started_at"])
     runtime = PinnedRuntime(campaign)
-    for name in STAGES:
+    for name in stages:
         refs = proof["operations"][name]
         require(set(refs) == {"intent", "result"}, "original stage pins missing")
         stage_root = root / "operations" / name

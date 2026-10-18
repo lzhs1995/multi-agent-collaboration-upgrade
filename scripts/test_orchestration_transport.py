@@ -114,9 +114,14 @@ class FakeRuntime(OfflineDisarmRuntime):
                 callback_target=self.f.surface_refs["codex"],
                 executors=[dict(display="EXECUTOR_1", ordinal=1, provider="claude", surface_ref=self.executor_selector)],
                 required_skill=str(Path(self.f.campaign["controller"]["path"]) / "SKILL.md"),
+                role_map=str(root / "role-map.json"), pane_inventory=str(root / "surface-inventory.json"),
                 identity_gate=str(root / "identity-gate.json"), validation_evidence=str(root / "validation.json"),
                 completion_receipt=str(root / "completion-callback-receipt.json"),
                 completion_delivery=dict(transport="cmux_bridge.submit_completion_callback", require_confirmed=True)))
+        elif phase == "map":
+            write_json(root / "role-map.json", self.f.role_map(task, self.lane))
+        elif phase == "surface-inventory":
+            write_json(root / "surface-inventory.json", self.f.surface_inventory(task))
         elif phase == "finalize-pack":
             value = read_json(root / "task-pack.json")
             value.update(draft=False, finalized_at=utc_now(), source_entries=[

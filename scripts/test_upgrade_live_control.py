@@ -102,6 +102,44 @@ class LiveControlTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, "private adoption required"):
                     NativeReader(changed)
 
+    def test_task_pack_adoption_binds_every_original_session_and_keeps_live_fixture_boundary(self):
+        from orchestration_pack_inputs import pin_inputs, verify_inputs
+        from orchestration_test_support import CampaignFixture
+        proof = self.publish_fixture()
+        fixture = CampaignFixture(self.root / "task-pack-fixture", version=3)
+        co = fixture.start()
+        info = co.claim("review")
+        prepared = fixture.prepare(co, "review")
+        pack = json_ref(prepared["pack"])
+        fixture.campaign.update(runtime=self.runtime_ref, client_isolation=proof,
+                                sessions=runtime.authenticated_sessions(self.runtime_ref, proof))
+        for lane, session in fixture.campaign["sessions"].items():
+            fixture.clients[lane].session = session
+        gate = fixture.identity_gate(info["task_id"], "claude_a")
+        write_json(pack["role_map"], fixture.role_map(info["task_id"], "claude_a"))
+        write_json(pack["pane_inventory"], fixture.surface_inventory(info["task_id"]))
+        pack["preparation_inputs"] = pin_inputs(fixture.campaign, co.header, co.nodes["review"], pack)
+        pack["finalized_at"] = utc_now()
+        args = (fixture.campaign, co.header, co.nodes["review"], info, pack, gate)
+        verify_inputs(*args)
+        with self.assertRaisesRegex(ContractError, "cannot impersonate live adoption"):
+            verify_inputs(*args, fixtures=True)
+        for lane in fixture.campaign["sessions"]:
+            session = fixture.campaign["sessions"][lane]
+            original_model = session["model"]
+            session["model"] = "changed-model"
+            with self.subTest(lane=lane), self.assertRaisesRegex(ContractError, "adoption original sessions changed"):
+                verify_inputs(*args)
+            session["model"] = original_model
+        pack["preparation_inputs"]["client_adoption"]["executor_id"] = "claude_b"
+        with self.assertRaisesRegex(ContractError, "adoption differs"):
+            verify_inputs(*args)
+        pack["preparation_inputs"]["client_adoption"]["executor_id"] = "claude_a"
+        # A copied verified flag does not waive the original inspection proof.
+        Path(proof["path"]).write_text('{"verified":true}')
+        with self.assertRaises(ContractError):
+            verify_inputs(*args)
+
     def test_changed_session_or_replaced_transcript_is_rejected(self):
         proof = self.publish_fixture()
         session = runtime.authenticated_sessions(self.runtime_ref, proof)["codex"]

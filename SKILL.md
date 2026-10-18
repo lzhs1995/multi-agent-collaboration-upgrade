@@ -37,13 +37,15 @@ Current measured results and open live-validation gaps are recorded in the
 [2026-10-18 validation report](docs/VALIDATION-20261018.md).
 
 The r19 field audit found finalized packs referencing missing role-map and
-surface-inventory inputs. For future preparation, generate and validate declared
-inputs before finalization, including their task and native identity bindings;
-do not confuse future report/callback outputs with required existing inputs.
-Provide the already verified startup adoption proof and an explicit executor
-reading responsibility without replacing fresh live identity checks. These are
-measured preparation requirements; the current runtime does not yet enforce
-them. Never backfill an already dispatched pack to conceal a missing input.
+surface-inventory inputs. New v3 preparation now generates both with the original
+harness before task-pack finalization and verifies their pinned contents, task,
+workspace, time and assigned native identities. Packs include the original
+startup adoption proof and an explicit executor reading responsibility. Inventory
+titles are not provider authority; retain fresh live identity checks. v2 keeps
+its original preparation sequence. Report/callback outputs remain future outputs.
+This candidate passed local regression and multiprocess pressure; live callback
+and business acceptance remain unverified. Never backfill an already dispatched
+pack to conceal a missing input.
 See [task-pack field findings](references/lessons.md#r19-task-pack-input-completeness).
 
 For v3, automatic workflow hooks run through the pinned advisory wrapper.

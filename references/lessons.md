@@ -164,10 +164,13 @@ not invoke the commands that generate the two files, and finalization plus
 `verify_prepared` did not validate them. Schema-required path strings do not
 establish input availability or correct task/identity bindings.
 
-Before future finalization, generate and bind these declared inputs and verify
-their contents. Keep report and completion receipt as future outputs. Do not
-repair an in-flight pack by adding files after dispatch or claim that this
-documentation implements the missing runtime checks. The measured workload and
+New v3 preparation generates and binds both declared inputs through the original
+harness before finalization. The runtime verifies path, SHA, byte count, task,
+workspace, timestamps, unique terminal identities and the assigned executor.
+Inventory provider/title hints are not native identity authority. v2 retains its
+five stages; v3 uses seven, consistently in execution and historical recovery.
+Keep report and completion receipt as future outputs. Do not repair an in-flight
+pack by adding files after dispatch. The measured workload and
 dedicated callback implementations do not directly read these two fields, so
 their absence alone does not establish the cause of a whole-round timeout.
 The executor report requires a role-map reference, and the independent sentinel
@@ -175,13 +178,25 @@ has its own role-map validation; those obligations still require real evidence.
 
 The original startup adoption was already verified, but neither pack provided
 its direct proof reference. Both executors performed extra startup/hook reads.
-Future packs should carry the verified adoption path, hash and bytes, with a
-clear instruction to read that proof and check the assigned native identity.
+New v3 packs carry the verified adoption path, hash and bytes, with a clear
+instruction to read that proof and check the assigned native identity. Runtime
+validation binds all three original sessions and the executor lane. Historical
+verification permits stopped sessions; live preparation and dispatch retain
+their independent current-state gates. Offline fixtures cannot claim live adoption.
 Preserve fresh input gates and evaluate subsequent contradictory observations;
 an old adoption PASS never overrides a current failure. A differently scoped
 `runtime-adoption-v1` unverified record does not by filename alone disprove the
 original live adoption. The observed extra work is not a measured causal share
 of total delay or proof of an end-to-end speedup from the proposed change.
+
+The repair passed 411 affected regression cases and local pressure with eight
+OS workers over ten rounds: 80 preparations, 2,080 complete prepared validations,
+480 rejected input mutations and 40 real flock conflicts. These are offline
+results, not live pilot, callback, paired efficiency or business acceptance.
+The first pressure runner overlapped intentional corruption with another lane's
+shared-state read and correctly hit the product hash gate; preserve that failure.
+The corrected runner separates both lanes' reads, mutations and restoration with
+barriers, without relaxing product checks. Record both runs separately.
 
 Keep the registered round deadline and an explicit delivery cutoff. When the
 agreed stopping condition is reached, publish failed and missing slots plus

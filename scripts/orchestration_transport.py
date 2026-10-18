@@ -308,7 +308,8 @@ class Transport:
                     all(config.get(k) == v for k, v in expected.items()) and
                     re.fullmatch(r"[0-9a-f]{24}", config["completion_nonce"]), "original transport nonce/config changed")
             preflight = self.root / "preflight"
-            for phase in ("preflight", "task-pack"):
+            from orchestration_preparation import preparation_stages
+            for phase in preparation_stages(self.campaign)[:-3]:
                 argv = self._harness_argv(phase, info["task_id"], preflight)
                 result = journal.once(phase, {"argv": argv}, lambda op, argv=argv: self.runtime.harness(argv, op))
                 require(result.get("returncode") == 0, f"original {phase} failed; inspect its saved output, do not repeat it")
@@ -321,7 +322,7 @@ class Transport:
                 write_bytes_once(self.root / "original-scaffold.json", read_ref(file_ref(path)))
                 handshake = read_json(preflight / "handshake-receipt.json")
                 pack = fill_scaffold(self.campaign, self.co.header, self.node, info, pack, handshake,
-                                     config["completion_nonce"])
+                                     config["completion_nonce"], fixtures=self.co.fixtures)
                 return write_json(path, pack)
 
             journal.once("fill-pack", {"transport": file_ref(config_path)}, fill)

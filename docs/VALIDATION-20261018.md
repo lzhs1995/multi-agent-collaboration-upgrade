@@ -1,9 +1,43 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论（2026-10-18T13:04:15Z）：**r19 已 HALTED/TIMEOUT，原 driver exit2：1轮超时＋32轮未执行，完整通过0/33、pilot0/3、pairs0/15。双Claude均产出业务文件，但未在1800秒内完成回调及独立验收闭环。真实协作提效未证明；按交付边界结束本轮，不自动启动r20或下一版本。**
+当前结论（2026-10-18T13:24Z）：**任务包准备修复已通过411项受影响回归及本机并发压力。真实r19仍为HALTED/TIMEOUT，原driver exit2：1轮超时＋32轮未执行，完整通过0/33、pilot0/3、pairs0/15。双Claude均产出业务文件，但未在1800秒内完成回调及独立验收闭环。真实协作提效未证明；本轮验证结束，不自动启动r20或下一版本。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## 任务包准备修复与本机压力交付（2026-10-18T13:24Z）
+
+v3准备链新增原harness的map及surface-inventory，七阶段为
+preflight → map → surface-inventory → task-pack → fill-pack → finalize-pack → task-notice。
+finalize前及verify_prepared均验证两个声明输入的路径、SHA、字节数、任务、
+workspace、时间和唯一指定原生身份；绑定原三客户端adoption及执行lane，
+包内写明读取职责。inventory标题不作为provider身份依据。v2原五阶段不变；
+历史验证允许已停止会话，实时准备和派发门禁不变。原冻结r19未热改。
+
+唯一受影响回归进程自然exit0：**411/411，零失败、错误、跳过**，
+263.095秒；253个受检文件前后SHA一致，未修改子测试超时。
+覆盖全部test_orchestration*.py及test_upgrade_live*.py，包括新输入负例、
+原adoption validator合成集成、实际依赖闭包及v2兼容验证。
+日志SHA256：`8ff121cd441f91452adcdcc1456bc40e4fac4ad09eee7a8fc9e570770dce9dc3`。
+
+本机压力使用8个OS worker、每轮4个双lane共享协调器，共10轮：
+**80/80准备通过、2,080次完整准备校验、480/480错误输入被拒绝、40次实际flock争用**，
+耗时8.076秒。80个worker PID唯一且全部退出，224个Python源码前后一致。
+负例含文件缺失、SHA不符、错lane、错task、重复surface及非terminal。
+结果SHA256：`ffd6d645c0cddb865ce6a54b8e2e415af369f83ab17ba3bba8dffbf3bcca2d7f`。
+
+首个压力脚本在第7轮因跨lane故意篡改与共享state读取重叠而exit1，
+产品正确拒绝hash变化；原失败与52条已记录结果保留，不计PASS。
+第二次仅修正外部脚本barrier同步，未放宽或修改产品门禁，使用新offline fixtures。
+两次压力及回归均无真实模型请求或输入操作；不重放r19，不重复旧完整测试。
+本节、SKILL及lessons在上述测试结束后更新，不追称其文档SHA被该批测试覆盖。
+
+证据根E=`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`：
+`validation/r19-pack-repair-regression-01/`、`validation/r19-pack-input-pressure-01/`、
+`validation/r19-pack-input-pressure-02/`；脚本位于`preparation/validate-r19-pack-repair.py`、
+`preparation/pressure-r19-pack-inputs.py`及`preparation/pressure-r19-pack-inputs-v2.py`。
+独立只读代码审计未发现阻断；不是双Claude审查。**回调及独立验收超时的完整
+根因未解决；真实3轮pilot和15对实验仍未通过，提效未证明，不能据本机结果生产采用。**
 
 ## r19 现场任务包诊断与有界交付
 
@@ -39,7 +73,7 @@ delivery lock”拒绝；13:04仍在处理原回调。后续历史核收或晚�
 两Claude额外查找startup/hook证据。12:57开始查阅业务实现与核对任务输入。
 
 SKILL及lessons已吸收声明输入完整性、启动证明可见性和固定交付边界要求；
-**产品准备流程修复尚未实施，原r19包与控制器未热改**。具体审计位于E下
+**产品准备流程候选已实现并完成上节本机验证；原r19包与控制器未热改**。具体审计位于E下
 `maintenance/r19-task-pack-path-audit.md`，SHA256
 `eae2a90e2c365f68fe6e90583c6f2f7bec1e89e7be42b7ff8386c7f3d78b3d38`。
 
@@ -50,8 +84,8 @@ SKILL及lessons已吸收声明输入完整性、启动证明可见性和固定�
 `maintenance/r19-overhead-candidate/REVIEW.md`。
 
 指定经验会话原请求保留；12:58:54原增量观察85读至当时EOF，无匹配回件。
-PR39实测案例已吸收，但双向咨询未完成。当前文档改动未重新运行已完成
-的回归/组件压力，也不追称已被冻结v17或先前测试覆盖。
+PR39实测案例已吸收，但双向咨询未完成。本节原现场诊断不追称被已冻结v17
+或先前测试覆盖；后续修复验证单独记录在上节。
 
 ## r18 探针失败与 r19 诊断增强（2026-10-18T12:29Z）
 

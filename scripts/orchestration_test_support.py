@@ -311,6 +311,24 @@ class CampaignFixture:
                                               native_session_id=client.session["session_id"])
                                          for key, client in self.clients.items() if key in ("codex", lane)])
 
+    def role_map(self, task_id, lane):
+        return dict(task_id=task_id, workspace_ref="workspace:1", updated_at=utc_now(),
+                    supervisor=dict(surface_ref=self.surface_refs["codex"], provider="codex", display="SUPERVISOR"),
+                    executor=dict(surface_ref=self.clients[lane].session["surface_uuid"], provider="claude", display="EXECUTOR_1"))
+
+    def surface_inventory(self, task_id):
+        rows = []
+        for lane, client in self.clients.items():
+            row = dict(ref=self.surface_refs[lane], surface_id=client.session["surface_uuid"].upper(),
+                       workspace_id=client.session["workspace_uuid"].upper(), workspace_ref="workspace:1",
+                       pane_ref=self.pane_refs[lane], title=lane, selected=lane == "codex",
+                       surface_type="terminal", is_terminal=True, provider=client.session["provider"])
+            if lane == "codex":
+                row["role"] = "supervisor_candidate"
+            rows.append(row)
+        return dict(task_id=task_id, workspace_ref="workspace:1", updated_at=utc_now(),
+                    surfaces_same_workspace=rows, cross_workspace_rejected=[])
+
     def prepare(self, co, key):
         _, data = co.state()
         info, node = data[key], co.nodes[key]
@@ -344,6 +362,13 @@ class CampaignFixture:
             completion_receipt=str(preflight / "completion-callback-receipt.json"), completion_nonce=completion,
             completion_callback=f"DONE|{info['task_id']}|{completion}|REPORT={report}",
             callback=ack, identity_gate=gate["path"], validation_evidence=validation["path"], finalized_at=utc_now())
+        if campaign_version(self.campaign) == 3:
+            from orchestration_pack_inputs import pin_inputs
+            pack.update(role_map=str(preflight / "role-map.json"), pane_inventory=str(preflight / "surface-inventory.json"))
+            write_json(pack["role_map"], self.role_map(info["task_id"], node["executor"]))
+            write_json(pack["pane_inventory"], self.surface_inventory(info["task_id"]))
+            pack["preparation_inputs"] = pin_inputs(self.campaign, co.header, node, pack)
+            pack["finalized_at"] = utc_now()
         pack_ref = write_json(preflight / "task-pack.json", pack)
         (directory / "task-notice.txt").write_text(task_notice(pack_ref, pack))
         proof = dict(pack=pack_ref, notice=file_ref(directory / "task-notice.txt"),
