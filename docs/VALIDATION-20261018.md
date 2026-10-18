@@ -1,11 +1,44 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**协调锁与构造复用组合覆盖1,886案例、未解决失败0；原full保留1项测试注入失败，修正后observe模块17/17通过；既有进程压力2,500/2,500、三客户端TTY压力1,000/1,000通过；真实协作提效仍未证明。**
+当前结论：**r18 在双 Claude 非提交探针清理失败，业务0/33。诊断增强50/50受影响验证通过；r19已独立启动，尚无业务通过。既有组件压力与1,886案例组合覆盖保留，真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
-## 协调锁与构造复用组合覆盖验收（2026-10-18T11:49:11.917804+00:00）
+## r18 探针失败与 r19 诊断增强（2026-10-18T12:29Z）
+
+r18 三客户端于12:09:14Z ADOPTED，pilot-01于12:11:40Z启动；两个lane均在
+preflight返回BRIDGE_TEST_UNCONFIRMED，正式Claude业务任务未发送。原driver
+exit2，12:15:45Z发布最终报告：pilot0/3、pairs0/15、业务0/33；旧会话及
+未提交探针保留。原报告 `/Users/lzhs/ui/driver/final-report.json` SHA256：
+`37649afa106c2678b15d82f5a771336fd4a95adbb12fa5028c7755d2730d08b9`。
+
+两lane原清理各三次观察均为owned_token_prefix=false、clear_key_count=0；
+旧记录只存屏幕SHA，无法还原body/busy。后续100/200行只读屏幕相同，真实
+私有parser得到完整token、busy=false、owned=true，且SHA不同于失败瞬间。
+NBSP正常剥除；**原失败根因未知**，后续成功解析不能覆盖原失败。
+
+新增实际materializer的探针诊断：保存pre/final原屏幕及各清理观察的
+screen/body/prefix_matches/active_or_queued。原owned表达式、按键预算与
+interrupted-Bash检查不变。新测试与受影响chrome、postcondition、clear
+recovery及实际materialization共**50/50通过**，6.582秒，零failure/error/skip；
+251个源码文件前后SHA一致，live_model_requests=0。原日志SHA256：
+`2abb752d05432ffeece44e47bc53026b441c4468020252f030fbd93c399d2318`。
+这是诊断增强的定向验证，不是新的完整压力通过成绩。
+
+r19冻结v17（相对v16仅两个源码/测试文件变化），新根`/Users/lzhs/uj`；七组
+实际controller与14条socket/lock路径完整核验，沿已有全面授权于12:29:16Z
+启动唯一driver。仍为同三会话pilot连续3轮后12warm＋3cold配对，33轮15对；
+启动900秒、单轮1800秒。启动记录不是业务验收，不重放r18。
+
+证据（基于下文E根）：`maintenance/r18-bridge-probe-diagnostic/`、
+`validation/r19-probe-evidence-focused-01/`、
+`source-exports/resume-20261018-live-v17/export.json`、
+`execution/r19-original-driver/`、`maintenance/r19-progress/`。
+新故障已反馈指定维护inbox，尚未收到真实回件；不声称双向沟通完成。
+本文与SKILL诊断规则在验证和冻结后更新，不声称文档参加了先前测试。
+
+## 协调锁与构造复用组合覆盖验收（2026-10-18T11:49:11.917804+00:00，历史）
 
 原 `coordinator-reuse-full-01` 自然结束，**exit1：1,886项中1项失败**，
 零错误、跳过，1068.805秒；250个监测文件

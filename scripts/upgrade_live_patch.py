@@ -199,6 +199,58 @@ def claude_measured_chrome(text):
     return edit_nodes(text, edits)
 
 
+def bridge_probe_evidence(text):
+    """Retain exact probe observations without changing ownership or input gates.
+
+    The screen-only busy field is diagnostic. The original input_busy call may
+    additionally enforce an authenticated interrupted-Bash boundary; neither
+    its evaluation nor the key budget is replaced by this observation.
+    """
+    from orchestration_common import ContractError
+    nodes = [n for n in ast.parse(text).body
+             if isinstance(n, ast.FunctionDef) and n.name == "_bridge_test_one_locked"]
+    if len(nodes) != 1:
+        raise ContractError("private bridge probe function shape changed")
+    node = nodes[0]
+    original = ast.get_source_segment(text, node)
+    if "pre_read_observation" in original:
+        raise ContractError("private bridge probe evidence already patched")
+    owned = (
+        '        owned = (\n'
+        '            bool(body) and token.startswith(body)\n'
+        '            and not input_busy(post_clear_screen)\n'
+        '        )\n')
+    if original.count(owned) != 1:
+        raise ContractError("private bridge probe ownership shape changed")
+    changed = replace_once(original,
+        '    pre_screen = cmux.read_screen(executor_ref, lines=args.lines)\n'
+        '    forced_compose = bool(getattr(args, "force_compose", False))',
+        '    pre_screen = cmux.read_screen(executor_ref, lines=args.lines)\n'
+        '    def screen_observation(value):\n'
+        '        return {"screen": value,\n'
+        '                "screen_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest()}\n'
+        '    pre_read_observation = screen_observation(pre_screen)\n'
+        '    forced_compose = bool(getattr(args, "force_compose", False))')
+    # These are the two pre-paste refusal returns and the final probe result.
+    # Match whole physical lines so one indentation cannot match another.
+    for indent, final in ((12, "pre_screen"), (24, "pre_screen"), (8, "post_clear_screen")):
+        pad = " " * indent
+        marker = '\n' + pad + '"pre_read_performed": True,\n'
+        changed = replace_once(changed, marker, marker +
+            pad + '"pre_read_observation": pre_read_observation,\n' +
+            pad + '"final_observation": screen_observation(' + final + '),\n')
+    changed = replace_once(changed,
+        '        clear_observations.append({\n'
+        '            "attempt": attempt,\n',
+        '        clear_observations.append({\n'
+        '            "attempt": attempt,\n'
+        '            "screen": post_clear_screen,\n'
+        '            "body": body,\n'
+        '            "prefix_matches": bool(body) and token.startswith(body),\n'
+        '            "active_or_queued": cmux._queued_or_active_input(post_clear_screen),\n')
+    return edit_nodes(text, [(node, changed)])
+
+
 def live_gates(name, text):
     if name == "cmux_bridge.py":
         text = claude_measured_chrome(text)
@@ -208,6 +260,8 @@ def live_gates(name, text):
         node = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_run_successor")
         text = edit_nodes(text, [(node, 'def _run_successor(*args, artifact, check=True, capture=True):\n'
             '    raise WorkspaceScopeError("EXPERIMENT_SUCCESSOR_ROUTE_REFUSED: dedicated workspace only")')])
+    elif name == "mac_harness.py":
+        text = bridge_probe_evidence(text)
     elif name == "cmux_codex_input.py":
         text = replace_once(text, "from cmux_codex_rpc import DaemonRPC", "from cmux_codex_rpc import DaemonRPC\n"
                             "from upgrade_input_gate import check_input")
@@ -253,6 +307,7 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("original_input_adoption_gate_or_automatic_hook_observer")
     if name == "mac_harness.py":
         changes.append("structured_experiment_startup_double_gate")
+        changes.append("exact_bridge_probe_screen_evidence")
     if name == "cmux_bridge.py":
         changes.append("measured_claude_default_footer_and_tip")
     compile(text, name, "exec", dont_inherit=True)

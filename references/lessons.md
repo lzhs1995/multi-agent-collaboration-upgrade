@@ -134,6 +134,16 @@ controlling-PTY fixtures: a clean synthetic shell tree does not cover a real
 root login ancestor. Keep the original failed startup and its denominator;
 passing earlier tests cannot certify changed discovery code or live efficiency.
 
+The r18 probe failure preserved only screen hashes: two Claude lanes refused
+cleanup three times with no key input, yet later exact private-parser reads
+recognized both owned tokens. Different screen hashes cannot recover the earlier
+state, and correctly stripped NBSP does not establish a whitespace defect.
+Retain each exact raw screen and parsed body, prefix and busy subresults at the
+original observation. Diagnostic fields must not replace the original ownership,
+interrupted-Bash or key-budget checks. Test the actual materialized function with
+foreign drafts, active/queued input and transient screen sequences; keep failed
+probes untouched. Diagnostic coverage is not a successful live round.
+
 Real macOS devfs timestamps are activity counters, not stable TTY identity.
 Owned-PTY output changed mtime/ctime in 20/20 observations; separate grouped
 experiments distinguished slave output, slave input reads, master I/O, lstat

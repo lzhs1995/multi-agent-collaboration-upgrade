@@ -109,6 +109,12 @@ error is not a transient provider failure; record the last published artifact an
 diagnose it before a new experiment. A passing read-only reproduction does not
 retroactively repair the original attempt or authorize its replay.
 
+Private bridge probes retain the exact pre-read/final screens and each cleanup
+screen, parsed body, prefix match and screen-only busy classification. Keep the
+original ownership check, interrupted-Bash boundary and key budget unchanged.
+A later screen that parses successfully cannot explain an earlier hash-only
+refusal; preserve the failed probe and distinguish diagnosis from a root-cause fix.
+
 Native readiness is only a startup result. A later original Codex
 `event_msg/task_complete` with an error or native `event_msg/turn_aborted`
 must halt the experiment with its pinned native record, preserving sessions,
