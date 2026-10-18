@@ -1,7 +1,7 @@
-"""Observe terminal Codex errors in the original journal; never retry input.
+"""Observe terminal Codex errors/aborts in the original journal; never retry input.
 
-Only a native task_complete event after the campaign freeze is a terminal
-failure. Screen text, tool errors, old failures and quoted examples are not.
+Only native task_complete errors or turn_aborted events after the campaign
+freeze are terminal failures. Screen text, tool errors and quoted examples are not.
 The in-memory cursor bounds repeated reading; a restart safely rereads evidence.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ class CodexFailureWatch:
                 "original native failure evidence changed")
         self.reader.verify_pin(saved["observed_eof"])
         require(saved["observed_eof"]["offset"] >= self.offset,
-                "saved native EOF precedes terminal error")
+                "saved native EOF precedes terminal event")
 
     def observe(self, max_records=256):
         require(type(max_records) is int and 0 < max_records <= 256,
@@ -51,18 +51,27 @@ class CodexFailureWatch:
             # A provider's explanatory text is never parsed as another record.
             payload = record.get("payload")
             if record.get("type") == "event_msg" and isinstance(payload, dict):
+                terminal = None
                 error = payload.get("error")
                 message = error.get("message") if isinstance(error, dict) else error
                 if (payload.get("type") == "task_complete"
                         and isinstance(message, str) and message.strip()):
+                    terminal = dict(status="NATIVE_CODEX_TURN_FAILED", message=message[:2000],
+                        codex_error_info=(error.get("codex_error_info") if isinstance(error, dict) else None))
+                elif payload.get("type") == "turn_aborted":
+                    reason = payload.get("reason")
+                    require(isinstance(reason, str) and reason in (
+                        "interrupted", "replaced", "review_ended", "budget_limited"),
+                        "terminal abort lacks a canonical native reason")
+                    terminal = dict(status="NATIVE_CODEX_TURN_ABORTED", reason=reason)
+                if terminal is not None:
                     turn = payload.get("turn_id")
                     require(isinstance(turn, str) and str(uuid.UUID(turn)) == turn,
-                            "terminal error lacks a canonical turn id")
+                            "terminal event lacks a canonical turn id")
                     parse_time(record.get("timestamp"))
-                    self.failure = dict(status="NATIVE_CODEX_TURN_FAILED", record=ref,
+                    self.failure = dict(**terminal, record=ref,
                         session_id=self.reader.session["session_id"], turn_id=turn,
-                        occurred_at=record["timestamp"], message=message[:2000],
-                        codex_error_info=(error.get("codex_error_info") if isinstance(error, dict) else None),
+                        occurred_at=record["timestamp"],
                         freeze_fence=self.fence, observed_eof=end, input_operations=0)
             self.offset = ref["offset"] + ref["length"]
             self.previous = ref

@@ -218,6 +218,85 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(report["runs"][0]["status"], "FAILED")
         self.assertEqual(self.actions, [(a, "pilot-B") for a in ("launch", "adopt", "freeze", "bootstrap")])
 
+    def test_native_abort_halts_with_reason_and_preserves_registered_denominator(self):
+        self.started()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_ABORTED",
+            reason="interrupted", turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        result = self.driver.tick()
+        self.assertEqual(result["classification"], "FAILED")
+        halt = json_ref(result["halt"])
+        self.assertEqual(halt["reason"], "Original Codex turn aborted (interrupted); no replay: "
+                         "01a14b64-92de-7931-a649-61ef10b038ac")
+        evidence = json_ref(halt["evidence"][0])
+        self.assertEqual(evidence["reason"], "interrupted")
+        self.assertEqual(evidence["status"], "NATIVE_CODEX_TURN_ABORTED")
+        report = json_ref(self.driver.tick()["report"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual(report["runs"][0]["status"], "FAILED")
+        self.assertEqual(self.actions, [(a, "pilot-B") for a in ("launch", "adopt", "freeze", "bootstrap")])
+
+    def test_abort_preserves_finished_measurement_and_prevents_next_permit(self):
+        self.started()
+        self.finish(1)
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_ABORTED",
+            reason="interrupted", turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        self.assertEqual(self.driver.tick()["classification"], "FAILED")
+        report = json_ref(self.driver.tick()["report"])
+        self.assertEqual(report["runs"][0]["status"], "PASS")
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        state = driver.schedule.status(self.case.ref)
+        self.assertEqual((state["permits"], state["closures"]), (1, 0))
+
+    def test_crash_after_abort_evidence_reuses_exact_first_file(self):
+        self.started()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_ABORTED",
+            reason="interrupted", turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        with patch.object(self.driver, "halt", side_effect=SystemExit("crash after abort evidence")):
+            with self.assertRaises(SystemExit):
+                self.driver.tick()
+        evidence = next((self.driver.root / "faults").glob("native-*.json"))
+        original = file_ref(evidence)
+        result = driver.Driver(self.ref).tick()
+        self.assertEqual(result["classification"], "FAILED")
+        self.assertEqual(file_ref(evidence), original)
+        self.watch.verify_saved.assert_called_once_with(self.watch.observe.return_value)
+        self.assertEqual(json_ref(result["halt"])["evidence"], [original])
+
+    def test_real_native_abort_after_budget_stops_driver_despite_tool_completion(self):
+        from test_orchestration_native import NativeFixture, STAMP
+        from upgrade_failure_watch import CodexFailureWatch
+        native = NativeFixture(self.root, "codex")
+        native.session["freeze_fence"] = native.reader.snapshot()
+        ref = self.case.campaigns["pilot-B"]
+        campaign = json_ref(ref)
+        campaign["sessions"]["codex"] = native.session
+        self.case.campaigns["pilot-B"] = write_json(ref["path"], campaign)
+        self.started()
+        self.finish(1)
+        for _ in range(256):
+            native.append(native.message("assistant", "offline preceding observation"))
+        abort = native.append(dict(type="event_msg", timestamp=STAMP, payload=dict(
+            type="turn_aborted", turn_id="01a14b64-92de-7931-a649-61ef10b038ac", reason="interrupted")))
+        native.append(dict(type="event_msg", timestamp=STAMP, payload=dict(
+            type="item_completed", item=dict(type="CommandExecution", status="completed",
+                                              exit_code=0, stdout="BOOTSTRAP_READY"))))
+        with patch.object(driver, "CodexFailureWatch", side_effect=lambda session:
+                          CodexFailureWatch(session, fixtures=True)):
+            self.assertEqual(self.driver.tick()["status"], "WAITING_NATIVE_OBSERVATION")
+            result = self.driver.tick()
+        self.assertEqual(result["status"], "HALTED")
+        self.assertEqual(result["classification"], "FAILED")
+        saved = json_ref(json_ref(result["halt"])["evidence"][0])
+        self.assertEqual(saved["record"], abort)
+        self.assertEqual(saved["reason"], "interrupted")
+        self.assertEqual(saved["input_operations"], 0)
+        report = json_ref(self.driver.tick()["report"])
+        self.assertEqual(report["runs"][0]["status"], "PASS")
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        state = driver.schedule.status(self.case.ref)
+        self.assertEqual((state["permits"], state["closures"]), (1, 0))
+        self.assertEqual(self.actions, [(a, "pilot-B") for a in ("launch", "adopt", "freeze", "bootstrap")])
+
     def test_unread_native_records_hold_finished_run_before_next_permit(self):
         self.started()
         self.finish(1)

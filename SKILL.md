@@ -92,9 +92,13 @@ diagnose it before a new experiment. A passing read-only reproduction does not
 retroactively repair the original attempt or authorize its replay.
 
 Native readiness is only a startup result. A later original Codex
-`event_msg/task_complete` with an error must halt the experiment with its pinned
-native record, preserving sessions, completed measurements and every registered
-slot. The driver observes at most 256 records per tick; unread or partial records
+`event_msg/task_complete` with an error or native `event_msg/turn_aborted`
+must halt the experiment with its pinned native record, preserving sessions,
+completed measurements and every registered slot. An interrupted turn may leave
+a successful background command completion without any supervisor continuation.
+That tool completion neither cancels the interruption nor proves business start.
+Record the native reason without attributing its source to the user or provider.
+The driver observes at most 256 records per tick; unread or partial records
 hold advancement without extending the registered watchdog. A crash reuses the
 first failure evidence, never retries input. See [native failure closeout](
 docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).

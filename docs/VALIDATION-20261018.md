@@ -1,9 +1,90 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**r16 修复完整回归 1,848/1,848、新进程压力 2,500/2,500、现存三客户端 TTY 压力 1,000/1,000 全部通过；真实协作提效仍未证明。**
+当前结论：**中断检测修复完整回归 1,861/1,861 通过；既有进程压力 2,500/2,500、现存三客户端 TTY 压力 1,000/1,000 通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## r17 协调锁冲突终态（2026-10-18T11:06:41Z）
+
+真实 1 Codex＋2 Claude 于10:36:44Z全部 ADOPTED，原生身份、私有隔离及
+自动 hooks 已核验；pilot-01 于10:41:33.825Z正式开始。inventory 和
+source_index 两个独立节点均完成准备，source_index 已正式派发并有 Claude B
+原生 Bash 执行记录，尚无业务验收或 callback 闭环通过。
+
+inventory 的原 dispatch 在10:54:14.780Z exit2：`coordinator is already
+active; observe the original run`，errno35。旧实现先写 dispatch-intent，
+再争用 coordinator.lock；本次锁失败后没有 submit-task-pack intent/result。
+原 reconcile 同样拒绝，因为不存在已经开始的原始 submit。原 Codex 保留
+意图和 lease，11:05:52Z记录 BLOCKED；driver 11:05:53Z HALTED/FAILED，
+11:06:41Z发布报告并 exit2。实际锁持有者身份 UNKNOWN，不能根据时序推断。
+
+完整注册分母保留：**1 FAILED＋32 MISSING，pilot0/3、pairs0/15、通过0/33**。
+没有已完成测量；配对改善、成本及完整协作验收仍 UNKNOWN/未通过。
+全部原会话、输入和证据保留；没有热改 v15、重派、删除意图或延长1800秒。
+原在途 source_index 的收尾仍由原主管负责，driver终止不等于三会话已关闭。
+终态摘要：`maintenance/r17-terminal-readout/result.json`；原报告 SHA256
+`71fadcc2bc72b5809d129e0ed6200f18098294252f6e01e0718143ff45abd1a4`。
+
+下一修复在独立候选中处理协调锁争用与 dispatch-intent 写入顺序。
+未改 v15 的真实多进程强制争用已复现两项失败：独立 claim 被拒绝，以及
+prepare 持锁时另一路 dispatch 被拒绝且留下意图；均无 submit 调用。
+该修复尚未应用、尚未通过压力或完整回归，不能计为本次已交付代码。
+另一个构造复用候选已通过102项既有定向与8项新测试、两个删除校验负例；
+它尚未应用，不修复锁冲突，也没有实测协作提速百分比。
+
+指定经验会话原观察68（11:08:23Z）仍无请求消费或三个回件，零输入。
+PR39的 Tip/spinner 案例已吸收，双向经验交流仍未完成。
+
+## 原生中断检测修复完整验收（2026-10-18T11:13:53.480109+00:00）
+
+唯一 `native-abort-full-01` 原进程已结束，exit 0：
+**1,861/1,861，零失败、错误、跳过**，耗时
+2149.154 秒；247 个监测文件测试前后 SHA 一致。
+未重复启动全测、未修改子测试超时；live_model_requests=0。
+完整日志 SHA256：`cd3892341ff395a06ff9276f937fa95370bf589e0e857b4621e7f9afaae45cdd`。
+本节是在完整回归结束后更新的结果文档，不追称其文字已被该轮测试覆盖。
+
+watcher 现在识别原 campaign freeze 之后的真正 `event_msg/turn_aborted`，
+保留 `interrupted/replaced/review_ended/budget_limited` 原因及首条原生记录。
+原生错误或中断不会被后续后台工具 exit0 覆盖；未知/缺失 reason、身份、时间、
+fence 或原件变化继续拒绝。driver 记录原终态并阻止后续 permit，保留所有
+33轮和15对，已有真实完成测量不被丢弃，不发送恢复输入或自动替换会话。
+中断来源仍 UNKNOWN；检测到 interrupted 不等于证明由用户或 provider 触发。
+
+定向 **38/38 PASS**。删除中断检测后，真实 `Driver.tick + NativeReader`
+入口负例按预期失败；删除 reason 校验后的负例也失败；等价 reason 顺序变异
+38/38 通过。对 r16 原件用 fixtures=False 只读复核确实识别原中断，
+campaign/halt/report/transcript 前后不变，原 TIMEOUT 不追改。
+证据：`validation/r17-abort-focused-01/`。
+
+r17 原次使用已验证 v15，已按上述失败终态停机；本次修复未热加载到原实验或共享 MAC。
+独立吞吐审计及候选副本仅属后续优化，未纳入本次源码或上述通过数，
+未测得的优化不能计入真实协作提效。进程/TTY/组件压力仍以各自原始
+未变更源码的已通过证据为准，不能替代同三会话3轮pilot及15对配对结果。
+
+## r16 原生中断与 r17 接续（历史记录，2026-10-18T10:33Z）
+
+r16 三客户端已于09:26:07Z全部 ADOPTED，但原 Codex 在09:28:13.207Z
+记录 `event_msg/turn_aborted`、`reason=interrupted`。runtime SQLite 同时记录
+`Submission op: Interrupt`；中断来源 UNKNOWN，不归因用户或 provider/key。
+bootstrap 在09:28:13.648Z发布，原等待命令09:28:13.765Z成功完成；后台工具
+完成不等于主管收取结果或继续业务。原 run header 不存在，业务没有启动。
+
+冻结 v15 watcher 只识别原生 task_complete/error，漏报此中断，导致原 driver
+等待至09:50:20.684Z才 HALTED/TIMEOUT，随后 exit2。保留原终态、全部旧会话
+和33个注册轮次：pilot0/3、pairs0/15、closures0/33；不追认其他分类或通过。
+诊断原件位于 `maintenance/r16-stall-diagnostic/`，原执行记录
+`execution/r16-original-driver/`。watcher/driver 的原生中断检测已在上述独立完整回归中验证，
+不能用此前1,848项全测覆盖新增代码。
+
+r17 在 `/Users/lzhs/uh` 复用未修改且已全测的冻结 v15 与私有 provider 快照。
+7组控制器核验通过，沿已有原生全面授权配置完成并启动唯一 driver；
+当时尚待 adoption 和业务证据；后续三客户端已 ADOPTED，pilot-01因上述
+协调锁冲突失败，未进入配对。新进度观察器额外记录 turn_aborted，未热改
+v15 driver；900/1800秒上限及14条精确 socket/lock 范围保持。
+经验询问 observation62（10:32:29Z）已追平原日志，仍无请求消费或三个回件。
+双向经验交流与真实协作提效均未完成。
 
 ## r16 设备身份修复完整验收（2026-10-18T09:10:46.721169+00:00）
 
@@ -43,7 +124,7 @@ kernel UID 范围排除。Codex 扫描中实测 52 次 mtime/ctime 变化而身�
 新两组压力与最终全测均绑定本次相同源码；历史 7,200 组件压力及完整 hash
 函数速度只在对应源码 pins 未变时复用，不充当真实协作效率证明。
 
-沿已有全面授权，下一步冻结 v15、核验七组实际 controller，启动唯一 r16：
+该阶段随后已冻结 v15、核验七组实际 controller，并启动唯一 r16（终态见上）：
 同三会话 pilot 连续 3/3，再执行 12 warm＋3 cold pairs，共 7 组／33 轮／15 对。
 900/1800 秒 watchdog 和每次原生接收、产物、callback、验收、释放、续派
 门槛保持；warm 中位改善需≥15%，各 workload 中位退化≤5%，缺 usage 为 UNKNOWN。
@@ -507,10 +588,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r15 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY 发现遗漏
-   本 UID 范围，真实 root login 父进程的 EPERM 暴露了回归；r16 先完成
-   TTY∩UID 与 devfs 设备身份修复、现存三 TTY 只读压力、2,500 场景及新完整回归，再冻结
-   独立 v15/r16 并沿现有全面授权执行，不重放旧次启动或派发。
+1. r17 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY∩UID 与
+   devfs 设备身份修复、现存三 TTY 只读压力、2,500 场景已经通过；原生中断
+   监控修复另行通过1,861项完整回归。下一步验证并整合协调锁及构造开销候选，
+   不重放旧次启动或派发，不把已通过结果归于后续未测试的新代码。
    r13 原 candidate EBADF 仍未归因，诊断改进不等于已修复原根因。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
@@ -547,8 +628,8 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/uf/driver/final-report.json`；原 halt：
-`/Users/lzhs/uf/schedule/halt.json`。r15已HALTED/FAILED，没有真实提效通过结论。
+最近已结束实验的最终报告：`/Users/lzhs/uh/driver/final-report.json`；原 halt：
+`/Users/lzhs/uh/schedule/halt.json`。r17已HALTED/FAILED，没有真实提效通过结论。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；

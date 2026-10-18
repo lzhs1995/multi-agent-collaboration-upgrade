@@ -180,7 +180,10 @@ class Driver:
         else:
             ref = write_json(path, dict(campaign=campaign_ref, config=self.ref,
                 observed_at=utc_now(), **failure), exclusive=True)
-        return self.halt("Original Codex turn terminated with a native error; no replay: "
+        cause = ("aborted (" + failure["reason"] + ")"
+                 if failure["status"] == "NATIVE_CODEX_TURN_ABORTED"
+                 else "terminated with a native error")
+        return self.halt("Original Codex turn " + cause + "; no replay: "
                          + failure["turn_id"], "FAILED", [ref])
 
     def _tick(self):

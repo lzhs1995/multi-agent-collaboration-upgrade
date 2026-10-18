@@ -359,6 +359,32 @@ Then run the complete unchanged-source suite. Keep live original-log readback,
 offline regressions and component contention results distinct. Passing all
 three does not replace the still-unfinished live pilot and paired experiment.
 
+## r16 native interruption before bootstrap consumption
+
+r16 adopted its three original clients at 2026-10-18T09:26:07Z. Its original
+Codex journal then recorded `event_msg/turn_aborted`, reason `interrupted`, at
+09:28:13.207Z. The private runtime log independently recorded an `Interrupt`
+submission and abort of that same turn. The interruption source is unknown.
+The original bootstrap command completed successfully at 09:28:13.765Z, after
+the turn had stopped. This proves neither provider failure nor business start.
+
+The frozen v15 watcher recognized only `task_complete` errors and therefore
+missed the native interruption. The original driver reached its unchanged
+1800-second cap and reported HALTED/TIMEOUT at 09:50:20Z: pilot 0/3, pairs 0/15,
+closures 0/33. Preserve this report; later diagnosis does not rewrite its
+classification. A later external continuation turn does not reopen the halted
+campaign or authorize replay of its original business input.
+
+The watcher must recognize an authenticated post-freeze native interruption,
+retain its exact first record, and halt without new input. Quoted examples,
+pre-freeze events, command completion and unrelated message shapes do not
+qualify. Keep the same bounded cursor, native file identity and crash-recovery
+checks. The r17 experiment reuses the previously validated, unchanged v15
+export in new private directories; a separate read-only observer records
+interruption events while the product correction is validated. Never hot-load
+the correction into that frozen experiment or treat these diagnostics as
+completed pilot rounds.
+
 ## r10 UUID case and unstarted status
 
 r10 adopted the original Codex and both Claude clients, but its unique native
