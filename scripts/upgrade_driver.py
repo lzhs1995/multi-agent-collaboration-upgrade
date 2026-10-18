@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import time
+from datetime import timedelta
 from pathlib import Path
 
 from orchestration_campaign import anchored_ref, validate_campaign
@@ -27,9 +28,22 @@ from upgrade_supervisor_instructions import publish as publish_instructions
 
 REQUEST_FIELDS = {"schema", "registration", "runtimes", "source", "corpus", "revision", "native_authorizations"}
 TERMINAL = {"HALTED", "COMPLETE", "FAILURE_PRESERVED"}
+DEADLINE_FIELDS = {"timeout_seconds", "started_at", "started_monotonic_ns", "boot_id", "deadline_at"}
 
 
-def configure(request_ref):
+class OverallDeadline(ContractError):
+    """A terminal clock observation, never permission to restart an attempt."""
+
+    def __init__(self, classification, reason, observation):
+        super().__init__(reason)
+        self.classification = classification
+        self.observation = observation
+
+
+def configure(request_ref, *, overall_timeout_seconds=None):
+    require(overall_timeout_seconds is None or
+            (type(overall_timeout_seconds) is int and overall_timeout_seconds > 0),
+            "overall timeout must be a positive integer number of seconds")
     request = json_ref(request_ref, "fixed driver request")
     require(set(request) == REQUEST_FIELDS and request["schema"] == "upgrade-driver-request-v1",
             "complete fixed driver request required")
@@ -52,16 +66,36 @@ def configure(request_ref):
     require(schedule.status(request["registration"])["permits"] == 0, "configure before the first permit")
     root = Path(registration["root"]) / "driver"
     with exclusive_lock(root / "publisher.lock"):
-        return write_json(root / "config.json", dict(schema="upgrade-driver-config-v1", request=request_ref,
-            created_at=utc_now(), **{k: v for k, v in request.items() if k != "schema"}), exclusive=True)
+        created_at = utc_now()
+        value = dict(schema="upgrade-driver-config-v1", request=request_ref,
+            created_at=created_at, **{k: v for k, v in request.items() if k != "schema"})
+        if overall_timeout_seconds is not None:
+            value["schema"] = "upgrade-driver-config-v2"
+            value["overall_deadline"] = dict(timeout_seconds=overall_timeout_seconds,
+                started_at=created_at, started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
+                deadline_at=(parse_time(created_at) + timedelta(seconds=overall_timeout_seconds)).isoformat())
+        return write_json(root / "config.json", value, exclusive=True)
 
 
 class Driver:
     def __init__(self, ref):
         self.ref = ref
         self.config = json_ref(ref, "original driver configuration")
-        require(set(self.config) == (REQUEST_FIELDS - {"schema"}) | {"schema", "request", "created_at"}
-                and self.config["schema"] == "upgrade-driver-config-v1", "driver configuration changed")
+        fields = (REQUEST_FIELDS - {"schema"}) | {"schema", "request", "created_at"}
+        version = self.config.get("schema")
+        require(version in ("upgrade-driver-config-v1", "upgrade-driver-config-v2") and
+                set(self.config) == fields | ({"overall_deadline"} if version == "upgrade-driver-config-v2" else set()),
+                "driver configuration changed")
+        if version == "upgrade-driver-config-v2":
+            deadline = self.config["overall_deadline"]
+            require(isinstance(deadline, dict) and set(deadline) == DEADLINE_FIELDS,
+                    "complete immutable overall deadline required")
+            require(type(deadline["timeout_seconds"]) is int and deadline["timeout_seconds"] > 0
+                    and type(deadline["started_monotonic_ns"]) is int and deadline["started_monotonic_ns"] >= 0
+                    and isinstance(deadline["boot_id"], str) and deadline["boot_id"], "invalid overall deadline clock")
+            require(deadline["started_at"] == self.config["created_at"] and
+                    parse_time(deadline["deadline_at"]) - parse_time(deadline["started_at"]) ==
+                    timedelta(seconds=deadline["timeout_seconds"]), "overall deadline anchor changed")
         request = json_ref(self.config["request"])
         require(request == dict(schema="upgrade-driver-request-v1", **{
             k: self.config[k] for k in REQUEST_FIELDS - {"schema"}}), "driver request pins changed")
@@ -74,6 +108,9 @@ class Driver:
 
     def once(self, key, action, operation, recover=None):
         """An intent without a result never grants another side effect."""
+        # Source/identity validation between ticks may take time. Recheck just
+        # before each issue/launch/freeze/bootstrap/close action, not only at entry.
+        self._check_overall_deadline()
         directory = self.root / "actions" / key
         intent_path, result_path = directory / "intent.json", directory / "result.json"
         if os.path.lexists(intent_path):
@@ -105,8 +142,56 @@ class Driver:
     def complete_report(self, state):
         path = self.root / "final-report.json"
         if not path.exists():
-            write_json(path, schedule.report(self.registration_ref), exclusive=True)
+            try:
+                write_json(path, schedule.report(self.registration_ref), exclusive=True)
+            except FileExistsError:
+                # The independent deadline watchdog may publish first. Both
+                # observe the same halted original ledger; never replace it.
+                pass
         return dict(status=state["status"], schedule=state, report=file_ref(path), input_operations=0)
+
+    def _overall_timing(self):
+        deadline = self.config.get("overall_deadline")
+        if deadline is None:
+            return None
+        end = dict(at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id())
+        timing = elapsed(dict(started_at=deadline["started_at"], created_at=deadline["started_at"],
+            started_monotonic_ns=deadline["started_monotonic_ns"], boot_id=deadline["boot_id"],
+            launch_start=None), end=end)
+        wall_remaining = (parse_time(deadline["deadline_at"]) - parse_time(end["at"])).total_seconds()
+        same_boot = deadline["boot_id"] == end["boot_id"]
+        monotonic_remaining = (deadline["timeout_seconds"] -
+            (end["monotonic_ns"] - deadline["started_monotonic_ns"]) / 1e9) if same_boot else None
+        # Neither a wall-clock rollback nor a process restart extends the cap.
+        remaining = min(wall_remaining, monotonic_remaining) if same_boot else wall_remaining
+        return dict(observed=end, timing=timing, remaining_seconds=max(0, remaining), expired=remaining <= 0)
+
+    def _check_overall_deadline(self):
+        observation = self._overall_timing()
+        if observation is None:
+            return
+        if observation["expired"]:
+            raise OverallDeadline("TIMEOUT", "Immutable overall campaign deadline reached; preserve all original attempts",
+                                  observation)
+        if observation["timing"]["seconds"] is None:
+            raise OverallDeadline("UNKNOWN", "Immutable overall campaign clock is unknown; no deadline reset or new work",
+                                  observation)
+
+    def poll_delay(self, requested):
+        """Wake by the original deadline; never start a fresh polling budget."""
+        observation = self._overall_timing()
+        return requested if observation is None else min(requested, observation["remaining_seconds"])
+
+    def _deadline_report(self, exc):
+        path = self.root / "overall-deadline-observation.json"
+        if not path.exists():
+            write_json(path, dict(schema="upgrade-driver-deadline-observation-v1", config=self.ref,
+                classification=exc.classification, reason=str(exc), **exc.observation, input_operations=0), exclusive=True)
+        ref = file_ref(path)
+        saved = json_ref(ref)
+        require(saved["config"] == self.ref, "original deadline observation changed")
+        stopped = self.halt(saved["reason"], saved["classification"], [self.ref, ref])
+        return dict(stopped, **self.complete_report(schedule.status(self.registration_ref)))
 
     def _freeze(self, group, runtime_ref, runtime, adoption_ref, campaign_path):
         verify_tree(self.config["source"])
@@ -190,6 +275,7 @@ class Driver:
         state = schedule.status(self.registration_ref)
         if state["status"] in TERMINAL:
             return self.complete_report(state)
+        self._check_overall_deadline()
         step = state["active"] or state["next_step"]
         group, ordinal = step["group"], step["ordinal"]
         runtime_ref = self.config["runtimes"][group]
@@ -243,6 +329,7 @@ class Driver:
             if not (Path(runtime["state_root"]) / "startup/intent.json").exists():
                 return dict(status="WAITING_ORIGINAL_LAUNCH", step=step, input_operations=0)
             require_running(self.registration_ref)
+            self._check_overall_deadline()
             result = control(runtime_ref, "adopt")
             return dict(result, step=step)
         adoption_ref = file_ref(adoption_path)
@@ -306,7 +393,16 @@ class Driver:
         schedule.external(self.registration)
         with exclusive_lock(self.root / "publisher.lock"):
             try:
-                return self._tick()
+                result = self._tick()
+                # A synchronous original operation may cross the boundary.
+                # Preserve its returned evidence, then finalize on this tick;
+                # do not promise to cancel processes already executing inside it.
+                if result["status"] not in TERMINAL and self.config.get("overall_deadline") is not None:
+                    if schedule.status(self.registration_ref)["status"] not in TERMINAL:
+                        self._check_overall_deadline()
+                return result
+            except OverallDeadline as exc:
+                return self._deadline_report(exc)
             except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
                 path = self.root / "faults" / f"{time.time_ns()}.json"
                 ref = write_json(path, dict(config=self.ref, at=utc_now(), error=str(exc),
@@ -322,12 +418,16 @@ def main(argv=None):
     parser.add_argument("--config")
     parser.add_argument("--config-sha256")
     parser.add_argument("--poll-seconds", type=float, default=10)
+    parser.add_argument("--overall-timeout-seconds", type=int,
+        help="configure only: immutable total campaign cap, anchored now; run/tick cannot reset it")
     args = parser.parse_args(argv)
     try:
         if args.command == "configure":
             require(args.request and args.request_sha256, "pinned driver request required")
-            print(json.dumps(configure(anchored_ref(args.request, args.request_sha256)), sort_keys=True), flush=True)
+            print(json.dumps(configure(anchored_ref(args.request, args.request_sha256),
+                overall_timeout_seconds=args.overall_timeout_seconds), sort_keys=True), flush=True)
             return 0
+        require(args.overall_timeout_seconds is None, "overall timeout is configure-only; the original deadline is immutable")
         require(args.config and args.config_sha256, "pinned original driver configuration required")
         require(1 <= args.poll_seconds <= 45, "driver observation interval must be between 1 and 45 seconds")
         driver = Driver(anchored_ref(args.config, args.config_sha256))
@@ -345,7 +445,7 @@ def main(argv=None):
                 if args.command == "tick":
                     return 0
                 if result["status"].startswith("WAITING") or result["status"] == "NOT_READY":
-                    time.sleep(args.poll_seconds)
+                    time.sleep(driver.poll_delay(args.poll_seconds))
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps(dict(status="REFUSED_OR_UNKNOWN_PRESERVED", error=str(exc), input_operations=0)), flush=True)
         return 2

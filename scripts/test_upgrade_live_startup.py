@@ -186,6 +186,38 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_materialized_callback_wait_keeps_single_attempt_and_fresh_gates(self):
+        controller = Path(self.spec["controller"]) / "scripts"
+        probe = Path(__file__).with_name("upgrade_callback_wait_probe.py").read_text()
+        source = SOURCE / "scripts/cmux_callback_journal.py"
+        before = source.read_bytes()
+        code = ("import sys, json\nfrom pathlib import Path\n"
+                f"sys.path.insert(0, {str(controller)!r})\n"
+                "import cmux_callback_journal as journal\n"
+                f"assert Path(journal.__file__).parent == Path({str(controller)!r})\n" +
+                probe + "\n" +
+                f"result = run(journal, {str(self.paths['tmp'] / 'callback-wait-probe')!r}, "
+                f"{str(self.paths['state'] / 'deliveries-v1')!r})\n"
+                f"result['pressure'] = pressure(journal, {str(self.paths['tmp'] / 'callback-wait-pressure')!r}, "
+                f"{str(self.paths['state'] / 'deliveries-v1')!r})\n"
+                "print(json.dumps(result))\n")
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        counts = json.loads(result.stdout)
+        self.assertEqual(len(counts["checks"]), 16)
+        self.assertEqual(counts["model_requests"], 0)
+        self.assertEqual(counts["native_inputs"], 0)
+        self.assertEqual(counts["pressure"]["original_invocations"], 80)
+        self.assertEqual(counts["pressure"]["workers"], 8)
+        self.assertEqual(source.read_bytes(), before)
+        changes = json_ref(self.runtime["patches"])["changes"]
+        callback = [c for c in changes if c["path"] == "scripts/cmux_callback_journal.py"]
+        self.assertEqual(len(callback), 1)
+        self.assertIn("bounded_first_callback_pane_wait_fresh_gates", callback[0]["transformations"])
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_claude_peer_registration_and_pid_reuse(self):
         controller = Path(self.spec["controller"]) / "scripts"
         root = Path(self.spec["clients"]["claude_a"]["native_root"])

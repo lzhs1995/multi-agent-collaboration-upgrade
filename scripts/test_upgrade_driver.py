@@ -1,12 +1,14 @@
 """Offline crash/order tests. Synthetic client actions are never live evidence."""
 import contextlib
 import io
+import json
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from orchestration_common import (ContractError, boot_id, exclusive_lock, file_ref, json_ref,
-    tree_manifest, utc_now, write_json)
+    parse_time, tree_manifest, utc_now, write_json)
 from orchestration_permit import read_permit, steps
 import test_upgrade_schedule as schedule_tests
 import upgrade_driver as driver
@@ -55,8 +57,196 @@ class DriverTests(unittest.TestCase):
             registration=self.case.ref, runtimes=self.case.runtimes, source=tree_manifest(self.root / "source"),
             corpus=tree_manifest(self.root / "corpus"), revision="offline-only",
             native_authorizations=[{"offline_test_only": True}]))
-        self.ref = driver.configure(request)
+        self.request = request
+        self.ref = driver.configure(request, overall_timeout_seconds=7200)
         self.driver = driver.Driver(self.ref)
+
+    @contextlib.contextmanager
+    def deadline_clock(self, seconds, *, wall_seconds=None, changed_boot=False):
+        deadline = self.driver.config["overall_deadline"]
+        at = (parse_time(deadline["started_at"]) + timedelta(
+            seconds=seconds if wall_seconds is None else wall_seconds)).isoformat()
+        clock = deadline["started_monotonic_ns"] + round(seconds * 1e9)
+        with patch.object(driver, "utc_now", return_value=at), \
+                patch.object(driver.time, "monotonic_ns", return_value=clock), \
+                patch.object(driver, "boot_id", return_value="different-boot" if changed_boot else deadline["boot_id"]):
+            yield
+
+    def test_overall_deadline_is_fixed_at_configure_and_legacy_default_is_unchanged(self):
+        config = json_ref(self.ref)
+        deadline = config["overall_deadline"]
+        self.assertEqual(config["schema"], "upgrade-driver-config-v2")
+        self.assertEqual(deadline["timeout_seconds"], 7200)
+        self.assertEqual(deadline["started_at"], config["created_at"])
+        self.assertEqual(parse_time(deadline["deadline_at"]) - parse_time(config["created_at"]), timedelta(seconds=7200))
+        with patch.object(driver, "write_json", return_value={"synthetic": True}) as publish:
+            driver.configure(self.request)
+        legacy = publish.call_args.args[1]
+        self.assertEqual(legacy["schema"], "upgrade-driver-config-v1")
+        self.assertNotIn("overall_deadline", legacy)
+        # Compatibility validation reads an original v1 shape; it does not
+        # rewrite that original configuration or install a new deadline.
+        with patch.object(driver, "json_ref", side_effect=lambda ref, *a: legacy if ref == self.ref else json_ref(ref)):
+            original = driver.Driver(self.ref)
+        self.assertIsNone(original._overall_timing())
+        self.assertEqual(original.poll_delay(10), 10)
+
+    def test_invalid_overall_timeouts_are_refused_before_publication(self):
+        for value in (0, -1, True, 1.5, "7200"):
+            with self.subTest(value=value), patch.object(driver, "write_json") as publish:
+                with self.assertRaisesRegex(ContractError, "positive integer"):
+                    driver.configure(self.request, overall_timeout_seconds=value)
+                publish.assert_not_called()
+
+    def test_before_overall_deadline_permits_work_but_exact_boundary_halts_and_reports(self):
+        original = file_ref(self.ref["path"])
+        with self.deadline_clock(7199.999):
+            self.assertEqual(self.driver.tick()["status"], "PERMIT_ISSUED")
+        with self.deadline_clock(7200):
+            result = self.driver.tick()
+        self.assertEqual((result["status"], result["classification"]), ("HALTED", "TIMEOUT"))
+        self.assertEqual(self.actions, [])
+        self.assertFalse((self.driver.root / "actions/pilot-B-launch/intent.json").exists())
+        self.assertEqual(file_ref(self.ref["path"]), original)
+        report = json_ref(result["report"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual(report["runs"][0]["status"], "TIMEOUT")
+        self.assertEqual((result["schedule"]["permits"], result["schedule"]["closures"]), (1, 0))
+
+    def test_exact_deadline_before_any_permit_retains_full_registered_denominator(self):
+        with self.deadline_clock(7200):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertEqual(result["schedule"]["permits"], 0)
+        report = json_ref(result["report"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual(self.actions, [])
+
+    def test_fresh_driver_and_cli_run_tick_reuse_original_deadline(self):
+        config_bytes = Path(self.ref["path"]).read_bytes()
+        args = ["--config", self.ref["path"], "--config-sha256", self.ref["sha256"]]
+        with self.deadline_clock(7199.5), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(driver.main(["tick", *args]), 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "PERMIT_ISSUED")
+        with self.deadline_clock(7200), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(driver.main(["run", *args]), 2)
+        first = json.loads(output.getvalue())
+        self.assertEqual(first["classification"], "TIMEOUT")
+        with self.deadline_clock(7500):
+            recovered = driver.Driver(self.ref).tick()
+        self.assertEqual(first["report"], recovered["report"])
+        self.assertEqual(first["halt"], recovered["schedule"]["halt"])
+        self.assertEqual(Path(self.ref["path"]).read_bytes(), config_bytes)
+        self.assertEqual(self.actions, [])
+
+    def test_cli_cannot_override_deadline_and_poll_sleep_is_clipped(self):
+        args = ["--config", self.ref["path"], "--config-sha256", self.ref["sha256"]]
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(driver.main(["run", *args, "--overall-timeout-seconds", "7200"]), 2)
+        self.assertIn("configure-only", output.getvalue())
+        with self.deadline_clock(7199.75):
+            self.assertAlmostEqual(self.driver.poll_delay(10), .25, places=6)
+        with self.deadline_clock(7200):
+            self.assertEqual(self.driver.poll_delay(10), 0)
+
+    def test_launch_rechecks_deadline_after_slow_source_validation(self):
+        self.driver.tick()
+        deadline = self.driver.config["overall_deadline"]
+        seconds = [7199]
+        def slow_check(*args):
+            seconds[0] = 7200
+        with patch.object(driver, "utc_now", side_effect=lambda: (parse_time(deadline["started_at"]) +
+                timedelta(seconds=seconds[0])).isoformat()), \
+                patch.object(driver.time, "monotonic_ns", side_effect=lambda:
+                    deadline["started_monotonic_ns"] + seconds[0] * 10**9), \
+                patch.object(driver, "boot_id", return_value=deadline["boot_id"]), \
+                patch.object(driver, "verify_tree", side_effect=slow_check):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertEqual(self.actions, [])
+        self.assertFalse((self.driver.root / "actions/pilot-B-launch/intent.json").exists())
+
+    def test_original_synchronous_return_crossing_deadline_is_preserved_and_reported_same_tick(self):
+        self.driver.tick()
+        deadline = self.driver.config["overall_deadline"]
+        seconds = [7199]
+        def original_control(ref, command):
+            result = self.control(ref, command)
+            seconds[0] = 7200
+            return result
+        with patch.object(driver, "utc_now", side_effect=lambda: (parse_time(deadline["started_at"]) +
+                timedelta(seconds=seconds[0])).isoformat()), \
+                patch.object(driver.time, "monotonic_ns", side_effect=lambda:
+                    deadline["started_monotonic_ns"] + seconds[0] * 10**9), \
+                patch.object(driver, "boot_id", return_value=deadline["boot_id"]), \
+                patch.object(driver, "control", side_effect=original_control):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertIn("report", result)
+        saved = json_ref(file_ref(self.driver.root / "actions/pilot-B-launch/result.json"))
+        self.assertEqual(saved["value"]["status"], "LAUNCH_RETURNED")
+        self.assertEqual(self.actions, [("launch", "pilot-B")])
+
+    def test_original_deadline_observation_survives_crash_before_halt(self):
+        with self.deadline_clock(7200), patch.object(self.driver, "halt", side_effect=SystemExit("offline crash")):
+            with self.assertRaises(SystemExit):
+                self.driver.tick()
+        original = file_ref(self.driver.root / "overall-deadline-observation.json")
+        with self.deadline_clock(7300):
+            result = driver.Driver(self.ref).tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertEqual(file_ref(original["path"]), original)
+        self.assertEqual(json_ref(result["halt"])["evidence"], [self.ref, original])
+
+    def test_expiry_preserves_existing_success_and_genuine_failed_measurements(self):
+        self.started()
+        self.finish(1)
+        self.assertEqual(self.driver.tick()["status"], "CLOSED")
+        self.assertEqual(self.driver.tick()["status"], "PERMIT_ISSUED")
+        self.finish(2)
+        step = steps(self.case.registration)[1]
+        row = self.case.rows[(self.case.campaigns[step["group"]]["path"], step["run_id"])]
+        row.update(status="FAILED", contract_pass=False)
+        first_finish = file_ref(row["finish"]["path"])
+        with self.deadline_clock(7200):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        report = json_ref(result["report"])
+        self.assertEqual([r["status"] for r in report["runs"][:2]], ["PASS", "FAILED"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual((result["schedule"]["permits"], result["schedule"]["closures"]), (2, 1))
+        self.assertEqual(file_ref(row["finish"]["path"]), first_finish)
+
+    def test_expiry_never_overwrites_a_preexisting_native_failure_halt(self):
+        self.started()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_FAILED",
+            turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        failed = self.driver.tick()
+        self.assertEqual(failed["classification"], "FAILED")
+        with self.deadline_clock(7200):
+            result = driver.Driver(self.ref).tick()
+        self.assertEqual(result["schedule"]["halt"], failed["halt"])
+        self.assertEqual(json_ref(result["schedule"]["halt"])["classification"], "FAILED")
+        self.assertFalse((self.driver.root / "overall-deadline-observation.json").exists())
+
+    def test_clock_rollback_cannot_extend_monotonic_deadline(self):
+        with self.deadline_clock(7200, wall_seconds=100):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertEqual(self.actions, [])
+
+    def test_changed_boot_before_expiry_halts_unknown_without_reset(self):
+        with self.deadline_clock(100, changed_boot=True):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "UNKNOWN")
+        self.assertIn("report", result)
+        self.assertEqual(self.actions, [])
+
+    def test_changed_boot_after_original_wall_deadline_still_times_out(self):
+        with self.deadline_clock(7200, changed_boot=True):
+            result = self.driver.tick()
+        self.assertEqual(result["classification"], "TIMEOUT")
+        self.assertEqual(self.actions, [])
 
     def control(self, ref, command):
         import time

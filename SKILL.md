@@ -52,8 +52,26 @@ New v3 task scopes also provide the exact frozen-controller callback command,
 including the original pack path, after the report-freeze instructions. Executors
 collect that one original invocation instead of discovering a callback CLI.
 An uncertain result or pane contention does not authorize another send. This
-addresses observed task-navigation overhead, not measured end-to-end efficiency;
-same-pane callback contention and real pilot acceptance remain separate checks.
+addresses observed task-navigation overhead, not measured end-to-end efficiency.
+For a first callback with no prior attempt, the generated controller may wait up
+to 15 seconds on the original pane-lock inode before input. Task/target locks and
+recovery attempts retain fail-fast behavior. After acquisition, recheck the pack,
+report, availability, identity, journal and all held lock identities before
+PREPARED. Timeout or changed evidence produces no input and no extra attempt.
+This is one original invocation, never a resend or a recovery-key budget.
+Validate this transformation in the actual materialized controller, including
+concurrent processes and the unchanged native input boundary. Live pilot
+acceptance and end-to-end efficiency remain separate requirements.
+
+New bounded campaigns pin an overall deadline once at configuration; neither
+polling, a new slot nor process restart resets it. Run an independent watchdog
+against that same configuration before the driver. At expiry it must first
+publish each private runtime's stop marker, then halt scheduling and preserve
+all registered slots in the final report. Clock/boot ambiguity refuses new work.
+Do not depend solely on a driver tick that may be inside synchronous work.
+Preserve in-flight requests, original clients and leases; stopping future input
+does not prove remote cancellation or resource release. Report watchdog errors
+and observed stop time, not an unsupported hard real-time guarantee.
 
 Independent checkers receive canonical request bytes through a read-only file
 descriptor from unique private campaign scratch, removed before child execution

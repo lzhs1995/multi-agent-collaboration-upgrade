@@ -251,6 +251,76 @@ def bridge_probe_evidence(text):
     return edit_nodes(text, [(node, changed)])
 
 
+def callback_pane_wait(text):
+    """Wait before a first input only; never replay a journal or reopen a lock."""
+    text = replace_once(text, "def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):", r'''CALLBACK_PANE_WAIT_SECONDS = 15.0
+
+
+def _callback_lock_identity(bridge, held, path):
+    import stat
+    opened, current = os.fstat(held.fileno()), os.lstat(path)
+    if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(current.st_mode)
+            or opened.st_nlink != 1 or current.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)):
+        raise bridge.TaskPackContractError('CALLBACK_LOCK_CHANGED_BEFORE_INPUT')
+
+
+def _callback_acquire_pane(bridge, pane_lock, pane_path, task_lock, task_path, *, fresh):
+    deadline = time.monotonic() + CALLBACK_PANE_WAIT_SECONDS
+    contended = False
+    while True:
+        for held, path in ((task_lock, task_path), (pane_lock, pane_path)):
+            _callback_lock_identity(bridge, held, path)
+        if contended and time.monotonic() >= deadline:
+            raise bridge.TaskPackContractError('CALLBACK_PANE_TIMEOUT_BEFORE_INPUT')
+        try:
+            fcntl.flock(pane_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError as exc:
+            if not fresh:
+                raise bridge.TaskPackContractError('CALLBACK_PANE_IN_PROGRESS') from exc
+            contended = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise bridge.TaskPackContractError('CALLBACK_PANE_TIMEOUT_BEFORE_INPUT') from exc
+            time.sleep(min(0.1, remaining))
+    for held, path in ((task_lock, task_path), (pane_lock, pane_path)):
+        _callback_lock_identity(bridge, held, path)
+
+
+def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):''')
+    text = replace_once(text, "        old = json.loads(read_bytes(attempts[-1])) if attempts else None\n",
+        "        old = json.loads(read_bytes(attempts[-1])) if attempts else None\n"
+        "        fresh_callback = not attempts and not reconcile_only and not resume_queue_only\n"
+        "        if fresh_callback:\n"
+        "            from cmux_evidence_io import snapshot as callback_snapshot\n"
+        "            callback_pins = {Path(task_pack_path): callback_snapshot(task_pack_path),\n"
+        "                             report: callback_snapshot(report)}\n")
+    text = replace_once(text,
+        "        try:\n            fcntl.flock(pane_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "        except BlockingIOError as exc:\n"
+        "            raise bridge.TaskPackContractError('CALLBACK_PANE_IN_PROGRESS') from exc\n",
+        "        _callback_acquire_pane(bridge, pane_lock, pane_lock_path, lock, lock_path,\n"
+        "                               fresh=fresh_callback)\n")
+    text = replace_once(text, "        if (not pack.get('executor_uuid') or\n", r'''        if fresh_callback:
+            # Waiting is not authority. Recheck all mutable inputs before PREPARED.
+            if (bridge.validate_task_pack_contract(task_pack_path) != pack
+                    or any(callback_snapshot(path) != pin for path, pin in callback_pins.items())):
+                raise bridge.TaskPackContractError('CALLBACK_INPUT_CHANGED_DURING_WAIT')
+            require_action(pack['task_id'], 'callback', pack)
+            if current_identity() != proof:
+                raise bridge.TaskPackContractError('CALLBACK_IDENTITY_CHANGED_DURING_WAIT')
+            if receipt_path.exists() or legacy.exists() or attempt_paths(journal) != attempts:
+                raise bridge.TaskPackContractError('CALLBACK_JOURNAL_CHANGED_DURING_WAIT')
+            for held, path in ((lock, lock_path), (pane_lock, pane_lock_path),
+                               (target_lock, target_lock_path)):
+                _callback_lock_identity(bridge, held, path)
+        if (not pack.get('executor_uuid') or
+''')
+    compile(text, "cmux_callback_journal.py", "exec", dont_inherit=True)
+    return text
+
+
 def live_gates(name, text):
     if name == "cmux_bridge.py":
         text = claude_measured_chrome(text)
@@ -260,6 +330,8 @@ def live_gates(name, text):
         node = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_run_successor")
         text = edit_nodes(text, [(node, 'def _run_successor(*args, artifact, check=True, capture=True):\n'
             '    raise WorkspaceScopeError("EXPERIMENT_SUCCESSOR_ROUTE_REFUSED: dedicated workspace only")')])
+    elif name == "cmux_callback_journal.py":
+        text = callback_pane_wait(text)
     elif name == "mac_harness.py":
         text = bridge_probe_evidence(text)
     elif name == "cmux_codex_input.py":
@@ -310,5 +382,7 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("exact_bridge_probe_screen_evidence")
     if name == "cmux_bridge.py":
         changes.append("measured_claude_default_footer_and_tip")
+    if name == "cmux_callback_journal.py":
+        changes.append("bounded_first_callback_pane_wait_fresh_gates")
     compile(text, name, "exec", dont_inherit=True)
     return text, changes

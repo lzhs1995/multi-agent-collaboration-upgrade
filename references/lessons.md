@@ -247,3 +247,27 @@ remaining defects. Do not start another version cycle merely to defer delivery.
 The r19 audit and stdout-summary candidate remain separate evidence: the latter
 reduces displayed bytes in a local measurement, with no demonstrated model cost
 or business latency improvement and no change to the frozen live experiment.
+# Bounded callback contention and campaign deadlines
+
+The r19 native audit observed two callback invocations only 0.693 seconds apart.
+The second refused on the pane lock before PREPARED or any input; this is not
+proof of duplicate native input. The first invocation returned after 8.323
+seconds. New materialized controllers allow only a first, normal callback to
+wait at most 15 seconds on the already opened pane-lock inode. They retain
+fail-fast task/target locks and old-attempt/reconciliation behavior, and refresh
+pack/report snapshots, availability, identity and journal evidence before
+PREPARED. No wait loop sends input, recreates a lock or extends a retry budget.
+
+The materialized Darwin-sandbox probe covers 16 contract boundaries plus 8
+forked processes issuing 80 distinct original callbacks through one pane lock.
+Its transport is simulated and stops before native input: these measurements
+establish lock behavior, not real Claude reception or business acceptance.
+
+An overall deadline must stop both scheduling and direct callback input. A
+schedule halt alone does not enter the private input gate, and a driver blocked
+inside source hashing cannot enforce its next tick on time. Use a separately
+running watchdog bound to the same immutable deadline, publish all private
+runtime stop markers before report work, and retain the first halt/report.
+Preserve the complete benchmark denominator and record actual stop errors and
+timestamps. Neither a marker nor process preservation proves that an in-flight
+remote model request was canceled.

@@ -1,5 +1,26 @@
 # 2026-10-18 压力测试与真实协作验证
 
+## 2026-10-18T14:11Z 有界最终候选
+
+最新受影响联合回归 **138/138 PASS，48.407秒，零失败/错误/跳过**；全部受检Python源码前后SHA一致。
+覆盖startup、callback journal、live control、driver、独立watchdog、schedule及bridge证据。
+实际materialized控制器包含16项回调边界与8个OS进程、80次不同原调用的同pane争用，
+没有重叠临界区或重复attempt。transport边界为模拟，模型请求和native input均为0，
+这些结果不计入真实双Claude业务成绩。证据：`validation/r20-callback-deadline-01/result.json`，
+SHA256 `e0324c40a80504631a051704f60db03366bd5a7d8feb87f7a566166c0a49ba78`。
+
+首次且无旧attempt的callback现在可在原pane锁inode上等待最多15秒，取得锁后重查全部
+输入和身份门禁；task/target锁及历史恢复保持原行为。独立watchdog先发布7组私有stop，
+再halt/report；不可变整体7200秒从configure开始，重启或换槽不重置。
+本机driver/watchdog定向验证另有63/63通过，包括实际Darwin stop publisher边界。
+stop限制后续输入，不等于取消远端在途请求或回收旧客户端。
+
+**真实成绩仍为0/33、pilot 0/3、pairs 0/15，效率未证明、成本UNKNOWN。**
+r19终态保持1 TIMEOUT＋32 MISSING；不重放、不修改旧证据。r20在本节记录时尚未启动，
+沿现有全面授权仅准备一次7组33槽15对campaign：14:23Z准备截止，最迟16:23Z结果截止。
+未完成槽全部保留，不开启r21、不无限延长。指定经验会话尚无可验证双向回复；
+已实测吸收的PR39经验与该待回复请求分开记录。以下各节为带时间的历史结果。
+
 ## 2026-10-18 执行者延迟诊断与回调指令修复
 
 原生记录确认：两位 Claude 正式收到任务后，分别经过 885.253 秒和 1039.065 秒才执行业务；两条业务命令连同工具结果返回仅为 0.695 秒和 0.481 秒。业务前分别有 19/24 次工具调用，包含缺失 readiness 文件导致的查找和 callback CLI 查找；区间也包含模型响应延迟，不能全部归作工具执行时间。
