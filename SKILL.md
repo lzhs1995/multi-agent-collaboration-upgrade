@@ -60,14 +60,21 @@ Stress every read boundary with real short-lived processes and preserve failed
 scan counts. A traceback without its PID/path does not prove an unrelated row, and this discovery fix alone
 does not establish successful live collaboration.
 
-The private native target lookup enumerates the bound controlling TTY through
-Darwin `PROC_TTY_ONLY`; daemon client discovery retains its full-UID inventory.
-Pin the canonical `/dev` character device before and after enumeration, verify
-every BSD snapshot's TTY, and close the original member identities and PID set.
-Any member exit, permission error, unknown read, identity drift or set change
-refuses; there is no fallback scan or automatic replay. This establishes target
-uniqueness inside the exact TTY, not global uniqueness of environment values on
-other terminals. Selected clients retain complete native process, executable,
+The private native target lookup intersects the bound controlling TTY's Darwin
+`PROC_TTY_ONLY` inventory with the kernel `PROC_UID_ONLY` inventory. Each scope
+sample brackets the UID read with equal complete TTY PID sets; the final sample
+must preserve both the complete TTY set and its UID intersection. This excludes
+foreign root login parents by kernel scope, never by ignoring a permission error.
+Daemon client discovery retains its full-UID inventory. Pin the canonical `/dev`
+character device's path, device/inode, rdev, mode and ownership before and after
+enumeration. Darwin devfs updates ctime during ordinary terminal output; activity
+timestamps are not device identity. Retain mode/owner checks for real metadata
+changes. Verify every selected UID member's
+BSD TTY, and close its original identity. Any such member exit, permission error,
+unknown read, identity drift or observed set change refuses; there is no fallback
+scan or automatic replay. These discrete reads are not an atomic kernel snapshot.
+This establishes target uniqueness for this UID inside the exact TTY, not global
+uniqueness of environment values on other terminals. Selected clients retain complete native process, executable,
 private-root, session, UUID and transcript checks. Snapshot executable basenames
 once per lookup; never cache the selected executable's authority checks.
 

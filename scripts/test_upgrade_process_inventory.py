@@ -238,15 +238,23 @@ class TtyInventoryTests(unittest.TestCase):
     """Scoped discovery must close the full kernel set, never select the first."""
 
     def scan(self, *, events=(), name=b'sleep', path=b'/bin/sleep', path_errno=0,
-             path_count=None, listings=((23, 24), (23, 24)), final_pin=None):
-        events, listings = list(events), list(listings)
-        self.reads, self.listings, self.paths = [], [], []
+             path_count=None, listings=((23, 24),) * 4, final_pin=None,
+             uid_listings=((23, 24),) * 2, selector_stats=None):
+        events, listings, uid_listings = list(events), list(listings), list(uid_listings)
+        self.reads, self.listings, self.paths, self.uid_listings = [], [], [], []
+        self.enumerations = []
         counts = {}
         device = 0x12000007
         def listing(kind, selector, buf, size):
-            self.assertEqual((kind, selector), (3, device))
-            members = listings[len(self.listings)]
-            self.listings.append(members)
+            self.enumerations.append(kind)
+            if kind == 3:
+                self.assertEqual(selector, device)
+                members = listings[len(self.listings)]
+                self.listings.append(members)
+            else:
+                self.assertEqual((kind, selector), (4, os.getuid()))
+                members = uid_listings[len(self.uid_listings)]
+                self.uid_listings.append(members)
             for index, pid in enumerate(members):
                 buf[index] = pid
             return len(members) * ctypes.sizeof(ctypes.c_int)
@@ -278,19 +286,80 @@ class TtyInventoryTests(unittest.TestCase):
             return len(buf.value) + 1
         lib = types.SimpleNamespace(proc_listpids=listing, proc_pidinfo=bsd, proc_pidpath=executable)
         pin = dict(path='/dev/ttys007', device=device, inode=12)
+        original_selector = inventory._terminal_selector
+        stats = iter(selector_stats or ())
+        pins = iter((pin, final_pin or pin))
+        def selector(tty):
+            if selector_stats is None:
+                return next(pins)
+            with patch.object(Path, 'lstat', return_value=types.SimpleNamespace(**next(stats))), \
+                    patch.object(Path, 'resolve', return_value=Path('/dev/ttys007')):
+                return original_selector(tty)
         with patch.object(inventory, '_lib', return_value=lib), \
-                patch.object(inventory, '_terminal_selector', side_effect=[pin, final_pin or pin]), \
+                patch.object(inventory, '_terminal_selector', side_effect=selector), \
                 patch.object(identity, 'process', side_effect=AssertionError('strict reader is separate')):
             return inventory.inventory_for_tty(lambda value: Path(value).name in ('codex', 'claude'), 'ttys007')
 
     def test_only_exact_tty_members_are_read_and_closed(self):
         self.assertEqual(self.scan(), [['24', '/opt/bin/codex']])
-        self.assertEqual(self.listings, [(23, 24), (23, 24)])
+        self.assertEqual(self.listings, [(23, 24)] * 4)
+        self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
         self.assertEqual(set(self.reads), {(pid, read) for pid in (23, 24) for read in range(6)})
         # More than one candidate must survive discovery for the native gate
         # to reject ambiguity; discovery must never return only the first.
         self.assertEqual(self.scan(path=b'/opt/bin/claude'),
                          [['23', '/opt/bin/claude'], ['24', '/opt/bin/codex']])
+
+    def test_foreign_login_parent_is_excluded_by_uid_kernel_membership_before_reads(self):
+        # Reading PID 22 would raise in the fixture. It is excluded by an
+        # independent kernel UID selector, never by swallowing an EPERM.
+        self.assertEqual(self.scan(listings=((22, 23, 24),) * 4,
+                                   uid_listings=((23, 24, 999),) * 2),
+                         [['24', '/opt/bin/codex']])
+        self.assertEqual(self.paths, [23, 24])
+        self.assertEqual({pid for pid, _ in self.reads}, {23, 24})
+
+    def test_unrelated_uid_churn_does_not_change_tty_intersection(self):
+        self.assertEqual(self.scan(uid_listings=((23, 24, 991), (23, 24, 992, 993))),
+                         [['24', '/opt/bin/codex']])
+        self.assertEqual({pid for pid, _ in self.reads}, {23, 24})
+
+    def test_uid_migration_in_either_direction_refuses_with_same_complete_tty_set(self):
+        for final_owned in ((24,), (22, 23, 24)):
+            with self.subTest(final_owned=final_owned), self.assertRaisesRegex(
+                    identity.IdentityError, 'UID membership changed'):
+                self.scan(listings=((22, 23, 24),) * 4,
+                          uid_listings=((23, 24), final_owned))
+            self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
+
+    def test_foreign_member_set_change_refuses_even_when_uid_intersection_is_equal(self):
+        for final_members in ((23, 24), (22, 23, 24, 25), (23, 24, 25)):
+            with self.subTest(final_members=final_members), self.assertRaisesRegex(
+                    identity.IdentityError, 'terminal member set changed'):
+                self.scan(listings=((22, 23, 24),) * 2 + (final_members,) * 2)
+
+    def test_tty_change_around_either_uid_sample_refuses_without_resampling(self):
+        for listing_index in (1, 3):
+            samples = [(22, 23, 24)] * 4
+            samples[listing_index] = (23, 24)
+            with self.subTest(listing_index=listing_index), self.assertRaisesRegex(
+                    identity.IdentityError, 'terminal member set changed'):
+                self.scan(listings=samples)
+            self.assertEqual(self.enumerations, [3, 4, 3] * (1 if listing_index == 1 else 2))
+            if listing_index == 1:
+                self.assertEqual(self.reads, [])
+
+    def test_uid_enumeration_failure_is_not_a_foreign_process_exclusion(self):
+        # A malformed UID list must fail even when the complete TTY list is valid.
+        with self.assertRaisesRegex(identity.IdentityError, 'duplicate'):
+            self.scan(uid_listings=((23, 23),))
+        self.assertEqual(self.reads, [])
+        self.assertEqual(self.enumerations, [3, 4])
+
+    def test_foreign_only_tty_returns_no_candidate_and_still_closes_both_sets(self):
+        self.assertEqual(self.scan(listings=((22,),) * 4, uid_listings=((99,),) * 2), [])
+        self.assertEqual(self.reads, [])
+        self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
 
     def test_member_set_expansion_removal_reuse_and_duplicates_refuse(self):
         for members in ((23, 24, 25), (24,), (23, 25), (23, 23)):
@@ -344,6 +413,30 @@ class TtyInventoryTests(unittest.TestCase):
         with patch.object(Path, 'lstat', return_value=types.SimpleNamespace(**info)), \
                 patch.object(Path, 'resolve', return_value=Path('/other/ttys007')), self.assertRaises(identity.IdentityError):
             inventory._terminal_selector('ttys007')
+
+    def test_terminal_activity_timestamps_do_not_refuse_stable_device_identity(self):
+        info = dict(st_mode=stat.S_IFCHR | 0o620, st_rdev=0x12000007,
+                    st_dev=1, st_ino=2, st_uid=os.getuid(), st_gid=os.getgid(),
+                    st_atime_ns=100, st_mtime_ns=200, st_ctime_ns=300)
+        # Measured devfs behavior: slave output changes mtime and ctime; reads
+        # can change atime. The complete UID/TTY/BSD checks must still run.
+        after = dict(info, st_atime_ns=101, st_mtime_ns=201, st_ctime_ns=301)
+        self.assertEqual(self.scan(selector_stats=(info, after)), [['24', '/opt/bin/codex']])
+        self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
+        self.assertEqual(set(self.reads), {(pid, n) for pid in (23, 24) for n in range(6)})
+
+    def test_device_identity_and_access_metadata_changes_still_refuse(self):
+        info = dict(st_mode=stat.S_IFCHR | 0o620, st_rdev=0x12000007,
+                    st_dev=1, st_ino=2, st_uid=os.getuid(), st_gid=os.getgid(),
+                    st_ctime_ns=300)
+        changes = ({'st_rdev': 0x12000008}, {'st_dev': 2}, {'st_ino': 3},
+                   {'st_mode': stat.S_IFCHR | 0o600}, {'st_uid': os.getuid()+1},
+                   {'st_gid': os.getgid()+1})
+        for changed in changes:
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                    identity.IdentityError, 'device changed'):
+                self.scan(selector_stats=(info, dict(info, **changed)))
+            self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
 
     def test_tty_enumeration_keeps_bounded_grow_and_error_checks(self):
         calls = []

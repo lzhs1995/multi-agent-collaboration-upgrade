@@ -1,11 +1,89 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**组件压力通过；最终完整回归1,839/1,839通过；真实协作提效仍未证明。**
+当前结论：**r16 修复完整回归 1,848/1,848、新进程压力 2,500/2,500、现存三客户端 TTY 压力 1,000/1,000 全部通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
-## r15 修复完整验收与下一次真实实验
+## r16 设备身份修复完整验收（2026-10-18T09:10:46.721169+00:00）
+
+唯一 `tty-device-identity-full-01` 原进程已结束，exit 0：
+**1,848/1,848，零失败、错误、跳过**；耗时
+1583.642 秒，247 个监测文件测试前后 SHA 一致。
+未放宽超时、未跳过或另启重复全测。完整日志 SHA256：
+`fe897720645179c758b65d8fbe53534ca22d1f5424d0ced8e189cca5bcbd5200`。live_model_requests=0，属于本机回归验证。
+本节是测试结束后的文档更新，由新 export 单独固定。
+
+最终 inventory SHA 为 `4cf9d5081b7a9268dae8f03ef4ded6ff5a187ea389c3426ee43297d7190832da`。
+TTY→UID→TTY 的完整集合闭合排除其他 UID 的 login 父进程；设备身份仅保留
+path/dev/inode/rdev/mode/uid/gid。ctime 随正常终端输出更新，不能用于身份。
+31 项定向全过，包含时间戳变化允许和六类设备／权限字段变更拒绝
+（定向测试注入；真实 PTY chmod 另有因果实验）。
+其余本 UID EPERM、未知、退出、身份漂移和严格 selected 原生校验保持。
+离散读取不构成原子内核快照；target 唯一性仅针对本 UID 的绑定 TTY。
+
+| 新压力 | 实际分母 | 耗时 | 独立审计 |
+|---|---:|---:|---:|
+| 七类进程／TTY 场景 | 2,500/2,500 | 68.257 秒 | 64,977 checks，0 errors |
+| 现存 Codex＋双 Claude 三 TTY | 1,000/1,000 | 17.887 秒 | 21,198 checks，0 errors |
+
+前者包含 4,000 个自有短命子进程，清理全部完成；unknown 的本次实际分支为
+182 存活 fallback、2 path ESRCH、15 首 BSD absent、1 fallback BSD absent。
+45 个 unknown fixture 最终 SIGKILL，具体系统原因未作归因，不能借用上轮
+Gatekeeper 的 27 条证据。第一次审计器遇新增分支 TypeError，原脚本与失败
+记录保留；v2 仅重新审计原 2,500 次数据，压力本身未重跑。
+
+现存三 TTY 共 334/333/333 次全部返回正确目标，三个 root login PID 分别由
+kernel UID 范围排除。Codex 扫描中实测 52 次 mtime/ctime 变化而身份稳定，
+338 次无关 TTY 的 UID 集合变化未妨碍正确发现。只读核验，零模型输入，
+原会话未更改；这不证明新客户端自动 hooks、业务派发、callback 或协作提效。
+
+旧 r15 HALTED/FAILED、原实 TTY 01 的 0 次准备失败、02 的完整 1,000 次
+失败结果和坏 JSON、中止的 `tty-uid-full-01` 全部保留，不能追认为通过。
+新两组压力与最终全测均绑定本次相同源码；历史 7,200 组件压力及完整 hash
+函数速度只在对应源码 pins 未变时复用，不充当真实协作效率证明。
+
+沿已有全面授权，下一步冻结 v15、核验七组实际 controller，启动唯一 r16：
+同三会话 pilot 连续 3/3，再执行 12 warm＋3 cold pairs，共 7 组／33 轮／15 对。
+900/1800 秒 watchdog 和每次原生接收、产物、callback、验收、释放、续派
+门槛保持；warm 中位改善需≥15%，各 workload 中位退化≤5%，缺 usage 为 UNKNOWN。
+指定经验会话仍等待可验证回件；已吸收书面案例不等于双向交流完成。
+
+## r15 启动终态与 r16 修复验证（08:41Z）
+
+r15 的唯一启动创建了真实 1 Codex＋2 Claude，但原 inspector 在读取客户端前，
+对三个 TTY 的 UID 0 `/usr/bin/login` 父进程得到 EPERM。`PROC_TTY_ONLY`
+包含其他 UID；此前全 UID 入口限定本账号，改为 TTY 入口时漏掉了该边界。
+这是发现范围回归，不是 provider/key 失败。原轮于 08:32:44Z HALTED/FAILED，
+driver exit 2；pilot 0/3、pairs 0/15、业务闭环 0/33，所有旧会话及分母保留。
+
+下一修复将 kernel TTY PID 集合与 kernel UID PID 集合相交。每次 UID 枚举
+两侧的完整 TTY 集合必须相等；读完所有本 UID 成员后，完整 TTY 集合及交集
+都要再次闭合。本 UID EPERM、未知、退出、身份或 TTY 漂移继续拒绝，不能
+捕获权限错误后跳过。离散观察不能证明两次采样间从未瞬时变化；选定客户端
+仍执行完整原生身份和产物校验。daemon 发现保留原 full-UID 范围。
+
+r16 第一版 UID 交集修复通过 29 项定向和 2,500/2,500 场景，但现存三 TTY
+压力发现了另一处设备身份问题。实 TTY 01 准备失败（0/1,000）；02 完整
+执行 1,000 次，双 Claude 666/666 返回正确，Codex 307 次正确返回却被 runner
+跨整轮比较 ctime 错计，另 27 次产品拒绝设备变化。02 的 JSON 末尾因混合
+键排序失败，部分原件和完整 attempts/traces 保留，重建报告另存。没有内部
+逐次设备 pin，不能断言原 27 次拒绝均仅由 ctime 引起。
+
+独立自有 PTY 实测发现，普通输出 20/20 次改变 mtime 和 ctime，其余设备
+身份字段不变。另 6 组共 60 次因果实验：写 slave 仅改 mtime/ctime；读 slave
+仅改 atime；读取 lstat、读 master、写 master 不改字段；chmod 只改变 mode。
+因此设备 pin 应保留 path/dev/inode/rdev/mode/uid/gid，移除活动时间戳；不
+放宽本 UID、精确 TTY、逐次 BSD 与 selected 原生身份核验。
+
+唯一 `tty-uid-full-01` 在确认需改代码后精确中止自有测试子进程，207.348 秒、
+returncode=-2、counts=null、247 个监测文件前后未变。原日志及中止意图保留，
+不称完整回归通过；这是为避免耗完一轮后仍需重新验证。下一版完成新定向、
+两类完整压力及新的完整回归后，再冻结独立版本并继续原定 7 组/33 轮/15 对。
+下面 1,839 全测及历史压力只覆盖对应冻结字节。真实协作提效仍未证明，
+既有全面授权继续有效。
+
+## r15 修复完整验收与原定真实实验（历史）
 
 唯一 `tty-integrity-full-01` 原进程已结束，exit 0：**1,839/1,839，
 零失败、错误、跳过**。执行器耗时 1578.008 秒，
@@ -429,9 +507,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r14 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY 发现和完整
-   hash 并行修复已通过真实 TTY 压力及 1,839 项完整回归；继续冻结独立
-   v14/r15 并沿现有全面授权执行，不重放旧次启动或派发。
+1. r15 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY 发现遗漏
+   本 UID 范围，真实 root login 父进程的 EPERM 暴露了回归；r16 先完成
+   TTY∩UID 与 devfs 设备身份修复、现存三 TTY 只读压力、2,500 场景及新完整回归，再冻结
+   独立 v15/r16 并沿现有全面授权执行，不重放旧次启动或派发。
    r13 原 candidate EBADF 仍未归因，诊断改进不等于已修复原根因。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
@@ -448,6 +527,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 | 证据 | 路径 |
 | --- | --- |
+| r15 唯一启动原终态 | `execution/r15-original-driver/` |
+| r16 现存三 TTY 原压力与 devfs 因果诊断 | `validation/r16-existing-tty-uid-pressure-01/`、`validation/r16-existing-tty-uid-pressure-02/` |
+| r16 第一版 TTY∩UID 2,500 场景压力 | `validation/r16-tty-uid-pressure-01/` |
+| r16 已中止的过时字节完整回归 | `validation/r8-pressure-and-full/tty-uid-full-01/` |
 | TTY 与完整 hash 并行修复最终全测 | `validation/r8-pressure-and-full/tty-integrity-full-01/` |
 | 真实 TTY 压力及独立审计 | `validation/r15-tty-pressure-03/`（01/02 原失败另存） |
 | 完整 hash 并行定向及基准 | `validation/r15-integrity-parallel-01/` |
@@ -464,8 +547,8 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/ue/driver/final-report.json`；原 halt：
-`/Users/lzhs/ue/schedule/halt.json`。r14已HALTED/FAILED，没有真实提效通过结论。
+最近已结束实验的最终报告：`/Users/lzhs/uf/driver/final-report.json`；原 halt：
+`/Users/lzhs/uf/schedule/halt.json`。r15已HALTED/FAILED，没有真实提效通过结论。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；

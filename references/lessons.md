@@ -117,3 +117,29 @@ report this code-path incompatibility; do not manufacture a hook receipt or use
 a simulated payload as proof that the target read it. A repair in an isolated
 maintenance copy does not update already installed hooks or create a missing
 native input control endpoint.
+
+The r15 live startup exposed a discovery-scope regression: Darwin
+`PROC_TTY_ONLY` includes foreign-UID login parents. All three actual client
+terminals included a UID 0 `/usr/bin/login`; the first BSD read returned EPERM
+before discovery reached the intended clients. The previous full-UID entrypoint
+had excluded these parents. A scope optimization must preserve both dimensions.
+Intersect kernel TTY and UID inventories; bracket each UID read with equal
+complete TTY sets, and require the same complete TTY set and UID intersection
+after inspecting every selected member. Exclude foreign users through kernel
+scope, never by swallowing EPERM. Same-UID permission errors, unknown reads,
+exits and identity drift still refuse, and daemon discovery keeps full-UID scope.
+Discrete equal samples are not an atomic snapshot and cannot rule out transient
+changes between reads. Validate real existing client TTYs as well as controlled
+controlling-PTY fixtures: a clean synthetic shell tree does not cover a real
+root login ancestor. Keep the original failed startup and its denominator;
+passing earlier tests cannot certify changed discovery code or live efficiency.
+
+Real macOS devfs timestamps are activity counters, not stable TTY identity.
+Owned-PTY output changed mtime/ctime in 20/20 observations; separate grouped
+experiments distinguished slave output, slave input reads, master I/O, lstat
+and chmod. Keep path, device/inode, rdev, mode and ownership checks; ordinary
+output must not invalidate a device solely through ctime. Preserve all raw
+refusals: without the internal before/after pins, later causal reproduction
+cannot prove that each earlier device-change refusal had the same cause.
+Pressure runners also must separate per-scan invariants from whole-run activity,
+and retain partial result serialization failures alongside complete raw attempts.

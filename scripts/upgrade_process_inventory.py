@@ -196,27 +196,45 @@ def _terminal_selector(tty):
     device = info.st_rdev & 0xFFFFFFFF
     if device == 0xFFFFFFFF:
         raise IdentityError("terminal inventory selector has no device")
+    # Darwin devfs updates ctime on ordinary terminal output. Pin stable device
+    # identity and access metadata; activity timestamps cannot authenticate it.
     return dict(path=str(path), device=device, dev=info.st_dev, inode=info.st_ino,
-                mode=info.st_mode, uid=info.st_uid, gid=info.st_gid, ctime_ns=info.st_ctime_ns)
+                mode=info.st_mode, uid=info.st_uid, gid=info.st_gid)
+
+
+def _tty_scope_pids(lib, device):
+    """Bracket a UID membership sample with the complete controlling TTY set."""
+    from cmux_daemon_identity import IdentityError
+    pids = _pids(lib, tty_device=device)
+    owned = set(_pids(lib))
+    if set(_pids(lib, tty_device=device)) != set(pids):
+        raise IdentityError("kernel terminal member set changed")
+    return pids, [pid for pid in pids if pid in owned]
 
 
 def inventory_for_tty(candidate, tty):
-    """Discover only the exact controlling TTY; this is not global env uniqueness.
+    """Discover this UID inside the exact TTY, not global env uniqueness.
 
-    No fallback or retry. Every initial member must survive all kernel reads;
-    final BSD identities and the complete PID set must close against the start.
-    Selected clients still require the original strict native binding checks.
+    No fallback or retry. Kernel UID enumeration excludes foreign login parents
+    before any identity read; an EPERM from an owned member still refuses. Both
+    the complete TTY set and its UID intersection close against the start, and
+    all initial owned members survive their original BSD/path/identity checks.
+    Samples are not atomic: transient UID changes can evade discrete reads.
+    Selected clients still require every original strict native binding check.
     """
     from cmux_daemon_identity import IdentityError
     pin = _terminal_selector(tty)
     lib, device = _lib(), pin['device']
-    pids = _pids(lib, tty_device=device)
-    rows, snapshots = _inventory(lib, pids, candidate, tty_device=device)
-    for pid in pids:
+    pids, owned = _tty_scope_pids(lib, device)
+    rows, snapshots = _inventory(lib, owned, candidate, tty_device=device)
+    for pid in owned:
         _discovery_pair(lib, pid, candidate, stage='closed_member',
                         previous=snapshots[pid], tty_device=device)
-    if set(_pids(lib, tty_device=device)) != set(pids):
+    final_pids, final_owned = _tty_scope_pids(lib, device)
+    if set(final_pids) != set(pids):
         raise IdentityError("kernel terminal member set changed")
+    if set(final_owned) != set(owned):
+        raise IdentityError("kernel terminal UID membership changed")
     if _terminal_selector(tty) != pin:
         raise IdentityError("terminal inventory device changed")
     budget.check()
