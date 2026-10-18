@@ -6,6 +6,7 @@ from pathlib import Path
 
 from orchestration_campaign import validate_campaign
 from orchestration_common import read_ref, require, write_bytes_once
+from upgrade_communication_plan import supervisor_messages
 
 
 def render(campaign_ref):
@@ -96,6 +97,7 @@ proves a safe terminal boundary. Otherwise retain the lease and report UNKNOWN. 
 change the registration, edit native transcripts, remove attempt evidence, replace clients or retry
 business input. Do not execute another group's run or begin a run without its own permit.
 
+{supervisor_messages(campaign)}
 After your last registered run closes, report the original results and end normally. The external
 driver retains all 33 slots, 12 warm pairs and 3 cold pairs, including failures, timeouts and missing
 rounds. Do not claim measured improvement, cost or production readiness from a single run.

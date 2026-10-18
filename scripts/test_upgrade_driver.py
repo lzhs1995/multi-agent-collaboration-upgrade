@@ -40,6 +40,7 @@ class DriverTests(unittest.TestCase):
                  (driver, "validate_adoption", lambda *a, **kw: None),
                  (driver, "validate_campaign", json_ref),
                  (instructions, "validate_campaign", json_ref),
+                 (instructions, "supervisor_messages", lambda campaign: ""),
                  (driver, "authorize", lambda value: value),
                  (driver, "control", self.control),
                  (driver, "freeze_campaign", self.freeze),

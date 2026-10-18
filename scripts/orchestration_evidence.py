@@ -115,6 +115,7 @@ def node_directory(campaign, header, node):
 
 def task_scope(campaign, header, node, info):
     import shlex
+    from upgrade_communication_plan import executor_messages
 
     instruction = "\nRead the exact pinned work request: " + info["work_request"]["path"] + "."
     if campaign_version(campaign) == 3:
@@ -147,6 +148,7 @@ def task_scope(campaign, header, node, info):
             "Freeze all outputs before the report-bound callback; no output writes after the callback. "
             "No replacement agents, API calls, source/shared-runtime writes, reasks or continuing loops. "
             "Use rtk for shell commands." + callback_instruction +
+            executor_messages(campaign, header["run"]["run_id"], node["id"]) +
             " Then remain available for a fresh finalized task pack.")
 
 

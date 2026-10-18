@@ -34,7 +34,19 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
-[2026-10-18 validation report](docs/VALIDATION-20261018.md).
+[r21 terminal report and UUID repair](docs/VALIDATION-20261019-R21.md), with
+earlier batches in the [2026-10-18 validation report](docs/VALIDATION-20261018.md).
+
+Original handshake member selectors may be a numeric `surface:<N>` or a UUID.
+Canonicalize UUID aliases and allow repeated aliases only for the same member;
+reject a UUID selector belonging to another member or any cross-member collision.
+Resolve a UI alias only from the original gate's proof under that member's exact
+original selector key, with its matching target UUID. Keep legacy UI selectors
+equal to their original proof and preserve selected workspace, caller, pane,
+provider, session and row-order checks. Never repair an old proof using current
+inventory. Include the producer's UUID-keyed proof with a UI target ref in tests;
+UI-only fixtures missed the r21 refusal. Passing that repair locally does not
+change r21's failed result or establish live handshake success.
 
 For v3, ordinary work in progress is not a reason to delay an authorized
 coordination message in either direction. Submit ready information through the
@@ -44,8 +56,24 @@ Communication, task acceptance, write ownership and composer clearing are
 separate operations. Keep fresh identity, draft, original-attempt and native
 receipt checks; an accepted queue entry is not proof of consumption.
 Reuse a valid handshake instead of running a write-and-clear bridge probe for
-every message. An initial handshake whose probe cannot run remains unverified;
-do not bypass it or claim a read-only replacement already exists.
+every message. Newly materialized controllers check initial capability read-only
+against the exact prepared challenge, then retain the original single send,
+nonce, ACK and native receipt. Active Claude work is allowed with two complete,
+stable empty-composer observations; Codex uses authenticated input metadata.
+Hold the original root-directory lock through receipt writes, send and ACK;
+concurrent or previously started handshakes are observe-only. Preserve root inode,
+native process/session and original transcript-prefix checks. Legacy receipts
+retain their original clear-proof requirement. Local regression and simulated
+transport pressure passed; live continuous-goal handshake remains unverified.
+New v3 nonpilot campaigns register 192 independent ordinary-message slots across
+six groups and four warm rounds per group: two arms of 96, four directions of 48.
+The bound native clients use their exact private helper once at each specified
+before/after business boundary. Pilot and cold runs add no samples. Refused,
+queued and missing slots remain in the denominator; do not replace samples,
+request extra ACKs or count task notices/callbacks. A short helper body still
+uses a pinned MESSAGE_REFERENCE_V2 notice because the helper adds its header.
+Notice receipt does not prove body reading. Boundary labels do not establish
+active/idle or continuous-goal state; require actual native observations.
 See [active communication and its measured limits](docs/ASYNC-COMMUNICATION-VALIDATION.md).
 These instructions update this experimental skill only. The designated
 surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns
@@ -148,6 +176,12 @@ This establishes target uniqueness for this UID inside the exact TTY, not global
 uniqueness of environment values on other terminals. Selected clients retain complete native process, executable,
 private-root, session, UUID and transcript checks. Snapshot executable basenames
 once per lookup; never cache the selected executable's authority checks.
+
+On the measured Darwin 25.5.0/arm64 ABI, an initial TTY member whose first BSD
+read returns ESRCH may be excluded only with the independent sysctl SZOMB proof:
+fresh self calibration, four stable identity/status observations and complete
+TTY/UID closure. Reaped, live-to-exit, unknown, permission or identity-drift cases
+still refuse. This exception does not relax selected native-client authentication.
 
 Startup content checks may use at most three workers for pins declaring large
 files while the caller checks small files. Each invocation still hashes the

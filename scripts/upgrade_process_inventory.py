@@ -60,7 +60,7 @@ def _discovery_error(message, pid, stage, *, count=None, error=None):
     return exc
 
 
-def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None):
+def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None, absence=None):
     """One discovery-only read; retain the original errno and negative evidence."""
     import errno
     from cmux_daemon_identity import BsdInfo
@@ -71,13 +71,16 @@ def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None):
     error = ctypes.get_errno()
     if count != ctypes.sizeof(b):
         if count <= 0 and error == errno.ESRCH:
+            if absence is not None:
+                absence.update(pid=pid, stage=stage, count=count, errno=error)
             return None
         raise _discovery_error("kernel process identity inaccessible", pid, stage,
                                count=count, error=error)
     if b.pid != pid or b.uid != os.getuid() or not b.start_sec:
         raise _discovery_error("kernel process identity changed, foreign, or invalid", pid, stage)
     current = dict(identity=dict(pid=pid, ppid=b.ppid, birth=[b.start_sec, b.start_usec]),
-                   name=bytes(b.name), zombie=b.status == 5)
+                   name=bytes(b.name), zombie=b.status == 5,
+                   uid=int(b.uid), tty_device=int(b.misc[3]))
     if tty_device is not None:
         current['tty_device'] = int(b.misc[3])
         if current['tty_device'] != tty_device:
@@ -87,6 +90,95 @@ def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None):
                                  or current['name'] != expected['name']):
         raise _discovery_error("kernel executable inventory changed", pid, stage)
     return current
+
+
+class _KinfoProc(ctypes.Structure):
+    """SDK-checked Darwin 25.5 arm64 LP64 layout, never a BSD replacement.
+
+    Opaque regions intentionally omit kernel pointers and the truncated comm.
+    The platform gate and a fresh self BSD/sysctl/BSD comparison are mandatory.
+    """
+    _fields_ = [('start_sec', ctypes.c_int64), ('start_usec', ctypes.c_int32),
+                ('_to_status', ctypes.c_ubyte * 24), ('status', ctypes.c_uint8),
+                ('_to_pid', ctypes.c_ubyte * 3), ('pid', ctypes.c_int32),
+                ('_to_uid', ctypes.c_ubyte * 376), ('uid', ctypes.c_uint32),
+                ('_to_ppid', ctypes.c_ubyte * 136), ('ppid', ctypes.c_int32),
+                ('_to_tty', ctypes.c_ubyte * 8), ('tty_device', ctypes.c_uint32),
+                ('_tail', ctypes.c_ubyte * 72)]
+
+
+def _kinfo_lib():
+    from cmux_daemon_identity import IdentityError
+    known = dict(start_sec=0, start_usec=8, status=36, pid=40, uid=420,
+                 ppid=560, tty_device=572)
+    if (sys.platform != 'darwin' or os.uname().machine != 'arm64'
+            or os.uname().release != '25.5.0' or sys.byteorder != 'little'
+            or ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(ctypes.c_long) != 8
+            or ctypes.sizeof(ctypes.c_int) != 4 or ctypes.sizeof(_KinfoProc) != 648
+            or ctypes.alignment(_KinfoProc) != 8
+            or any(getattr(_KinfoProc, k).offset != v for k, v in known.items())):
+        raise IdentityError('kernel zombie layout is not verified on this platform')
+    lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+    lib.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                          ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+    lib.sysctl.restype = ctypes.c_int
+    return lib
+
+
+def _kernel_kinfo(lib, pid, stage):
+    budget.check()
+    info = _KinfoProc()
+    size = ctypes.c_size_t(ctypes.sizeof(info))
+    # CTL_KERN=1, KERN_PROC=14, KERN_PROC_PID=1, from the measured SDK.
+    mib = (ctypes.c_int * 4)(1, 14, 1, pid)
+    ctypes.set_errno(0)
+    result = lib.sysctl(mib, 4, ctypes.byref(info), ctypes.byref(size), None, 0)
+    error = ctypes.get_errno()
+    if result != 0 or error != 0 or size.value != ctypes.sizeof(info):
+        exc = _discovery_error('kernel zombie identity inaccessible', pid, stage,
+                               count=size.value, error=error)
+        exc.discovery['return'] = result
+        raise exc
+    if (info.pid != pid or info.uid != os.getuid() or info.ppid < 1
+            or info.start_sec <= 0 or not 0 <= info.start_usec < 1000000):
+        raise _discovery_error('kernel zombie identity changed, foreign, or invalid', pid, stage)
+    return dict(identity=dict(pid=pid, ppid=info.ppid, birth=[info.start_sec, info.start_usec]),
+                uid=int(info.uid), tty_device=int(info.tty_device), zombie=info.status == 5,
+                status=int(info.status))
+
+
+def _verify_kinfo_self(bsd_lib, kinfo_lib):
+    """Fresh field-level ABI check, not a cached grant or a receiver binding."""
+    pid = os.getpid()
+    first = _kernel_bsd(bsd_lib, pid, 'zombie_layout_self_bsd_1')
+    middle = _kernel_kinfo(kinfo_lib, pid, 'zombie_layout_self_sysctl')
+    last = _kernel_bsd(bsd_lib, pid, 'zombie_layout_self_bsd_2', expected=first)
+    keys = ('identity', 'uid', 'tty_device')
+    if (first is None or last is None or first['zombie'] or middle['zombie'] or last['zombie']
+            or middle['status'] not in (1, 2, 3, 4)
+            or any(first[k] != middle[k] or first[k] != last[k] for k in keys)):
+        raise _discovery_error('kernel zombie layout self identity changed', pid, 'zombie_layout')
+
+
+def _sysctl_zombie_pair(lib, pid, stage, tty_device, *, previous=None, absence=None):
+    """Exclude only an initial dead TTY member using its own narrow proof."""
+    try:
+        kinfo_lib = _kinfo_lib()
+        _verify_kinfo_self(lib, kinfo_lib)
+        first = _kernel_kinfo(kinfo_lib, pid, stage + '_sysctl_1')
+        if not first['zombie'] or first['tty_device'] != tty_device:
+            raise _discovery_error('kernel terminal zombie not stable', pid, stage + '_sysctl_1')
+        if previous is not None and first != previous['snapshot']:
+            raise _discovery_error('kernel terminal zombie changed', pid, stage + '_sysctl_1')
+        second = _kernel_kinfo(kinfo_lib, pid, stage + '_sysctl_2')
+        if second != first:
+            raise _discovery_error('kernel terminal zombie changed', pid, stage + '_sysctl_2')
+    except Exception as exc:
+        # Preserve the exact original BSD absence alongside the failed proof.
+        exc.bsd_absence = previous['bsd_absence'] if previous is not None else absence
+        raise
+    return dict(zombie=True, proof='initial_tty_sysctl_zombie_v1', snapshot=second,
+                bsd_absence=previous['bsd_absence'] if previous is not None else absence)
 
 
 def _unrelated_name(snapshot, candidate):
@@ -102,8 +194,35 @@ def _unrelated_name(snapshot, candidate):
 
 def _discovery_pair(lib, pid, candidate, *, stage, previous=None, known_noncandidate=None,
                     tty_device=None):
-    """No retries. An exit can exclude only an original known unrelated row."""
-    first = _kernel_bsd(lib, pid, stage + '_bsd_1', expected=previous, tty_device=tty_device)
+    """Pair identity reads; scoped initial zombies need a separate closed proof.
+
+    A live scoped member exiting still refuses. Unscoped discovery retains its
+    original known-unrelated-row exclusion, without retries.
+    """
+    if previous is not None and previous.get('proof') == 'initial_tty_sysctl_zombie_v1':
+        if tty_device is None or stage != 'closed_member':
+            raise _discovery_error('kernel zombie proof outside terminal closure', pid, stage)
+        return _sysctl_zombie_pair(lib, pid, stage, tty_device, previous=previous)
+    absence = {}
+    first = _kernel_bsd(lib, pid, stage + '_bsd_1', expected=previous,
+                        tty_device=tty_device, absence=absence)
+    if first is None and tty_device is not None and previous is None and stage == 'before_path':
+        return _sysctl_zombie_pair(lib, pid, stage, tty_device, absence=absence)
+    if tty_device is not None and first is not None:
+        # A process already dead at the first observation cannot be a live
+        # receiver. Prove that fact with two complete matching BSD reads, then
+        # retain the snapshot for the final scope closure. Do not infer it from
+        # ESRCH, a name, or a later ps observation. A formerly live row dying
+        # during this scan must still refuse, including a selected candidate.
+        if previous is not None and previous['zombie'] and not first['zombie']:
+            raise _discovery_error("kernel terminal zombie changed", pid, stage + '_bsd_1')
+        if first['zombie'] and ((previous is None and stage == 'before_path')
+                                or (previous is not None and previous['zombie'])):
+            second = _kernel_bsd(lib, pid, stage + '_bsd_2', expected=first,
+                                 tty_device=tty_device)
+            if second is None or not second['zombie']:
+                raise _discovery_error("kernel terminal zombie not stable", pid, stage + '_bsd_2')
+            return second
     if first is None or first['zombie']:
         if tty_device is not None:
             raise _discovery_error("kernel terminal member exited", pid, stage + '_bsd_1')
@@ -139,6 +258,11 @@ def _inventory(lib, pids, candidate, *, tty_device=None):
     for pid in pids:
         before = _discovery_pair(lib, pid, candidate, stage='before_path', tty_device=tty_device)
         if before is None:
+            continue
+        if before['zombie']:
+            # Only scoped initial-zombie branches return this. Keep their own
+            # proof type for closure; neither grants a live receiver row.
+            snapshots[pid] = before
             continue
         buf = ctypes.create_string_buffer(4096)
         ctypes.set_errno(0)
@@ -218,7 +342,11 @@ def inventory_for_tty(candidate, tty):
     No fallback or retry. Kernel UID enumeration excludes foreign login parents
     before any identity read; an EPERM from an owned member still refuses. Both
     the complete TTY set and its UID intersection close against the start, and
-    all initial owned members survive their original BSD/path/identity checks.
+    initially live owned members survive their original BSD/path/identity checks.
+    An initially dead member needs complete matching zombie pairs at discovery
+    and closure (BSD, or separately verified sysctl after initial BSD ESRCH).
+    Its PID must remain in both scope sets; sysctl never authenticates a client.
+    Reaping, reuse, resurrection, unknown reads and live-to-dead changes refuse.
     Samples are not atomic: transient UID changes can evade discrete reads.
     Selected clients still require every original strict native binding check.
     """

@@ -12,7 +12,7 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_client_probe", "upgrade_startup_contract", "upgrade_hook_observer",
     "upgrade_input_gate", "upgrade_live_inspect", "upgrade_bootstrap",
     "upgrade_process_inventory", "upgrade_socket_boundary", "upgrade_claude_ps",
-    "upgrade_standalone_identity", "upgrade_claude_registration")}
+    "upgrade_standalone_identity", "upgrade_claude_registration", "upgrade_handshake_capability")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -251,6 +251,111 @@ def bridge_probe_evidence(text):
     return edit_nodes(text, [(node, changed)])
 
 
+def readonly_handshake(name, text):
+    """Change only the new handshake precondition; keep the diagnostic probe."""
+    from orchestration_common import ContractError
+    if name == "reconcile_handshake_ack.py":
+        return replace_once(text,
+            "                if selected.get('bridge_clear_confirmed') is not True:\n"
+            "                    raise ValueError('ACK_ORIGINAL_BRIDGE_CLEAR_REQUIRED')",
+            "                from upgrade_handshake_capability import require_original\n"
+            "                require_original(selected, gate, binding, text, native)")
+    if name != "mac_harness.py":
+        return text
+    text = replace_once(text, "    cmd_bridge_test(args)\n    cmd_handshake(args)",
+                        "    # Each original challenge performs a read-only capability check.\n"
+                        "    cmd_handshake(args)")
+    commands = [n for n in ast.parse(text).body
+                if isinstance(n, ast.FunctionDef) and n.name == "cmd_handshake"]
+    if len(commands) != 1:
+        raise ContractError("readonly handshake requires one original cmd_handshake")
+    command = commands[0]
+    original = ast.get_source_segment(text, command)
+    body = replace_once(original, "def cmd_handshake(args):\n    root = _artifact_root(args)\n", "")
+    body = replace_once(body,
+        '    if (getattr(args, "bridge_clear_recovery", None) and\n'
+        '            any((root / name).exists() for name in ("handshake-receipt.json", "task-pack.json"))):\n'
+        '        _fail("original handshake already started; use its existing receipt, not clear recovery")\n'
+        '        sys.exit(1)\n', "")
+    body = replace_once(body, "    _recheck_workspace_gate(gate)\n",
+                        "    _recheck_workspace_gate(gate)\n    root_recheck()\n")
+    body = replace_once(body, "        if not _handshake_one(args, root, gate, item, per_executor):",
+                        "        root_recheck()\n"
+                        "        if not _handshake_one(args, root, gate, item, per_executor,\n"
+                        "                              root_recheck=root_recheck):")
+    body = "\n".join(line[:len(line) - len(line.lstrip())] + "root_recheck()\n" + line
+                     if line.strip() == "_write_handshake_receipt(root, per_executor)" else line
+                     for line in body.splitlines())
+    prefix = '''def cmd_handshake(args):
+    import fcntl
+    import stat
+    root = _artifact_root(args)
+    # Share the original reconciler's directory lock, without creating sidecars.
+    # Keep ownership through every receipt and ACK; errors never reopen a nonce.
+    held = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            _fail('ORIGINAL_HANDSHAKE_IN_PROGRESS: observe its original attempt; no new challenge')
+            sys.exit(1)
+        pinned = os.fstat(held)
+        def root_recheck():
+            current, opened = os.lstat(root), os.fstat(held)
+            expected = (pinned.st_dev, pinned.st_ino, pinned.st_mode)
+            if (not stat.S_ISDIR(current.st_mode) or opened.st_nlink < 1
+                    or (current.st_dev, current.st_ino, current.st_mode) != expected
+                    or (opened.st_dev, opened.st_ino, opened.st_mode) != expected):
+                raise ValueError('ORIGINAL_HANDSHAKE_ROOT_CHANGED')
+        root_recheck()
+        if (getattr(args, 'bridge_clear_recovery', None) or any(
+                os.path.lexists(root / name) for name in ('handshake-receipt.json', 'task-pack.json'))):
+            _fail('ORIGINAL_HANDSHAKE_EXISTS: observe its original attempt; no new challenge')
+            sys.exit(1)
+        root_recheck()
+'''
+    wrapped = prefix + "\n".join("    " + line if line else line for line in body.splitlines())
+    wrapped += "\n    finally:\n        os.close(held)"
+    text = edit_nodes(text, [(command, wrapped)])
+    nodes = [n for n in ast.parse(text).body
+             if isinstance(n, ast.FunctionDef) and n.name == "_handshake_one"]
+    if len(nodes) != 1:
+        raise ContractError("readonly handshake requires one original _handshake_one")
+    node = nodes[0]
+    source = ast.get_source_segment(text, node)
+    source = replace_once(source, "def _handshake_one(args, root, gate, item, per_executor):",
+                          "def _handshake_one(args, root, gate, item, per_executor, *, root_recheck):")
+    begin = source.index("    # Hard precondition: bridge-test must have proven its own token is gone.")
+    end = source.index("    # One fresh nonce per executor.", begin)
+    source = source[:begin] + (
+        "    # No write-and-clear probe: capability is checked against the exact\n"
+        "    # prepared challenge immediately before its one original send.\n\n") + source[end:]
+    source = replace_once(source,
+        '        "bridge_clear_confirmed": True,\n        "bridge_clear_recovery": clear_recovery,',
+        '        "handshake_precondition": None,')
+    source = replace_once(source, "        prepared = prompt_reference.plan(hello_msg, ack_nonce)\n",
+        "        prepared = prompt_reference.plan(hello_msg, ack_nonce)\n"
+        "        from upgrade_handshake_capability import observe as observe_capability\n"
+        "        import cmux_native_delivery as capability_native\n"
+        "        try:\n"
+        "            receipt['handshake_precondition'] = observe_capability(\n"
+        "                cmux, capability_native, gate, _gate_executors(gate), item,\n"
+        "                prepared['text'], lines=args.lines)\n"
+        "        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:\n"
+        "            raise cmux.DispatchUnconfirmed(\n"
+        "                'READONLY_HANDSHAKE_CAPABILITY_REFUSED: ' + str(exc),\n"
+        "                state=cmux.SUPERVISOR_DID_NOT_SUBMIT) from exc\n")
+    if source.count("_write_handshake_receipt(root, per_executor)") != 6:
+        raise ContractError("readonly handshake receipt writer shape changed")
+    source = "\n".join(line[:len(line) - len(line.lstrip())] + "root_recheck()\n" + line
+                       if line.strip() == "_write_handshake_receipt(root, per_executor)" else line
+                       for line in source.splitlines())
+    source = replace_once(source, "        cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)",
+                          "        root_recheck()\n"
+                          "        cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)")
+    return edit_nodes(text, [(node, source)])
+
+
 def callback_pane_wait(text):
     """Wait before a first input only; never replay a journal or reopen a lock."""
     text = replace_once(text, "def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):", r'''CALLBACK_PANE_WAIT_SECONDS = 15.0
@@ -333,7 +438,9 @@ def live_gates(name, text):
     elif name == "cmux_callback_journal.py":
         text = callback_pane_wait(text)
     elif name == "mac_harness.py":
-        text = bridge_probe_evidence(text)
+        text = readonly_handshake(name, bridge_probe_evidence(text))
+    elif name == "reconcile_handshake_ack.py":
+        text = readonly_handshake(name, text)
     elif name == "cmux_codex_input.py":
         text = replace_once(text, "from cmux_codex_rpc import DaemonRPC", "from cmux_codex_rpc import DaemonRPC\n"
                             "from upgrade_input_gate import check_input")
@@ -380,6 +487,9 @@ def transform_live(name, text, paths, controller, *, compatibility):
     if name == "mac_harness.py":
         changes.append("structured_experiment_startup_double_gate")
         changes.append("exact_bridge_probe_screen_evidence")
+        changes.append("readonly_initial_handshake_capability")
+    if name == "reconcile_handshake_ack.py":
+        changes.append("original_readonly_handshake_capability_reconciliation")
     if name == "cmux_bridge.py":
         changes.append("measured_claude_default_footer_and_tip")
     if name == "cmux_callback_journal.py":

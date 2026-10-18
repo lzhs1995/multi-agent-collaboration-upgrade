@@ -15,6 +15,28 @@ import upgrade_process_inventory as inventory
 
 
 class InventoryTests(unittest.TestCase):
+    def test_zombie_layout_is_explicitly_gated_before_loading_native_library(self):
+        known = types.SimpleNamespace(machine='arm64', release='25.5.0')
+        library = types.SimpleNamespace(sysctl=types.SimpleNamespace())
+        with patch.object(inventory.sys, 'platform', 'darwin'), \
+                patch.object(inventory.sys, 'byteorder', 'little'), \
+                patch.object(inventory.os, 'uname', return_value=known), \
+                patch.object(inventory.ctypes, 'CDLL', return_value=library) as load:
+            self.assertIs(inventory._kinfo_lib(), library)
+            self.assertEqual(load.call_count, 1)
+            for machine, release in (('x86_64', '25.5.0'), ('arm64', '25.6.0'), ('arm64', '24.0.0')):
+                load.reset_mock()
+                with patch.object(inventory.os, 'uname', return_value=types.SimpleNamespace(
+                        machine=machine, release=release)), self.assertRaises(identity.IdentityError):
+                    inventory._kinfo_lib()
+                load.assert_not_called()
+            for module, key, value in ((inventory.sys, 'platform', 'linux'),
+                                       (inventory.sys, 'byteorder', 'big')):
+                load.reset_mock()
+                with patch.object(module, key, value), self.assertRaises(identity.IdentityError):
+                    inventory._kinfo_lib()
+                load.assert_not_called()
+
     def test_truncation_grows_and_duplicate_or_bad_length_refuses(self):
         calls = []
         def listing(kind, uid, buf, size):
@@ -239,10 +261,12 @@ class TtyInventoryTests(unittest.TestCase):
 
     def scan(self, *, events=(), name=b'sleep', path=b'/bin/sleep', path_errno=0,
              path_count=None, listings=((23, 24),) * 4, final_pin=None,
-             uid_listings=((23, 24),) * 2, selector_stats=None):
+             uid_listings=((23, 24),) * 2, selector_stats=None,
+             sysctl_events=None, self_sysctl_events=(), self_bsd_events=()):
         events, listings, uid_listings = list(events), list(listings), list(uid_listings)
         self.reads, self.listings, self.paths, self.uid_listings = [], [], [], []
         self.enumerations = []
+        self.sysctl_reads, self.self_bsd_reads, self.self_sysctl_reads = [], [], []
         counts = {}
         device = 0x12000007
         def listing(kind, selector, buf, size):
@@ -259,11 +283,15 @@ class TtyInventoryTests(unittest.TestCase):
                 buf[index] = pid
             return len(members) * ctypes.sizeof(ctypes.c_int)
         def bsd(pid, kind, arg, pointer, size):
-            self.assertIn(pid, (23, 24), 'unrelated TTY processes must not be read')
+            self.assertIn(pid, (23, 24, os.getpid()), 'unrelated TTY processes must not be read')
             index = counts.get(pid, 0)
             counts[pid] = index + 1
-            self.reads.append((pid, index))
-            spec = events[index] if pid == 23 and index < len(events) else {}
+            if pid == os.getpid():
+                self.self_bsd_reads.append(index)
+                spec = self_bsd_events[index] if index < len(self_bsd_events) else {}
+            else:
+                self.reads.append((pid, index))
+                spec = events[index] if pid == 23 and index < len(events) else {}
             ctypes.set_errno(spec.get('errno', 0))
             if 'count' in spec:
                 return spec['count']
@@ -285,6 +313,29 @@ class TtyInventoryTests(unittest.TestCase):
             buf.value = path if pid == 23 else b'/opt/bin/codex'
             return len(buf.value) + 1
         lib = types.SimpleNamespace(proc_listpids=listing, proc_pidinfo=bsd, proc_pidpath=executable)
+        def sysctl(mib, count, pointer, length, new, newlen):
+            self.assertEqual((list(mib)[:3], count, new, newlen), ([1, 14, 1], 4, None, 0))
+            pid = mib[3]
+            self.assertIn(pid, (23, os.getpid()))
+            reads = self.self_sysctl_reads if pid == os.getpid() else self.sysctl_reads
+            variants = self_sysctl_events if pid == os.getpid() else sysctl_events
+            index = len(reads)
+            reads.append(pid)
+            spec = variants[index] if index < len(variants) else {}
+            b = ctypes.cast(pointer, ctypes.POINTER(inventory._KinfoProc)).contents
+            b.pid, b.ppid, b.uid = pid, 7, os.getuid()
+            b.start_sec, b.start_usec, b.tty_device = 100, 200, device
+            b.status = 2 if pid == os.getpid() else 5
+            for key, value in spec.items():
+                if key not in ('errno', 'return', 'length'):
+                    setattr(b, key, value)
+            ctypes.cast(length, ctypes.POINTER(ctypes.c_size_t)).contents.value = spec.get('length', 648)
+            ctypes.set_errno(spec.get('errno', 0))
+            return spec.get('return', 0)
+        def kinfo_lib():
+            if sysctl_events is None:
+                raise identity.IdentityError('no verified zombie proof in this fixture')
+            return types.SimpleNamespace(sysctl=sysctl)
         pin = dict(path='/dev/ttys007', device=device, inode=12)
         original_selector = inventory._terminal_selector
         stats = iter(selector_stats or ())
@@ -296,6 +347,7 @@ class TtyInventoryTests(unittest.TestCase):
                     patch.object(Path, 'resolve', return_value=Path('/dev/ttys007')):
                 return original_selector(tty)
         with patch.object(inventory, '_lib', return_value=lib), \
+                patch.object(inventory, '_kinfo_lib', side_effect=kinfo_lib), \
                 patch.object(inventory, '_terminal_selector', side_effect=selector), \
                 patch.object(identity, 'process', side_effect=AssertionError('strict reader is separate')):
             return inventory.inventory_for_tty(lambda value: Path(value).name in ('codex', 'claude'), 'ttys007')
@@ -379,11 +431,129 @@ class TtyInventoryTests(unittest.TestCase):
             for fault in faults:
                 with self.subTest(index=index, fault=fault), self.assertRaises(identity.IdentityError):
                     self.scan(events=[{}] * index + [fault])
-                self.assertEqual(sum(pid == 23 for pid, _ in self.reads), index + 1)
+                expected_reads = 2 if index == 0 and fault == {'status': 5} else index + 1
+                self.assertEqual(sum(pid == 23 for pid, _ in self.reads), expected_reads)
         for index in range(1, 6):
             for fault in ({'ppid': 8}, {'start_sec': 101}, {'start_usec': 201}, {'name': b'changed'}):
                 with self.subTest(index=index, fault=fault), self.assertRaisesRegex(identity.IdentityError, 'changed'):
                     self.scan(events=[{}] * index + [fault])
+
+    def test_initial_stable_zombie_is_not_a_live_receiver_even_with_candidate_name(self):
+        for name in (b'sleep', b'codex', b'claude', b'', b'x' * 31, b'\xff'):
+            with self.subTest(name=name):
+                self.assertEqual(self.scan(name=name, events=[{'status': 5}] * 4),
+                                 [['24', '/opt/bin/codex']])
+                self.assertEqual(self.paths, [24])
+                self.assertEqual([n for pid, n in self.reads if pid == 23], list(range(4)))
+                self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
+
+    def test_initial_zombie_pairs_preserve_all_identity_errors_and_close_without_retry(self):
+        import errno
+        faults = [{'count': 0, 'errno': error} for error in
+                  (errno.ESRCH, errno.EPERM, errno.EACCES, errno.EIO, 0)]
+        faults += [{'count': ctypes.sizeof(identity.BsdInfo)-1, 'errno': errno.ESRCH},
+                   {'pid': 99}, {'uid': os.getuid()+1}, {'start_sec': 0},
+                   {'tty_device': 0x12000008}]
+        for index in range(4):
+            for fault in faults:
+                events = [{'status': 5}] * 4
+                events[index] = dict(status=5, **fault)
+                with self.subTest(index=index, fault=fault), self.assertRaises(identity.IdentityError):
+                    self.scan(events=events)
+                self.assertEqual(sum(pid == 23 for pid, _ in self.reads), index + 1)
+                self.assertNotIn(23, self.paths)
+        for index in range(1, 4):
+            for drift in ({'ppid': 8}, {'start_sec': 101}, {'start_usec': 201},
+                          {'name': b'changed'}, {'status': 1}):
+                events = [{'status': 5}] * 4
+                events[index] = dict(events[index], **drift)
+                with self.subTest(index=index, drift=drift), self.assertRaises(identity.IdentityError):
+                    self.scan(events=events)
+                self.assertNotIn(23, self.paths)
+
+    def test_initial_zombie_reaping_or_scope_change_is_not_ignored(self):
+        for final_members in ((24,), (24, 25), (23, 24, 25)):
+            with self.subTest(final_members=final_members), self.assertRaisesRegex(
+                    identity.IdentityError, 'terminal member set changed'):
+                self.scan(events=[{'status': 5}] * 4,
+                          listings=((23, 24),) * 2 + (final_members,) * 2)
+        with self.assertRaisesRegex(identity.IdentityError, 'UID membership changed'):
+            self.scan(events=[{'status': 5}] * 4, uid_listings=((23, 24), (24,)))
+
+    def test_live_candidate_becoming_zombie_is_never_excluded(self):
+        for index in range(1, 6):
+            with self.subTest(index=index), self.assertRaises(identity.IdentityError):
+                self.scan(name=b'claude', path=b'/opt/bin/claude',
+                          events=[{}] * index + [{'status': 5}] * (6-index))
+
+    def test_initial_esrch_requires_four_complete_sysctl_zombies_and_fresh_self_checks(self):
+        import errno
+        for name in (b'claude', b'codex', b'', b'\xff', b'x' * 31):
+            with self.subTest(name=name):
+                self.assertEqual(self.scan(name=name, events=[{'count': 0, 'errno': errno.ESRCH}],
+                                           sysctl_events=[]), [['24', '/opt/bin/codex']])
+                self.assertEqual(self.paths, [24])
+                self.assertEqual([n for p, n in self.reads if p == 23], [0])
+                self.assertEqual(self.sysctl_reads, [23] * 4)
+                self.assertEqual(len(self.self_bsd_reads), 4)
+                self.assertEqual(len(self.self_sysctl_reads), 2)
+                self.assertEqual(self.enumerations, [3, 4, 3, 3, 4, 3])
+
+    def test_sysctl_zombie_every_read_refuses_missing_partial_errno_identity_and_live(self):
+        import errno
+        faults = [{'return': -1, 'errno': e} for e in (errno.ESRCH, errno.EPERM, errno.EACCES, 0)]
+        faults += [{'length': n} for n in (0, 1, 647, 649)]
+        faults += [{'errno': errno.EIO}, {'status': 0}, {'status': 2}, {'status': 6},
+                   {'pid': 99}, {'uid': os.getuid()+1}, {'start_sec': 0},
+                   {'start_usec': -1}, {'start_usec': 1000000}, {'ppid': 0},
+                   {'tty_device': 0x12000008}]
+        for index in range(4):
+            for fault in faults:
+                with self.subTest(index=index, fault=fault), self.assertRaises(identity.IdentityError) as caught:
+                    self.scan(events=[{'count': 0, 'errno': errno.ESRCH}],
+                              sysctl_events=[{}]*index+[fault])
+                self.assertEqual(caught.exception.bsd_absence,
+                                 dict(pid=23, stage='before_path_bsd_1', count=0, errno=errno.ESRCH))
+                self.assertEqual(len(self.sysctl_reads), index+1)
+                self.assertNotIn(23, self.paths)
+        for index in (1, 2, 3):
+            for drift in ({'ppid': 8}, {'start_sec': 101}, {'start_usec': 201}):
+                with self.subTest(index=index, drift=drift), self.assertRaisesRegex(identity.IdentityError, 'changed'):
+                    self.scan(events=[{'count': 0, 'errno': errno.ESRCH}],
+                              sysctl_events=[{}]*index+[drift])
+
+    def test_sysctl_never_converts_late_bsd_exit_or_error_to_success(self):
+        import errno
+        for index in range(6):
+            for error in (errno.ESRCH, errno.EPERM, errno.EACCES, errno.EIO, 0):
+                if index == 0 and error == errno.ESRCH:
+                    continue
+                with self.subTest(index=index, error=error), self.assertRaises(identity.IdentityError):
+                    self.scan(events=[{}]*index+[{'count': 0, 'errno': error}], sysctl_events=[])
+                self.assertEqual(self.sysctl_reads, [])
+
+    def test_sysctl_zombie_keeps_complete_scope_closure(self):
+        import errno
+        for kwargs in (dict(listings=((23,24),)*2+((24,),)*2),
+                       dict(uid_listings=((23,24),(24,)))):
+            with self.subTest(kwargs=kwargs), self.assertRaises(identity.IdentityError):
+                self.scan(events=[{'count': 0, 'errno': errno.ESRCH}], sysctl_events=[], **kwargs)
+            self.assertEqual(len(self.sysctl_reads), 4)
+
+    def test_sysctl_layout_self_check_rejects_drift_on_each_pair(self):
+        import errno
+        for index in range(2):
+            for fault in ({'ppid': 8}, {'start_sec': 101}, {'start_usec': 201},
+                          {'tty_device': 0xFFFFFFFF}, {'status': 5}, {'status': 0},
+                          {'length': 647}, {'pid': 99}, {'uid': os.getuid()+1}):
+                with self.subTest(index=index, fault=fault), self.assertRaises(identity.IdentityError):
+                    self.scan(events=[{'count': 0, 'errno': errno.ESRCH}], sysctl_events=[],
+                              self_sysctl_events=[{}]*index+[fault])
+                self.assertEqual(len(self.sysctl_reads), index*2)
+        for index in range(4):
+            with self.subTest(index=index), self.assertRaises(identity.IdentityError):
+                self.scan(events=[{'count': 0, 'errno': errno.ESRCH}], sysctl_events=[],
+                          self_bsd_events=[{}]*index+[{'count': 0, 'errno': errno.ESRCH}])
 
     def test_path_errors_and_unknown_candidates_cannot_disappear(self):
         import errno

@@ -27,7 +27,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_live_integrity.py", "upgrade_client_probe.py", "upgrade_startup_contract.py",
            "upgrade_hook_observer.py", "upgrade_input_gate.py", "upgrade_live_inspect.py", "upgrade_bootstrap.py",
            "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py",
-           "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py")
+           "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py",
+           "upgrade_handshake_capability.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -99,6 +100,11 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                    "surfaces, create replacements or replay old attempts. HOME stays unchanged; "
                    "the new clients have separately pinned CODEX_HOME/CLAUDE_CONFIG_DIR. "
                    "Actual automatic hooks and native identities must pass adoption before task input. "
+                   "Initial handshake uses a read-only bound capability check followed by one real "
+                   "challenge/ACK; it does not run the legacy write-and-clear probe. Busy work or "
+                   "native /goal alone does not block communication. Preserve drafts and original "
+                   "attempts; never repeat a pending or failed challenge. The explicit bridge-test "
+                   "remains a separate diagnostic. No bridge-clear success is claimed for read-only checks. "
                    "Original MAC native reception, ACK, callback and acceptance gates below still apply.\n\n"
                    + raw.decode()).encode()
             kinds = ["explicit_private_controller_scope"]

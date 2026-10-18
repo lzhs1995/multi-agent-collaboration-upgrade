@@ -6,6 +6,7 @@ This module is copied into the private controller; production MAC is untouched.
 from __future__ import annotations
 
 import uuid
+import re
 
 
 def canonical_uuid(value):
@@ -15,6 +16,22 @@ def canonical_uuid(value):
         return str(uuid.UUID(value))
     except ValueError as exc:
         raise ValueError("ACK_CANONICAL_UUID_REQUIRED") from exc
+
+
+def _selector(value):
+    if isinstance(value, str) and re.fullmatch(r"surface:[0-9]+", value):
+        return value
+    return canonical_uuid(value)
+
+
+def _register_alias(aliases, value, mid):
+    if not isinstance(value, str) or not value:
+        raise ValueError("ACK_ORIGINAL_GATE_ALIAS_REQUIRED")
+    alias = _selector(value)
+    if ((not alias.startswith("surface:") and alias != mid)
+            or (alias in aliases and aliases[alias] != mid)):
+        raise ValueError("ACK_ORIGINAL_GATE_ALIAS_AMBIGUOUS")
+    aliases[alias] = mid
 
 
 def bound_rows(rows, members, gate, binding):
@@ -33,11 +50,20 @@ def bound_rows(rows, members, gate, binding):
             raise ValueError("ACK_ORIGINAL_CANONICAL_EXECUTOR_DUPLICATE")
         seen_members.add(mid)
         for alias in (member.get("surface_ref"), mid):
-            if not isinstance(alias, str) or not alias:
-                raise ValueError("ACK_ORIGINAL_GATE_ALIAS_REQUIRED")
-            if alias in aliases:
-                raise ValueError("ACK_ORIGINAL_GATE_ALIAS_AMBIGUOUS")
-            aliases[alias] = mid
+            _register_alias(aliases, alias, mid)
+    # Bind aliases only from the original gate, including UUID-keyed proofs
+    # whose target is represented by a UI ref. Never consult today's inventory.
+    for member in members:
+        mid = canonical_uuid(member["surface_uuid"])
+        proof = gate.get("workspace_proofs", {}).get(member["surface_ref"])
+        if not isinstance(proof, dict):
+            raise ValueError("ACK_ORIGINAL_WORKSPACE_PROOF_REQUIRED")
+        if canonical_uuid(proof.get("target_surface_uuid")) != mid:
+            raise ValueError("ACK_ORIGINAL_WORKSPACE_PROOF_CHANGED")
+        source, target_ref = _selector(member["surface_ref"]), _selector(proof.get("target_surface_ref"))
+        if source.startswith("surface:") and target_ref != source:
+            raise ValueError("ACK_ORIGINAL_WORKSPACE_PROOF_CHANGED")
+        _register_alias(aliases, target_ref, mid)
     resolved, seen = [], set()
     for row, member in zip(rows, members):
         if not isinstance(row, dict):
@@ -82,7 +108,7 @@ def bound_rows(rows, members, gate, binding):
     for field in ("workspace_uuid", "caller_surface_uuid", "target_surface_uuid", "target_pane_uuid"):
         if canonical_uuid(proof.get(field)) != canonical_uuid(identity.get(field)):
             raise ValueError("ACK_ORIGINAL_WORKSPACE_PROOF_CHANGED")
-    if (proof.get("target_surface_ref") != member.get("surface_ref")
+    if (aliases.get(_selector(proof.get("target_surface_ref"))) != target
             or proof.get("workspace_ref") != gate.get("workspace_ref")):
         raise ValueError("ACK_ORIGINAL_WORKSPACE_PROOF_CHANGED")
     if "caller_pane_uuid" in identity and canonical_uuid(proof.get("caller_pane_uuid")) != canonical_uuid(identity["caller_pane_uuid"]):

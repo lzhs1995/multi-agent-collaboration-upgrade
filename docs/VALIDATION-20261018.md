@@ -1,6 +1,74 @@
 # 2026-10-18 压力测试与真实协作验证
 
-## 2026-10-18T14:52Z r20 已结束：未通过真实验收
+## 当前终态：r21 已失败收尾，UUID 修复已完成本机验证
+
+**r21 于台北 2026-10-19 01:21:46 形成最终报告：1 FAILED＋32 MISSING，
+完整业务 0/33、pilot 0/3、pairs 0/15。效率未证明，成本 UNKNOWN。**
+三客户端曾全部 ADOPTED；首轮在只读握手身份检查中误拒绝 UUID 自别名，
+并非找不到双 Claude。七组已停止新输入，原会话、控制器及失败记录保留。
+192 个注册通信槽均缺 attempt，native/body_read UNKNOWN，不计真实通信通过。
+
+本机补丁已通过 66/66 受影响回归；独立生成控制器的 8 进程 ×100 轮
+完成 38,400 项边界检查，含 24,000 次预期拒绝，零意外失败。
+这些测试使用 fixture 身份/日志和原 gate 的只读副本，零模型请求。
+早先的 99/9600/1600/7000 批次没有机械重跑，也不能覆盖此次缺失的 UUID 形状。
+完整证据、修复边界与未完成工作见 [r21 终态报告](VALIDATION-20261019-R21.md)。
+以下均为带时间的历史记录；本阶段不自动启动下一 campaign 或重放 r21。
+
+## 2026-10-19 01:17台北：r21首轮已建立，尚无业务验收通过（历史）
+
+新候选已冻结为v19，7组/33槽/15对和192条独立通信消息已注册。watchdog先READY，
+随后driver启动1 Codex＋2 Claude首组；三客户端于01:14:34全部ADOPTED。
+原Codex已收取BOOTSTRAP_READY，并于01:17:00.131建立pilot-01、发布任务草稿。
+首轮截止01:47:00.131；尚无完整业务验收通过，启动或草稿发布不计业务成功。
+配置固定整体截止为台北03:03:55.274432；最迟03:15报告结果，失败提前收尾，不补样、
+不重放或自动下一campaign。完整业务当前0/33，通信0/192，效率未证明、成本UNKNOWN。
+
+配置 `/Users/lzhs/ul/driver/config.json` SHA `8cb437193e80128268b841f6909481fc3b57cd3608b18d54d2f8f7cdfa00dc46`。
+冻结export `source-exports/resume-20261019-live-v19/export.json`（相对于E）SHA
+`6e1df630db6dd3a3186fd3a39acca1d7a6fe18c3606c0748421fc03e8d61405a`。
+启动/截止原证据在 `execution/r21-original-driver/`；后续仅观察原次。
+首轮原件观察：`maintenance/r21-progress/observation-0008.json`。
+两侧Claude原始日志出现HTTP429 account/user concurrency limit；01:14:47的
+有界观察记录A18条、B9条，已识别错误均429，不能归为key无效或401/403。
+这些日志可能包含后台请求，尚不能将每条错误归于特定业务请求。
+证据在 `maintenance/r21-provider-observations/`；观察器没有发起模型请求。
+
+
+## 2026-10-19 只读握手与初始僵尸修复：本机验证结果（r21 启动前历史）
+
+r20历史终态为 **0/33、pilot 0/3、pairs 0/15**，1 TIMEOUT＋32 MISSING。
+r21当前执行状态见本页首节；效率未证明、成本 UNKNOWN。下方 r20 的终态不变。
+
+新增只读初次握手绑定真实挑战正文，保留原发送、nonce、ACK、原生回执与文件前缀。
+不再为初次握手写入和清除探针，不为通信暂停 `/goal`。同根非阻塞目录锁覆盖
+receipt、发送及 ACK，所有关键写入前核 inode；旧 receipt 和 controller 不迁移。
+审查曾复现无锁时两次 nonce/两次发送；已修复，失败证据保留。
+
+- 受影响 6 模块 **99/99 PASS**，44.257 秒，零失败/错误/跳过，Python 源码前后相同。
+- 实际生成控制器、Darwin 内核沙箱：8 OS workers ×100 轮 ×12 边界，**9600/9600 PASS**；共同执行区间 2.005 秒，全部 exit 0。GUI/进程观察及原生日志内容为 fixture，模型请求和输入均为 0，不能计真实通信成功。
+- 同根握手竞争 **1600 次调用**：8 workers ×100 根，100 PASS＋1500 预期拒绝；恰好 100 nonce、100 次模拟传输 submit 调用及100份模拟receipt，15.705 秒，真实模型输入为0。
+- 独立审计 **58/58 PASS**：逐 worker 结果、完整生成控制器与 19 个支持模块、266 文件内容/模式、目录锁及私有 helper 路由均核验。
+- 新增通信集成 **66/66 PASS**，6.632 秒，零失败/错误/跳过且 Python 源码前后相同；覆盖 `test_upgrade_communication_plan`、`test_upgrade_driver`、`test_orchestration_pack_inputs`、`test_orchestration_transport` 四模块。192 条消息已接入实际 supervisor/task scope，已在r21注册，尚待真实执行。
+- 初始 SZOMB 的产品修复此前已完成 **7000/7000 真实进程边界检查**与独立轨迹审计，7008 子进程全部自然回收；本轮没有重复该压力。
+- B0024 实地链审计 **29 项通过**：包与 6/6 必读文件实际读取成立，但原 native user 完整相等为零、callback 为 NO_INPUT，保留原 queued/unconfirmed 状态。
+
+证据（相对于 E）：`validation/r20-readonly-handshake-regression-01/result.json`
+SHA `b68c3552d6373a00f6363b07ee8ba689643e959a60a8002994698e2af25b91ef`；
+`validation/r20-readonly-handshake-pressure-01/result.json`
+SHA `9c88e70b9d3f87abb37749288c855edcff0d4df6176cfb991bbb6583cba6f3e9`。
+sysctl 见 `maintenance/r20-delivery/SYSCTL-PRODUCT-PRESSURE-7000.md`；
+B0024 见 `maintenance/r20-busy-attachment-audit/B0024-ORIGINAL-CHAIN-AUDIT.md`。
+
+新发现已投递 surface40 既有文件收件箱；发布不代表已读或回件。r19 的历史回件
+已核验，新的只读握手请求尚未收到约定回复。共享技能仍仅由 surface40 合并。
+v19已冻结并用于唯一r21；不重放r20。通信回归证据为 `validation/r21-communication-integration-01/result.json`，SHA `a2ffd360ab3e57e27a1a7d7c366a6d2af613c03ab12a9234fbf800b191b00377`。
+当时只读交付审查确认312个v19源码文件与manifest匹配，13个变更Python文件与
+冻结树匹配。99/9600证据相对当时源码有3个后续修改脚本及2个新增通信模块；
+后续66项覆盖这些通信变更。r21结束后的identity与测试修复不属于v19；
+它们由页首新批次验证，不宣称当前全套测试全部重新运行。
+
+## 2026-10-18T14:52Z r20 已结束：未通过真实验收（历史）
 
 **原 r20 为 HALTED/TIMEOUT：1 TIMEOUT＋32 MISSING；完整业务 0/33、pilot 0/3、
 pairs 0/15。协作提效未证明，成本 UNKNOWN。没有全量模型实验继续运行。**
@@ -856,7 +924,7 @@ r8 已经发布 freeze/bootstrap，原 Codex 已读取 bootstrap，随后在
 当前没有已验证的同会话切换到新 controller 的路径，不能以新源码或离线集成
 冒充原进程采用。新候选准备与客户端启动分开；不扩大原 r8 的一次实验授权。
 
-## 经验会话与论文工作流
+## r8时点的经验会话与论文工作流（历史）
 
 用户指定的经验会话为 workspace
 `6FB20312-9E66-43DB-AF09-92C3B18E1296`、surface
@@ -881,7 +949,9 @@ proof。这是实际父链、hook audit 与源码路径诊断，不是对方阅�
 这些规则已落实到 upgrade 文档和相关竞争/收口检查；本次没有操作论文文件、
 Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载测试。
 
-## 未完成项及继续条件
+## r20收尾时的未完成项及继续条件（历史）
+
+以下保留r20当时的状态，不代表当前r21未启动；当前状态以本页首节为准。
 
 1. r20已HALTED/TIMEOUT，原runner/driver/watchdog均已返回，七组stop已核验。
    需修复本轮TTY成员退出导致的身份采集拒绝，并减少准备、派发和核收延迟。

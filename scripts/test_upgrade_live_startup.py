@@ -186,6 +186,22 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_materialized_readonly_handshake_and_original_native_fences(self):
+        controller = Path(self.spec["controller"]) / "scripts"
+        probe = Path(__file__).with_name("upgrade_handshake_probe.py").read_text()
+        code = (probe + "\nimport sys\n" + f"sys.path.insert(0, {str(controller)!r})\n" +
+                f"print(json.dumps(run({str(controller)!r}, " +
+                f"{self.spec['clients']['claude_a']['native_root']!r})))\n")
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        counts = json.loads(result.stdout)
+        self.assertEqual(counts['checks'], 12)
+        self.assertEqual(counts['model_requests'], 0)
+        self.assertEqual(counts['native_inputs'], 0)
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_callback_wait_keeps_single_attempt_and_fresh_gates(self):
         controller = Path(self.spec["controller"]) / "scripts"
         probe = Path(__file__).with_name("upgrade_callback_wait_probe.py").read_text()

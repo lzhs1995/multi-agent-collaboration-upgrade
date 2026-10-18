@@ -17,6 +17,29 @@
 
 ## Probe Discipline
 
+### r21 UUID selectors and original proof aliases
+
+The real v3 producer placed a UUID in `member.surface_ref` and keyed its
+`workspace_proofs` entry with that exact selector, while the proof's
+`target_surface_ref` remained a UI ref. The earlier identity fixture used only
+UI selectors. Registering the UUID selector and canonical UUID separately
+incorrectly rejected a self-alias; comparing the two ref strings then introduced
+a second refusal. r21 stopped before handshake input, with business 0/33.
+
+Canonicalize UUIDs and permit self-aliases only for the same canonical member.
+Register UI aliases only from the pinned original proof under the exact original
+selector key; require that proof's target UUID to match. Reject cross-member
+aliases, wrong UUID selectors, missing/differently keyed proofs and identity
+drift. Legacy UI selectors remain exact. Keep session/provider/pane and row-order
+checks, return the original objects unchanged, and never consult today's cmux
+inventory to reconstruct historical evidence. Requiring every member's original
+proof also prevents a malformed nonselected member from supplying an alias.
+
+`test_upgrade_identity.py` and `test_upgrade_handshake_capability.py` now cover
+that real producer shape, UUID case variants, original UI aliases and refusal
+boundaries. Local generated-controller pressure is not a live native receipt or
+proof of collaboration efficiency. See the [r21 terminal report](../docs/VALIDATION-20261019-R21.md).
+
 Use the producer's actual schema. Null, false, absent and zero are different
 observations. A SHA of empty bytes is evidence of empty bytes, not proof of a
 failed read: independently check the read outcome and byte count. Never reconstruct
@@ -249,6 +272,33 @@ reduces displayed bytes in a local measurement, with no demonstrated model cost
 or business latency improvement and no change to the frozen live experiment.
 # Bounded callback contention and campaign deadlines
 
+## Initial handshake and measured consumption (2026-10-19)
+
+A write-and-clear probe can remain blocked throughout native goal activity even
+when the guarded new-message route supports communication. New private
+controllers bind read-only capability to the actual prepared challenge, then
+retain the original input journal, one submission, native receipt and ACK.
+Capability is neither a receipt nor permission to replay. Keep the complete
+composer, native process/session and transcript prefix checks. Receipt existence
+alone is not a concurrency guard: the generated harness originally admitted two
+same-root calls before either wrote a receipt. Hold the original directory flock
+through the entire challenge/ACK transaction and recheck its inode before every
+receipt write and send; no new sidecar or old-controller migration is needed.
+
+The B0024 native audit established exact queued-command acceptance, task-pack
+access and complete reading of all six required files, but no matching native
+user record and no successful callback input. The executor also acknowledged
+omitting separate task acceptance. Measure queue acceptance, notice reception,
+body access, required-file reads, task acceptance, callback and supervisor
+business acceptance independently. Successful work cannot rewrite an original
+unconfirmed-delivery state. A maintenance inbox publication likewise does not
+prove hook exposure or a two-way exchange.
+
+The 99-case affected regression and 8-process/9600-check sandbox pressure passed;
+live observations and native records in the latter were fixtures. The separate
+7000-case sysctl pressure used real kernel processes. Neither establishes the
+33-round business benchmark or measured collaboration improvement.
+
 The r19 native audit observed two callback invocations only 0.693 seconds apart.
 The second refused on the pane lock before PREPARED or any input; this is not
 proof of duplicate native input. The first invocation returned after 8.323
@@ -271,3 +321,12 @@ runtime stop markers before report work, and retain the first halt/report.
 Preserve the complete benchmark denominator and record actual stop errors and
 timestamps. Neither a marker nor process preservation proves that an in-flight
 remote model request was canceled.
+
+## r21 独立通信样本与握手竞争
+
+192条普通消息必须与正式task通知/callback分开：两臂各96，六组各32，每warm轮8。
+原生参与者本人从绑定helper单次发送，before/after不等于active/idle或goal；拒绝、
+queued、missing保留，不补样、不额外求ACK。helper即使短正文也附带换行header，
+从而生成MESSAGE_REFERENCE_V2；原生notice接收不证明完整body读取。
+实际生成握手的1600调用竞争仅100次模拟传输submit调用，另1500预期拒绝；真实模型输入0，
+不能作为真实模型提效结果。66项新增集成回归与58项独立审计已通过。
