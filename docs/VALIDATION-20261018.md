@@ -5,6 +5,38 @@
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
 
+## 新版 Claude 注册兼容修复（08:58 更新）
+
+r9 已按原 900 秒启动 watchdog 收口，保留三个原会话及全部结果：pilot 0/3、
+pairs 0/15、closures 0/33。两只 Claude 已执行 readiness；阻断原因是
+Claude Code 2.1.170 的原生注册提供 `peerProtocol=1/startedAt`，不再提供
+旧 `procStart`，原控制器因此返回 `NATIVE_REGISTRATION_PROCESS_MISMATCH`。
+这不是 key 不可用或没有找到双 Claude。
+
+修复同时进入原生读取器和私有 controller materialization。保留 legacy
+`procStart` 的严格匹配；新格式必须满足整数 PID、协议、入口、毫秒时间戳及
+真实内核进程生命周期，并重新读取进程以拒绝 PID 重用或身份变化。无效旧字段
+不能通过新字段回退。没有改写原生注册、在途 controller 或共享 MAC。
+
+- 完整回归：**1,768/1,768，零 failures/errors/skips，771.515 秒**；243 个
+  监测文件 SHA 不变，未放宽内部超时。新增 5 项原生正反例和 1 项私有
+  materialized controller 集成均包含在内。
+- 两只实际 Claude（PID 3230/3209）的原生注册和内核身份通过修复 helper
+  的只读验证，零输入、无 fixtures。该验证仅证明注册兼容，不冒充完整 adoption。
+- 组件竞争压力涉及的两个文件未变，保留已通过的 7,200 reserve 压力结果。
+- 集成测试首轮 fixture 缺少 executable/HOME 的失败保留；只修正 fixture，
+  没有放宽产品身份检查。
+
+证据：`validation/r8-pressure-and-full/claude-registration-full-01/`、
+`validation/claude-registration-live-01/result.json`、
+`execution/r9-original-driver/result.json`。r9 原报告为
+`/Users/lzhs/u9/driver/final-report.json`；源码修复后的完整业务压力尚未完成。
+本节在全测完成后更新，文档变化与经过测试的可执行源码分别固定。
+
+用户已全面授权继续全量测试并要求不重复询问。修复后的独立实验沿用该明确授权，
+保留旧会话、旧控制器、失败分母和原授权；精确固定新路径后执行同三会话
+pilot 3/3，再运行 12 warm＋3 cold pairs。不将旧 r9 的失败替换为新成绩。
+
 ## 已完成的验证
 
 | 验证层 | 实际规模与结果 | 能证明的范围 |

@@ -68,6 +68,44 @@ class MaterializedStartupTests(unittest.TestCase):
         self.assertFalse(Path(self.spec["adoption_path"]).exists())
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_materialized_claude_peer_registration_and_pid_reuse(self):
+        controller = Path(self.spec["controller"]) / "scripts"
+        root = Path(self.spec["clients"]["claude_a"]["native_root"])
+        code = f'''
+import copy, json, sys, time
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, {str(controller)!r})
+import cmux_native_delivery as native
+import mac_upgrade_claude_registration as registration
+assert registration.__file__ == {str(controller / 'mac_upgrade_claude_registration.py')!r}
+root = Path({str(root)!r})
+sid = '00000000-0000-0000-0000-000000000001'
+p = dict(pid=987654, birth=[int(time.time())-10, 500000], executable='/fixture/claude',
+         env=dict(HOME=str(Path.home()), CLAUDE_CONFIG_DIR=str(root)))
+path = root / 'sessions/987654.json'
+reg = dict(pid=p['pid'], kind='interactive', sessionId=sid, version='2.1.170',
+           peerProtocol=1, entrypoint='cli', startedAt=(p['birth'][0]+4)*1000)
+path.write_text(json.dumps(reg))
+with patch.object(native.identity, 'process', side_effect=lambda pid: copy.deepcopy(p)):
+    assert native._live_session(p, 'claude') == sid
+    reg['startedAt'] = (p['birth'][0]-1)*1000
+    path.write_text(json.dumps(reg))
+    try:
+        native._live_session(p, 'claude')
+    except native.NativeDeliveryError as exc:
+        assert str(exc) == 'NATIVE_REGISTRATION_PROCESS_MISMATCH'
+    else:
+        raise AssertionError('stale PID registration accepted')
+print('MATERIALIZED_CLAUDE_REGISTRATION_PASS')
+'''
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MATERIALIZED_CLAUDE_REGISTRATION_PASS", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_materialized_standalone_tool_hook_and_public_proof(self):
         # Execute the actual transformed collectors in a fresh interpreter.
         # Only kernel/foreground observations are fixtures; dispatch is absent.

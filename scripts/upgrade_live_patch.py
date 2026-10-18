@@ -12,7 +12,7 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_client_probe", "upgrade_startup_contract", "upgrade_hook_observer",
     "upgrade_input_gate", "upgrade_live_inspect", "upgrade_bootstrap",
     "upgrade_process_inventory", "upgrade_socket_boundary", "upgrade_claude_ps",
-    "upgrade_standalone_identity")}
+    "upgrade_standalone_identity", "upgrade_claude_registration")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -51,6 +51,17 @@ def native_readers(name, text):
             '    return [pid for pid, path in private_process.inventory(lambda name: Path(name).name == "codex")]')])
         return standalone_identity(_terminal_reads(text))
     if name == "cmux_native_delivery.py":
+        text = replace_once(text,
+            "            births = {time.strftime('%a %b %e %H:%M:%S %Y', clock(p[\"birth\"][0]))\n"
+            "                      for clock in (time.gmtime, time.localtime)}\n"
+            '            if (not isinstance(reg, dict) or reg.get("pid") != p["pid"]\n'
+            '                    or reg.get("kind") != "interactive" or reg.get("procStart") not in births):\n'
+            '                raise NativeDeliveryError("NATIVE_REGISTRATION_PROCESS_MISMATCH")',
+            '            from upgrade_claude_registration import matches_process\n'
+            '            if not matches_process(reg, p, observed_at=time.time()):\n'
+            '                raise NativeDeliveryError("NATIVE_REGISTRATION_PROCESS_MISMATCH")\n'
+            '            if identity.process(p["pid"]) != p:\n'
+            '                raise NativeDeliveryError("NATIVE_PROCESS_CHANGED")')
         text = replace_once(text, "import cmux_foreground_thread as foreground",
                             "import cmux_foreground_thread as foreground\nimport upgrade_native_roots as private_roots\n"
                             "import upgrade_process_inventory as private_process")
