@@ -60,6 +60,24 @@ Stress every read boundary with real short-lived processes and preserve failed
 scan counts. A traceback without its PID/path does not prove an unrelated row, and this discovery fix alone
 does not establish successful live collaboration.
 
+The private native target lookup enumerates the bound controlling TTY through
+Darwin `PROC_TTY_ONLY`; daemon client discovery retains its full-UID inventory.
+Pin the canonical `/dev` character device before and after enumeration, verify
+every BSD snapshot's TTY, and close the original member identities and PID set.
+Any member exit, permission error, unknown read, identity drift or set change
+refuses; there is no fallback scan or automatic replay. This establishes target
+uniqueness inside the exact TTY, not global uniqueness of environment values on
+other terminals. Selected clients retain complete native process, executable,
+private-root, session, UUID and transcript checks. Snapshot executable basenames
+once per lookup; never cache the selected executable's authority checks.
+
+Startup content checks may use at most three workers for pins declaring large
+files while the caller checks small files. Each invocation still hashes the
+complete actual contents and checks before/after descriptor and path identity.
+No digest or stat cache is permitted. Drain all parallel checks before raising,
+preserving original exceptions; small batches retain serial fail-fast behavior.
+Measure local verification speed separately from end-to-end collaboration gains.
+
 Preserve structured exception chains and traceback frame locations in runner
 CLI refusals, without local variables or source lines. An unexplained filesystem
 error is not a transient provider failure; record the last published artifact and

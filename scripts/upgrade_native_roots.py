@@ -51,9 +51,14 @@ def executable_pins():
 
 
 def candidate_process_name(name):
-    # ps is only a discovery filter. The actual kernel executable and file
-    # identity must match below, including version-named native Claude builds.
-    return Path(name).name in {Path(pin["path"]).name for pin in executable_pins().values()}
+    return candidate_process_matcher()(name)
+
+
+def candidate_process_matcher():
+    # Capture only discovery names, once per inventory. This is no authority
+    # cache: selected processes still read and verify their actual pins below.
+    names = frozenset(Path(pin["path"]).name for pin in executable_pins().values())
+    return lambda name: Path(name).name in names
 
 
 def executable_provider(process):

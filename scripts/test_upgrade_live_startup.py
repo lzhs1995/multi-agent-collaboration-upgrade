@@ -339,12 +339,12 @@ print('MATERIALIZED_STANDALONE_TOOL_HOOK_PASS')
         # Discovery changes must not replace the pinned base's strict reader.
         self.assertEqual(ast.dump(function_tree(controller / "cmux_daemon_identity.py", "process")),
                          ast.dump(function_tree(SOURCE / "scripts/cmux_daemon_identity.py", "process")))
-        for module, entrypoint in (("cmux_daemon_identity.py", "client_candidates"),
-                                   ("cmux_native_delivery.py", "_target_process")):
+        for module, entrypoint, discovery in (("cmux_daemon_identity.py", "client_candidates", "inventory"),
+                                   ("cmux_native_delivery.py", "_target_process", "inventory_for_tty")):
             calls = [node for node in ast.walk(function_tree(controller / module, entrypoint))
                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                      and isinstance(node.func.value, ast.Name)
-                     and node.func.value.id == "private_process" and node.func.attr == "inventory"]
+                     and node.func.value.id == "private_process" and node.func.attr == discovery]
             self.assertEqual(len(calls), 1, (module, entrypoint))
         for name in ("cmux_daemon_identity.py", "cmux_native_delivery.py"):
             self.assertNotIn("/bin/ps", (controller / name).read_text())
@@ -362,12 +362,15 @@ assert inventory.__file__ == {str(controller / 'mac_upgrade_process_inventory.py
 assert identity.private_process is inventory
 assert delivery.private_process is inventory
 assert identity.private_process.inventory is inventory.inventory
-assert delivery.private_process.inventory is inventory.inventory
+assert delivery.private_process.inventory_for_tty is inventory.inventory_for_tty
 p = identity.process(os.getpid())
 rows = inventory.inventory(lambda name: Path(name).name == Path(p['executable']).name)
 assert sum(int(pid) == os.getpid() for pid, path in rows) == 1
 expected_tty = os.environ['TEST_CONTROLLING_TTY']
 assert inventory.terminal(p) == expected_tty
+if expected_tty != '?':
+    rows = inventory.inventory_for_tty(lambda name: Path(name).name == Path(p['executable']).name, expected_tty)
+    assert rows == [[str(os.getpid()), p['executable']]], rows
 try:
     inventory.terminal(dict(p, birth=[1, 2]))
 except identity.IdentityError:
@@ -375,8 +378,8 @@ except identity.IdentityError:
 else:
     raise AssertionError('changed birth accepted')
 # Exercise the materialized delivery gate with real kernel identity/TTY.
-delivery.private_process.inventory = lambda candidate: [[str(os.getpid()), p['executable']]]
-delivery.private_roots.candidate_process_name = lambda path: True
+delivery.private_process.inventory_for_tty = lambda candidate, tty: [[str(os.getpid()), p['executable']]]
+delivery.private_roots.candidate_process_matcher = lambda: lambda path: True
 delivery._provider = lambda proc: 'claude'
 row = dict(target_surface_uuid='', workspace_uuid='', tty='ttys999999')
 try:
@@ -715,6 +718,42 @@ class InputGateTests(unittest.TestCase):
 
 
 class NativeRootTests(unittest.TestCase):
+    def test_frozen_name_matcher_does_not_cache_selected_executable_integrity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp).resolve() / '2.1.226'
+            path.write_bytes(b'original content')
+            pin = artifact_ref(path)
+            st = path.stat()
+            proc = dict(pid=23, birth=[1, 2], executable=str(path),
+                        file_identity=[st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns])
+            with patch.object(roots, 'executable_pins', return_value={'claude': pin}), \
+                    patch.object(roots, 'process_root', return_value=path.parent):
+                candidate = roots.candidate_process_matcher()
+                self.assertEqual(roots.executable_provider(proc), 'claude')
+                self.assertIsNone(roots.executable_provider(dict(proc, executable='/other/2.1.226')))
+                path.write_bytes(b'modified content')
+                os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+                self.assertTrue(candidate(str(path)))
+                with self.assertRaises((ContractError, ValueError)):
+                    roots.executable_provider(proc)
+
+    def test_discovery_names_are_captured_once_but_next_inventory_is_fresh(self):
+        pins = {'codex': {'path': '/pinned/codex'}, 'claude': {'path': '/pinned/2.1.226'}}
+        with patch.object(roots, 'executable_pins', return_value=pins) as read:
+            candidate = roots.candidate_process_matcher()
+            for _ in range(10):
+                self.assertTrue(candidate('/pinned/codex'))
+                self.assertTrue(candidate('2.1.226'))
+                self.assertFalse(candidate('/unrelated/sleep'))
+            pins['claude']['path'] = '/pinned/2.1.227'
+            self.assertTrue(candidate('2.1.226'))
+            self.assertFalse(candidate('2.1.227'))
+            read.assert_called_once()
+            fresh = roots.candidate_process_matcher()
+            self.assertTrue(fresh('2.1.227'))
+            self.assertFalse(fresh('2.1.226'))
+            self.assertEqual(read.call_count, 2)
+
     def test_version_named_claude_requires_real_pin_and_private_process_root(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp).resolve() / "2.1.226"

@@ -71,13 +71,14 @@ def native_readers(name, text):
             '    matches = []\n'
             '    for line in listing.stdout.splitlines():\n'
             '        fields = line.strip().split(None, 1)',
-            '    matches = []\n    for fields in private_process.inventory(private_roots.candidate_process_name):')
+            '    candidate = private_roots.candidate_process_matcher()\n'
+            '    matches = []\n    for fields in private_process.inventory_for_tty(candidate, row["tty"]):')
         text = _terminal_reads(text)
         provider = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_provider")
         text = edit_nodes(text, [(provider, "def _provider(p):\n    return private_roots.executable_provider(p)")])
         text = replace_once(text,
             'if Path(fields[1]).name not in ("codex", "claude", "claude.exe", "node"):',
-            'if not private_roots.candidate_process_name(fields[1]):')
+            'if not candidate(fields[1]):')
         text = replace_once(text, 'Path.home() / ".claude/sessions" / (str(p["pid"])+".json")',
                             'private_roots.process_root("claude", p) / "sessions" / (str(p["pid"])+".json")')
         start = text.index("def _native_root(provider):")

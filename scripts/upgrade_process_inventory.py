@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 
@@ -30,14 +31,16 @@ def _lib():
     return lib
 
 
-def _pids(lib):
+def _pids(lib, *, tty_device=None):
     from cmux_daemon_identity import IdentityError
-    # PROC_UID_ONLY=4, as declared by Darwin libproc.h. Grow a bounded buffer
+    # Darwin sys/proc_info.h: PROC_UID_ONLY=4, PROC_TTY_ONLY=3.
+    # Grow a bounded buffer
     # rather than accepting a possibly truncated inventory as unique evidence.
     for capacity in (1024, 4096, 16384, 65536):
         budget.check()
         buf = (ctypes.c_int * capacity)()
-        count = lib.proc_listpids(4, os.getuid(), buf, ctypes.sizeof(buf))
+        kind, selector = (4, os.getuid()) if tty_device is None else (3, tty_device)
+        count = lib.proc_listpids(kind, selector, buf, ctypes.sizeof(buf))
         if count <= 0 or count % ctypes.sizeof(ctypes.c_int):
             raise IdentityError("kernel client inventory unavailable")
         if count >= ctypes.sizeof(buf):
@@ -57,7 +60,7 @@ def _discovery_error(message, pid, stage, *, count=None, error=None):
     return exc
 
 
-def _kernel_bsd(lib, pid, stage, *, expected=None):
+def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None):
     """One discovery-only read; retain the original errno and negative evidence."""
     import errno
     from cmux_daemon_identity import BsdInfo
@@ -75,6 +78,10 @@ def _kernel_bsd(lib, pid, stage, *, expected=None):
         raise _discovery_error("kernel process identity changed, foreign, or invalid", pid, stage)
     current = dict(identity=dict(pid=pid, ppid=b.ppid, birth=[b.start_sec, b.start_usec]),
                    name=bytes(b.name), zombie=b.status == 5)
+    if tty_device is not None:
+        current['tty_device'] = int(b.misc[3])
+        if current['tty_device'] != tty_device:
+            raise _discovery_error("kernel terminal inventory changed", pid, stage)
     # Validate before considering zombie/exit. A reused PID cannot erase drift.
     if expected is not None and (current['identity'] != expected['identity']
                                  or current['name'] != expected['name']):
@@ -93,15 +100,20 @@ def _unrelated_name(snapshot, candidate):
     return not candidate(name)
 
 
-def _discovery_pair(lib, pid, candidate, *, stage, previous=None, known_noncandidate=None):
+def _discovery_pair(lib, pid, candidate, *, stage, previous=None, known_noncandidate=None,
+                    tty_device=None):
     """No retries. An exit can exclude only an original known unrelated row."""
-    first = _kernel_bsd(lib, pid, stage + '_bsd_1', expected=previous)
+    first = _kernel_bsd(lib, pid, stage + '_bsd_1', expected=previous, tty_device=tty_device)
     if first is None or first['zombie']:
+        if tty_device is not None:
+            raise _discovery_error("kernel terminal member exited", pid, stage + '_bsd_1')
         if previous is None or known_noncandidate is True:
             return None
         raise _discovery_error("candidate or unknown process exited", pid, stage + '_bsd_1')
-    second = _kernel_bsd(lib, pid, stage + '_bsd_2', expected=first)
+    second = _kernel_bsd(lib, pid, stage + '_bsd_2', expected=first, tty_device=tty_device)
     if second is None or second['zombie']:
+        if tty_device is not None:
+            raise _discovery_error("kernel terminal member exited", pid, stage + '_bsd_2')
         may_exclude = (_unrelated_name(first, candidate) if known_noncandidate is None
                        else known_noncandidate)
         if may_exclude:
@@ -116,10 +128,16 @@ def inventory(candidate):
     A complete BSD basename is negative discovery evidence only. Selected native
     clients still pass the original strict process()/argv/TTY/session checks.
     """
+    lib = _lib()
+    rows, _ = _inventory(lib, _pids(lib), candidate)
+    return rows
+
+
+def _inventory(lib, pids, candidate, *, tty_device=None):
     import errno
-    lib, rows = _lib(), []
-    for pid in _pids(lib):
-        before = _discovery_pair(lib, pid, candidate, stage='before_path')
+    rows, snapshots = [], {}
+    for pid in pids:
+        before = _discovery_pair(lib, pid, candidate, stage='before_path', tty_device=tty_device)
         if before is None:
             continue
         buf = ctypes.create_string_buffer(4096)
@@ -133,13 +151,13 @@ def inventory(candidate):
                 raise _discovery_error("kernel executable inventory inaccessible", pid,
                                        'path', count=count, error=error)
             if error == errno.ESRCH:
-                if _unrelated_name(before, candidate):
+                if tty_device is None and _unrelated_name(before, candidate):
                     continue
                 raise _discovery_error("candidate executable inventory inaccessible", pid,
                                        'path', count=count, error=error)
-            fallback = _kernel_bsd(lib, pid, 'path_fallback_bsd', expected=before)
+            fallback = _kernel_bsd(lib, pid, 'path_fallback_bsd', expected=before, tty_device=tty_device)
             if fallback is None or fallback['zombie']:
-                if _unrelated_name(before, candidate):
+                if tty_device is None and _unrelated_name(before, candidate):
                     continue
                 raise _discovery_error("candidate executable inventory inaccessible", pid,
                                        'path_fallback_bsd')
@@ -156,9 +174,51 @@ def inventory(candidate):
                 raise _discovery_error("kernel executable inventory invalid", pid, 'path')
             is_candidate = candidate(path)
         after = _discovery_pair(lib, pid, candidate, stage='after_path', previous=before,
-                                known_noncandidate=not is_candidate)
+                                known_noncandidate=not is_candidate, tty_device=tty_device)
+        if after is not None:
+            snapshots[pid] = after
         if after is not None and is_candidate:
             rows.append([str(pid), path])
+    budget.check()
+    return rows, snapshots
+
+
+def _terminal_selector(tty):
+    """Pin a real /dev character device without opening or reading its TTY."""
+    from cmux_daemon_identity import IdentityError
+    budget.check()
+    if not isinstance(tty, str) or re.fullmatch(r'tty[A-Za-z0-9]+', tty) is None:
+        raise IdentityError("terminal inventory selector invalid")
+    path = Path('/dev') / tty
+    info = path.lstat()
+    if not stat.S_ISCHR(info.st_mode) or path.resolve(strict=True) != path:
+        raise IdentityError("terminal inventory selector is not a canonical character device")
+    device = info.st_rdev & 0xFFFFFFFF
+    if device == 0xFFFFFFFF:
+        raise IdentityError("terminal inventory selector has no device")
+    return dict(path=str(path), device=device, dev=info.st_dev, inode=info.st_ino,
+                mode=info.st_mode, uid=info.st_uid, gid=info.st_gid, ctime_ns=info.st_ctime_ns)
+
+
+def inventory_for_tty(candidate, tty):
+    """Discover only the exact controlling TTY; this is not global env uniqueness.
+
+    No fallback or retry. Every initial member must survive all kernel reads;
+    final BSD identities and the complete PID set must close against the start.
+    Selected clients still require the original strict native binding checks.
+    """
+    from cmux_daemon_identity import IdentityError
+    pin = _terminal_selector(tty)
+    lib, device = _lib(), pin['device']
+    pids = _pids(lib, tty_device=device)
+    rows, snapshots = _inventory(lib, pids, candidate, tty_device=device)
+    for pid in pids:
+        _discovery_pair(lib, pid, candidate, stage='closed_member',
+                        previous=snapshots[pid], tty_device=device)
+    if set(_pids(lib, tty_device=device)) != set(pids):
+        raise IdentityError("kernel terminal member set changed")
+    if _terminal_selector(tty) != pin:
+        raise IdentityError("terminal inventory device changed")
     budget.check()
     return rows
 

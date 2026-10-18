@@ -1,9 +1,66 @@
 # 2026-10-18 压力测试与真实协作验证
 
-当前结论：**组件压力通过；包含新诊断的完整回归1,826/1,826通过；真实协作提效仍未证明。**
+当前结论：**组件压力通过；最终完整回归1,839/1,839通过；真实协作提效仍未证明。**
 本次 review_mode 为 `solo_self_review`。Jev/TypeSafe 仍为 advisory/mock，
 真实 campaign 使用 rules。旧会话、失败分母、原控制器及原始证据均保留。
 本文替代旧效率报告中的执行进度；平台架构分析仍可参考旧报告。
+
+## r15 修复完整验收与下一次真实实验
+
+唯一 `tty-integrity-full-01` 原进程已结束，exit 0：**1,839/1,839，
+零失败、错误、跳过**。执行器耗时 1578.008 秒，
+247 个监测文件的测试前后 SHA 完全一致，source_unchanged=true；
+没有放宽子测试超时、跳过测试或重复启动。完整日志 SHA256：
+`f9be1136f664b93bd87140301c638ff79cc53e30ae376380ba4dbe2e73c913bf`。
+这是本机离线验证，live_model_requests=0；本文在结束后更新并单独固定。
+
+native target 枚举现限定到原绑定 controlling TTY；daemon discovery 保留
+全 UID。精确设备、逐次 BSD TTY、成员身份和最终 PID 集合均核对，任何同
+TTY 退出、未知、权限错误或变化继续拒绝。此入口证明精确 TTY 内目标唯一，
+不声称其他 TTY 上环境值全局唯一。选定客户端的完整进程、可执行文件、
+private root、UUID、native session 和回执校验保持；basename matcher 每次
+枚举读取一次配置，selected authority 校验不缓存。26 项定向测试包含真实
+materialized Seatbelt/controlling PTY，现已纳入最终完整回归。
+
+真实 TTY 压力第三次运行 **2,500/2,500 符合预注册安全谓词**，耗时
+61.685 秒，独立逐条审计 **35,775 checks、errors=[]**。覆盖稳定 TTY
+1,000 次、其他 TTY churn 500 次（4,000 个自有短命子进程），双候选、成员
+新增、成员退出、unknown/unlinked 和 selected 身份错误各 200 次。
+全部自有进程完成清理，owned_remaining/errors 为空，helper exit 0。
+01 在 fixture 准备时失败、0 次开始；02 完成 2,500 次，其中 2,127 符合预期、
+373 失败。全部原件和分母保留。03 仅改用本机 adhoc 签名的自有 fixture，
+三次运行的五个产品文件一致；不把 03 通过追认为 01/02 通过。
+
+unknown 细分为 **192 次存活 fallback、1 次 path ESRCH、7 次首 BSD absent**；
+不能将按错误文案划分的 193/7 当作稳定 unknown 覆盖。最终 27 个 SIGKILL
+fixture 与原时间窗的 27 条精确 PID Gatekeeper rejection 终止日志完全对应，
+均在相应 kernel birth 后 0.123 秒以内。具体私有策略原因未知，也不能将此
+结论推广到 02 或断言 unlink 必然导致终止。完整生命周期和 OS 日志审计
+分别固定，有限多次读取不等于原子快照。
+
+完整内容校验采用最多 3 个 worker，主线程检查声明的小文件；保持每次完整
+SHA 与前后 fd/path 校验，无跨调用缓存。并行分支收齐全部检查及原异常，
+小批次保持串行 fail-fast。集成测试 24/24 通过（50.440 秒）。实现后相同
+29 pins、1,020,215,448 bytes 的 3 次串行与 3 次并行对照，中位
+**2.962212→1.747980 秒，约减少 41.0%**。此为本机函数测量，受宿主负载
+影响，不能替代真实协作提效结果。定向测试开始后只有 integrity docstring
+变动；最终精确可执行源码验收以本次 1,839 项完整回归为准。
+
+r14 原失败保持：07:44:54.401Z HALTED/FAILED，原 driver exit 2，
+07:46:02.854Z 发布原最终报告。双 Claude 均有真实握手，source_index prepare
+成功后 dispatch 因 kernel identity EPERM 拒绝；inventory prepare 因 executable
+inventory changed 拒绝，原记录没有快照，具体变化字段未知。
+**pilot 0/3、pairs 0/15、closures 0/33**，33 个注册轮次保留；
+INSUFFICIENT_EVIDENCE、measured_runs=0、observed_runs=1、cost UNKNOWN。
+原报告 `/Users/lzhs/ue/driver/final-report.json` SHA256：
+`69cdff3a23e9b60f2ed150a79d53f146a22cfd1509b0b83f9cbdc6bea5d44301`。
+原 r13 candidate EBADF 仍未归因；新增诊断不是原根因已修复的证明。
+
+沿现有全面授权，下一步冻结独立 v14，核验七组实际 controller 并启动唯一
+r15 实验；不重放旧会话启动或派发。完整合同保持同三会话 pilot 连续 3/3、
+12 warm＋3 cold pairs、7 组、33 轮、15 对，同时最多双 Claude 执行业务。
+指定经验会话仍未提供可验证的双向回件；已有 PR39 Tip/spinner 案例已实测
+吸收，不能将公开记录或文件可用宣称为对方回复。
 
 ## r14 启动前最终回归（07:19Z）
 
@@ -372,9 +429,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 未完成项及继续条件
 
-1. r13 已 HALTED/TIMEOUT，旧会话、失败分母及原证据保留。进程发现修复及
-   新诊断已通过 1,826 项完整回归；candidate EBADF 尚未归因。冻结独立 r14，
-   沿现有全面授权执行，不重放任何旧次启动或派发。
+1. r14 已 HALTED/FAILED，旧会话、失败分母及原证据保留。TTY 发现和完整
+   hash 并行修复已通过真实 TTY 压力及 1,839 项完整回归；继续冻结独立
+   v14/r15 并沿现有全面授权执行，不重放旧次启动或派发。
+   r13 原 candidate EBADF 仍未归因，诊断改进不等于已修复原根因。
 2. 在可用且授权的真实实验中，同三会话 pilot 连续 3/3，然后完成 12 warm＋3
    cold pairs；最多 7 组、33 slots、同时最多两个 Claude 执行业务。
 3. 逐轮验证原生投递、真实 callback、独立验收、释放及自动续派。正确性通过后，
@@ -390,7 +448,10 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 | 证据 | 路径 |
 | --- | --- |
-| 包含 CLI 诊断的最终完整回归 | `validation/r8-pressure-and-full/candidate-diagnostics-full-01/` |
+| TTY 与完整 hash 并行修复最终全测 | `validation/r8-pressure-and-full/tty-integrity-full-01/` |
+| 真实 TTY 压力及独立审计 | `validation/r15-tty-pressure-03/`（01/02 原失败另存） |
+| 完整 hash 并行定向及基准 | `validation/r15-integrity-parallel-01/` |
+| r14 启动前包含 CLI 诊断的完整回归 | `validation/r8-pressure-and-full/candidate-diagnostics-full-01/` |
 | CLI 定向验证与只读性能审计 | `validation/r13-cli-error-diagnostics-02/`、`validation/r13-process-churn-pair-v2-01/R13-PERFORMANCE-BOUNDARIES.md` |
 | 进程发现修复完整回归、逐项 events、源码前后 pins | `validation/r8-pressure-and-full/process-discovery-pair-full-01/` |
 | 真实进程压力与原 callback/candidate 诊断 | `validation/r13-process-churn-pair-v2-01/` |
@@ -403,8 +464,8 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/ud/driver/final-report.json`；原 halt：
-`/Users/lzhs/ud/schedule/halt.json`。r13已HALTED/TIMEOUT，没有真实提效通过结论。
+最近已结束实验的最终报告：`/Users/lzhs/ue/driver/final-report.json`；原 halt：
+`/Users/lzhs/ue/schedule/halt.json`。r14已HALTED/FAILED，没有真实提效通过结论。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
 历史失败也保留：原全测 1,500.37 秒超时、57E 且无最终 traceback，根因未确定；

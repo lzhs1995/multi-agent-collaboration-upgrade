@@ -13,7 +13,7 @@ import uuid
 from orchestration_common import checked_path, file_ref, json_ref, read_regular, require
 from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_ps_wrapper, client_argv, control_socket,
                                       environment, private_native_roots, sandbox_profile, verify_client_temp)
-from upgrade_live_integrity import verify_artifact
+from upgrade_live_integrity import verify_artifacts
 from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary, extend_profile
 
 FIELDS = {"schema", "context", "arm", "controller", "native_policy", "pins", "clients",
@@ -135,8 +135,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     for key, path in local.items():
         require(pins[key]["path"] == str(path), "STARTUP_PIN_LOCATION_CHANGED:" + key)
     if verify_pins:
-        for pin in pins.values():
-            verify_artifact(pin)
+        verify_artifacts(pins.values())
     require(pins["claude_ps"]["mode"] == 0o555
             and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
             "STARTUP_CLAUDE_PS_CHANGED")
