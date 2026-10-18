@@ -34,6 +34,7 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
+[r22 timeout and candidate improvements](docs/VALIDATION-20261019-R22.md) and
 [r21 terminal report and UUID repair](docs/VALIDATION-20261019-R21.md), with
 earlier batches in the [2026-10-18 validation report](docs/VALIDATION-20261018.md).
 

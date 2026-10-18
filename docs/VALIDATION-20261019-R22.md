@@ -1,6 +1,8 @@
-# r22：正文读取证据与有界三客户端实验
+# r22：真实首轮超时，候选修复与本机压力结果
 
-状态记录于 2026-10-19 02:33（Asia/Taipei）。真实实验进行中，尚无完整业务通过。
+状态记录于 2026-10-19 02:39（Asia/Taipei）。原实验已终止：**1 TIMEOUT＋32 MISSING**，
+业务 **0/33**、pilot **0/3**、pairs **0/15**；提效 **INSUFFICIENT_EVIDENCE**，成本 UNKNOWN。
+本机优化及回归已提交，不构成全量真实压力通过。连续 `/goal` 通信仍未验证。
 r21 保持原终态：1 FAILED＋32 MISSING，业务 0/33、pilot 0/3、pairs 0/15。
 r22 使用独立根 `/Users/lzhs/um` 和冻结 v20；不修改 r21 控制器、原输入或失败结果。
 
@@ -35,16 +37,16 @@ r22 使用独立根 `/Users/lzhs/um` 和冻结 v20；不修改 r21 控制器、�
 800 次并发检查使用实际 pilot-B reader 的 8 份 49–105 字节正文重复执行；
 这是隔离环境下的读/拒绝压力，不是大正文或真实模型吞吐测试。
 
-## 已启动的真实实验
+## 原真实实验的终态
 
 沿用用户明确全面授权，配置于 01:55:09 固定 7200 秒上限，截止 **03:55:09**。
 独立 watchdog 在 01:55:21 记录 ready 后才启动原 driver。客户端启动子调用
-returncode=0，原 driver 仍在运行；
+returncode=0；原 driver 之后按单轮上限终止。
 三客户端已由原 controller 核验 ADOPTED；双 Claude 的原握手均 PASS/ACKED。
 pilot-01 于 02:08:01.784 开始，单轮固定截止 02:38:01.784。截至 02:33，两节点
 `inventory`、`source_index` 均 DISPATCHED；两份原 receipt 均记录 `NATIVE_RECEIVED`、
 `retries=0`，包含对应接收者的原生 user record、offset/length/SHA。尚无完成回调、
-独立业务验收或 run finish，仍为 0/33、pilot 0/3、pairs 0/15。
+独立业务验收或 run finish。
 初次握手 capability 的 `active_or_queued=false`，不能据此宣称连续 `/goal` 验证通过。
 早前 Claude A 的 429 是 concurrency/RPM 记录，之后 readiness 与握手通过；不归类为无效 key。
 
@@ -53,8 +55,24 @@ pilot-01 于 02:08:01.784 开始，单轮固定截止 02:38:01.784。截至 02:3
 正确性通过后才评估 warm 中位改善至少 15%、各 workload 中位退化不超过 5%；
 缺失 usage 或成本保留 UNKNOWN。当前提效结论仍为 **INSUFFICIENT_EVIDENCE**。
 
-原调用不重放；失败不替换该 campaign 的客户端。到期停止后续调度和输入，
-保留在途请求与原会话，不把 stop 标记解释为远端取消或 lease 释放。
+02:38:23.529 原 driver 发布 TIMEOUT：1800 秒内没有 complete closeout；02:38:24
+watchdog 完成七组 `STOPPED_INPUT`，02:38:27 原进程报告终态。采样终止比单轮截止
+晚约 22 秒，未重设时限。driver/watchdog 退出码均为 2，watchdog_failed=false；
+这是实验超时，不是 watchdog 崩溃。33 条结果仅观察到首轮，0 measured/verified/passing。
+原调用不重放；失败未替换客户端。后续调度与输入已停，保留在途请求与原会话，
+stop 标记不证明远端取消、客户端退出或 lease 释放。
+
+02:39 使用原冻结 v20 observer 收尾：192 个普通消息槽全部 `attempt=MISSING`，
+native reception/body read 均 UNKNOWN，business acceptance 为 NOT_ASSESSED。
+没有进入 warm 阶段；缺失消息不算 192 次通信失败或成功。observer 原生读取 0 字节，
+无输入或 runtime 写入。新工作树的归因修复没有用于改写这些原结果。
+
+原始日志归因到两条正式通知之后：Claude A、B 各有 10 条 API error 记录，包含
+429 concurrency 限制。A 尚无正式通知后的工具调用，B 已多次调用读取工具。
+整个采集前缀内 A 有 21、B 有 24 条 API error；这些是日志记录数，不是唯一上游请求数。
+原 notice 时间 A 为 02:23:58.218、B 为 02:25:55.817，距 pilot 开始已分别约 16/18 分钟。
+因此上游限流、初始准备/握手与控制器耗时需要分开；不能将完整超时都归因于 key、
+provider 或 busy 门禁。此次没有 key 无效证据，也没有双向 continuous-goal 通过证据。
 
 ## 运行期间发现的后续优化
 
@@ -111,8 +129,21 @@ input fence 和完整 native 区间。大小写 UUID 比较只改变身份比较
 - `validation/r22-profile-optimization-01/inventory-diagnostic-01/`：原失败项的新旧生成器对照原始日志。
 - `maintenance/r22-development/communication-attribution-result.md` 与 `communication-attribution-source-pins.json`：新合同、生产格式兼容、回归与独立审查。
 - `maintenance/r22-development/attribution-pressure-result.json`：本机多进程归因压力，非真实模型压力。
+- `maintenance/r22-delivery/terminal-readout.json`：核验原 config、deadline、33 槽、15 对及七组 stop 的只读收尾。
+- `maintenance/r22-provider-observations/observation-0002.json`：原日志区间 SHA、原正式通知记录及 API error 偏移。
+- `maintenance/r22-communication/20261018T183910.850254Z-79776/observation.json`：原 v20 的 192 槽终态观察。
 
 配置：`/Users/lzhs/um/driver/config.json`，SHA256 `5a42d6d03a7b6f895ef0d44e32e6edac8ca37ae85e1733d49082cd06fafd4ccf`。
 
 共享 MAC 和论文精炼助手仍由指定 surface40 统一管理。本实验仅修改 upgrade，
-通过既有 maintenance 文件 inbox 交换实测发现；文件发布不证明对方已读。
+通过既有 maintenance 文件 inbox 交换实测发现。新增归因/UUID/限流发现已发布为
+`upgrade42-r22-attribution-provider-findings-20261019.json`；文件发布不证明对方已读。
+
+## 尚未完成的交付条件
+
+候选提交 `ac79cf9` 修复普通消息归因并降低配置生成成本，旧实验已保留；用户的
+完整测试授权仍有效。下一次实测须使用独立冻结的新合同，保留原模型、门槛、
+失败分母与原会话。当前不能以同配置立即重开来宣称推进，也不能把首轮上限扩大。
+必须先厘清双 Claude 的实际并发容量和准备/握手占用；再完成连续 3 pilot、
+15 配对、192 消息及真实 continuous-goal 证据。若没有可用并发容量的证据，
+无法承诺全量通过时间；本报告交付的是已验证代码改进与真实未通过结论。
