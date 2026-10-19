@@ -1,103 +1,86 @@
 # Evidence review and integration decision
 
-Snapshot date: 2026-10-10. All links below were read through `gh` CLI. The
-source revisions are pinned so later upstream changes do not silently change
-the conclusions.
+Historical research snapshot: 2026-10-15, using the original Claude's accepted
+2026-10-14 research. The nine-run matrix, 1,404-test count and original executor
+state below describe that checkpoint, not current progress. As of 2026-10-19,
+the prior full suite has 2,138 passing tests and R27 ended in TIMEOUT with no
+accepted business runs. R28 adds a bounded B-only advance entrypoint and retains
+the current 33-slot / 15-pair / 192-message registration; its full regression and
+live results must be reported separately. See [current runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md)
+and [collaboration issue ledger](docs/COLLABORATION-ISSUE-LEDGER.md).
+The evidence corpus preserves 82 fetch records and 48 independently verified Git
+blobs. Failed downloads, including a zero-byte SDK fetch, remain in the manifest;
+an unsuccessful fetch is not source evidence. The private report was accepted
+with recorded limitations, not as a live orchestration benchmark.
 
-## Recommendation
+## Pinned sources and corrections
 
-The most compatible source of ideas is **OmO's graph/task layer**, adapted as a
-plan validator and scheduler around the existing cmux protocol. OmO's runtime
-must not be embedded as a second transport: it owns its own team/session
-runtime and would conflict with the current native receipt and callback
-contract. The upgrade therefore implements only the graph boundary and routes
-every node back through `mac_harness.py` and `cmux_bridge`.
+| Project | Revision | Verified conclusion |
+| --- | --- | --- |
+| Historical collaboration baseline | `788c007ae1150b1d379766367c810665698c487d` | Preserve identity, native delivery, callback and closeout semantics. Live replay separately pins its complete installed controller. |
+| OmO | `562d7ca7eec13bd3c88fc970fa057365f3b7b6b2` | Task/dependency concepts are useful; its team sessions and delivery runtime are not imported. |
+| codeg | `7c322eb1945a2159cd8445390062c74bfca5e88c` | Delegation state and queue/recovery behavior are design references; this revision does not include per-request overrides. |
+| TypeSafe skills | `65a39f393687675ce170e6094757de20370365b9` | A coding-agent skill teaches API usage; installing it does not make Jev an API-free replacement for a coding model. |
 
-codeg remains useful as a design reference for delegation state, resumable
-session identity and per-request overrides. Its ACP/UI/workspace runtime is a
-separate product and is not imported into this repository.
+OmO's pinned code treats a missing blocker as satisfied and includes
+substring/requeue recovery behavior. This project deliberately rejects missing
+dependencies and requires exact original native evidence; it does not copy those
+behaviors. Its `omo` candidate borrows dependency-ready scheduling only.
 
-JEV is documented as an optional future decision provider. TypeSafe's own
-coding-agent page says Jev is not a coding-agent LLM and that the skill helps an
-agent write code using the TypeSafe API. A skill installation therefore does
-not remove the third-party API call. Under this project's restriction, JEV is
-not used in the online path; only deterministic rules and an offline mock are
-shipped.
+codeg's chat queue is in memory and dequeues before sending. Its persistent task
+queue is folder-oriented. It therefore does **not** establish a durable
+per-session FIFO guarantee for chat delivery. The upgrade's persistent session
+FIFO is its own implementation. Per-request overrides appeared in the then-open,
+unmerged [PR #879](https://github.com/spacering-net/codeg/pull/879), not in the
+pinned main revision. No codeg ACP/UI/runtime is embedded here.
 
-## Pinned evidence
+TypeSafe confidence is advisory evidence, never authorization. The reviewed
+Noul interface does not provide confidence; a future adapter cannot fabricate
+one to fit the local type. Jev, TypeSafe SDKs and third-party model APIs are absent
+from the real execution path. The current live provider is deterministic rules;
+the offline mock is neither a TypeSafe integration nor a measurement of its value.
 
-| Project | Revision | Relevant evidence | Integration result |
-|---|---|---|---|
-| `multi-agent-collaboration` | `788c007ae1150b1d379766367c810665698c487d` | `SKILL.md`, `scripts/mac_harness.py`, `scripts/cmux_task_journal.py`, task-pack schema, native delivery and bounded closeout references | Keep as the transport and acceptance boundary. |
-| OmO | `562d7ca7eec13bd3c88fc970fa057365f3b7b6b2` (`dev`, v5.1.29) | `packages/omo-opencode/src/features/team-mode/tools/tasks.ts` has explicit task states and blocked dependencies; live delivery reserves a message before sending; team mode has separate member sessions and cleanup. | Reuse graph/dependency concepts only; preserve cmux's stronger evidence-bound delivery. |
-| codeg | `7c322eb1945a2159cd8445390062c74bfca5e88c` (`main`, v0.34.0) | `src-tauri/src/acp/delegation/types.rs` separates running/completed/failed/canceled/unknown and supports bounded per-request overrides; the app also persists parent/child session identity. | Borrow typed lifecycle and override ideas as future metadata; do not add ACP or a second workspace. |
-| TypeSafe skills | `65a39f393687675ce170e6094757de20370365b9` | `skills/typesafe-ai/SKILL.md` and official docs state that Jev returns typed judgments, while the coding-agent page says it is not a replacement for Claude/Codex. | Keep a provider seam only; no online TypeSafe call under current policy. |
+## Official source, proposals and local results
 
-## Issue and PR lessons
+- The collaboration baseline's native receipt and callback fixes remain hard
+  boundaries. A scheduler decides eligibility; it cannot declare a prompt
+  received or a report accepted.
+- OmO [PR #1726](https://github.com/code-yeongyu/oh-my-openagent/pull/1726) was a
+  draft integration proposal at the snapshot. Its separate team/task/inbox
+  runtime is not evidence of a compatible installed cmux integration.
+- codeg PR #879's override design and recovery issue discussions are proposals
+  or operational lessons unless the pinned source implements them.
+- TypeSafe skills [issue #4](https://github.com/typesafe-ai/skills/issues/4)
+  describes a noninteractive installation reporting success without files.
+  [Issue #5](https://github.com/typesafe-ai/skills/issues/5) and
+  [issue #11](https://github.com/typesafe-ai/skills/issues/11) are community
+  confidence/cooperation proposals, not evidence of subscription entitlement or
+  a deployed local decision engine. The retained corpus records the wider issue
+  and SDK audit, including failed fetches, without upgrading proposals to facts.
 
-- The target repository's PR #28 verifies native delivery and automatic hooks
-  in 0.4.7; PR #27 requires native receipt and bounded callback waiting; PR #20
-  fixes bridge recovery after an empty idle observation; and PR #19 binds
-  closeout to dispatch proof and the original callback controller. These are
-  hard boundaries for the graph adapter: a ready wave may decide *what* is
-  ready, but it cannot declare a node delivered, accepted or complete.
-- PRs #24 and #12 distinguish a submitted payload from Enter/Tab activity and
-  preserve pending ACK states during cleanup. The generated seed therefore
-  contains no send shortcut and explicitly points back to the existing
-  `cmux_bridge` entrypoint.
-- Open PRs #21--#26 explore idle re-ask and escalation. The scheduler does not
-  add a polling loop; it leaves idle/recovery ownership with the existing
-  bounded sentinel and executor availability state machine.
-- OmO PR #1726 (`feat: native agent-teams & optional MCB integration`) is a
-  large, draft, conflict-prone feature. Its own triage describes a config-gated
-  integration and separate team task/inbox/runtime layers. This supports using
-  the small graph idea, not copying its runtime.
-- OmO's team task code uses explicit `pending`, `claimed`, `in_progress`,
-  `completed` and `deleted` states plus `blockedBy`; these map naturally to a
-  graph scheduler but do not prove native delivery.
-- codeg PR #879 adds per-request mode/config overrides while preserving default
-  behavior and unifying fresh spawn/resume precedence. The upgrade records
-  executor and session policy per node instead of adding a provider override.
-- codeg issues/PRs repeatedly address ACP reconnects, stale history, bounded
-  payloads and task requeue semantics. Those are useful failure categories, but
-  they also show that an ACP workspace is another operational surface to
-  maintain.
-- TypeSafe skills issue #4 reports that non-interactive `npx skills add` can
-  report success while writing nothing. Any future optional installation must
-  verify files and registration; this upgrade does not install it.
-- TypeSafe skills issues #5 and #11 propose confidence-gated command approval
-  and Jev/LLM cooperation. They are community proposals, not evidence that JEV
-  is available through Claude/Codex subscriptions. The adapter therefore
-  treats them as design input only.
+## Local implementation and remaining evidence
 
-Relevant links: [target PR #28](https://github.com/lzhs1995/multi-agent-collaboration/pull/28),
-[target PR #27](https://github.com/lzhs1995/multi-agent-collaboration/pull/27),
-[target PR #20](https://github.com/lzhs1995/multi-agent-collaboration/pull/20),
-[target PR #19](https://github.com/lzhs1995/multi-agent-collaboration/pull/19),
-[OmO PR #1726](https://github.com/code-yeongyu/oh-my-openagent/pull/1726),
-[codeg PR #879](https://github.com/spacering-net/codeg/pull/879),
-[TypeSafe issue #4](https://github.com/typesafe-ai/skills/issues/4),
-[TypeSafe issue #5](https://github.com/typesafe-ai/skills/issues/5), and
-[TypeSafe issue #11](https://github.com/typesafe-ai/skills/issues/11).
+`decision_provider.py`, the durable coordinator, original-controller transport,
+runner, corpus workload, isolated checker, freeze and v2 verifier implement the
+bounded integration. All model work belongs to the existing CLI sessions.
+Source/interface failures remain distinct from provider outages and transport
+uncertainty. An unknown callback or incomplete native tool result cannot release
+an active task merely to make a replay continue.
 
-## What is implemented
+The original research review's six implementation findings informed this work.
+Its suggested additional absolute-count promotion threshold was not adopted;
+the approved criterion remains at least 15% improvement in an eligible median
+metric, after all nine correctness and contract checks pass.
 
-`scripts/orchestration_planner.py` validates the API policy, executor transport,
-session reuse, absolute source pins, dependency graph and write scopes. It
-builds bounded waves, writes hash-bound task-pack seeds and calculates an
-offline schedule estimate. It never starts an agent, calls a provider, or
-dispatches terminal input.
+The old seven-node 790→600 second estimate (24.051%) and the new four-node policy
+probe (170 / 105 / 125 seconds) are both offline calculations. No artificial
+delays are used to make live outcomes reproduce them. At that historical checkpoint
+the completed full suite was 1,404 offline tests. The nine-run real campaign and shared deployment
+remain separate validation stages; see
+[ORCHESTRATION-VALIDATION.md](verification/ORCHESTRATION-VALIDATION.md).
 
-The fixture in `tests/fixtures/orchestration-plan.json` is intentionally marked
-`offline_schedule_estimate`. Its 790 seconds of serial work become 600 seconds
-of bounded waves (24.051% schedule reduction). This is an architecture test,
-not a measured model or live cmux result. A real gain claim requires a replay
-with the existing Claude/Codex sessions and preserved native evidence.
-
-`scripts/validate_replay_evidence.py` now enforces that last boundary. It
-accepts only a pair of serial/scheduled runs whose exact node ids and expected
-waves carry native receipt, ACK, callback, report-hash, closeout and acceptance
-proof. It computes reduction from timestamps and rejects offline labels,
-third-party calls, replacement sessions, missing proofs and reductions below
-15%. The current checkout has no such live evidence because both candidate
-Claude executor surfaces are occupied by another user task.
+The designated original Claude is waiting for the finalized replay task after
+its research was accepted and closed. This is `WAITING_DEPENDENCY`, not evidence
+that it is occupied by another user's task or that a new handshake has failed.
+Raw cmux focus/daemon identity does not override authenticated native caller
+identity. Historical failed attempts remain preserved under their old controller.
