@@ -55,6 +55,7 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
+[r27 recovery retry](docs/VALIDATION-20261019-R27.md),
 [r26 native Goal experiment](docs/VALIDATION-20261019-R26.md),
 [r25 native run checkpoint](docs/VALIDATION-20261019-R25.md),
 [r23 preparation and provider observations](docs/VALIDATION-20261019-R23.md),
@@ -68,6 +69,16 @@ Require native SET, the actual probe and automatic hooks before adoption.
 Preserve legacy startup-v2 clients and attempts. A Goal prompt, configuration,
 SET record or later model activity alone does not prove continuous operation,
 message acceptance or efficiency; see [Goal evidence](docs/NATIVE-GOAL-OBSERVATION.md).
+The r27 native clients recorded Goal SET and a first model-stream chunk without
+any assistant record or startup probe. A later `No assistant message found`
+error belonged to a separate Stop prompt-hook request; do not attribute that
+error to the original request or call it an authentication failure. Preserve
+request types and original logs, require actual probe/results for adoption,
+and retain the original startup deadline. Coexisting configuration-write errors
+do not establish causation or authorize weakening isolation; r26 completed both
+probes after the same settings EPERM. Missing request-observation files leave
+response semantics unknown. A stalled startup
+remains missing business evidence, not a successful pressure sample.
 
 Original handshake member selectors may be a numeric `surface:<N>` or a UUID.
 Canonicalize UUID aliases and allow repeated aliases only for the same member;
