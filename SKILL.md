@@ -126,7 +126,7 @@ See the measured rules in
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 For new private campaigns, pin the actual Claude executable/version and requested
 model; installation alone does not establish adoption by an existing process.
-The 2.1.303 retry verified adoption but produced no main-task assistant output
+The R29 retry verified both processes running 2.1.303 but produced no main-task assistant output
 or successful native comparison; one executor did produce a background summary.
 Native Goal Stop checks are independent model requests. Preserve their failures
 separately from main-task and background requests; timing alone does not establish
@@ -135,6 +135,7 @@ check failures separately; do not treat Goal pause as proven termination or as
 permission to re-input. Goal checks do not validate independent long-running loop.
 See [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
 Current measured results and open live-validation gaps are recorded in the
+[r30 final delivery](docs/VALIDATION-20261019-R30.md),
 [r29 final delivery](docs/VALIDATION-20261019-R29.md),
 [r28 implementation and regression](docs/VALIDATION-20261019-R28.md),
 [r27 recovery retry](docs/VALIDATION-20261019-R27.md),
@@ -239,6 +240,32 @@ local tests are not native pressure results. See
 These instructions update this experimental skill only. The designated
 surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns
 retain their original controllers; documentation does not hot-reload clients.
+
+The surface40 replies received on 2026-10-19 confirm that file publication,
+automatic hook exposure, complete body reading, an exact mailbox reply,
+executor reading, original-controller consume, rearm and reservation release
+need separate evidence. `ANSWERED` does not mean consumed; consume does not
+release a reservation. Read the original request's pinned reply path as well
+as its inbox before reporting that a reply is missing. A file experience reply
+does not establish native delivery or business acceptance.
+Attribute coordination time by prompt-ready, input, native receipt, body read
+and acceptance, with sample counts and failed/censored samples. Request counts,
+a state file's size and the span between lock failures are not throughput,
+bytes rewritten per save or measured lock-hold time. Require paired timestamps
+before attributing delay to locks, persistence, RPC or model execution.
+Source fixes for versioned Claude executable identity and terminal handshake
+failure settlement in shared MAC PR55 are independently reviewed candidates;
+they have not been transplanted into frozen R30. Preserve existing input intents
+on contract failure and map equivalent private paths before a future isolated
+integration. See the [owner experience mapping](docs/COLLABORATION-ISSUE-LEDGER.md).
+
+R30 used the current frozen code and actual Claude 2.1.303 processes, but timed
+out before any Claude startup probe or automatic tool-hook adoption. The fixed
+FetchSession observer did run on real responses; its activation is not startup
+adoption. Pilot 0/3 and paired 0/15 provide no efficiency estimate. Preserve
+the terminal run and its 33 business / 192 planned message slots; stop markers
+prevent future experiment input without proving remote cancellation. Do not
+repeat an unchanged campaign to fill the missing samples.
 
 The r19 field audit found finalized packs referencing missing role-map and
 surface-inventory inputs. New v3 preparation now generates both with the original

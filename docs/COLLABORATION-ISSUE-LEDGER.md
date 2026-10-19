@@ -6,7 +6,24 @@
 
 机器显式引用索引含 4,323 条字段级引用；初版分类证据固定 79 个来源。09:15Z 补审对其余 966 文件完成全字节扫描（11,907,579 字节，读错和 SHA 漂移均为 0），其中 43 份报告正文完成审读，923 份仍未全文审读。初版分类清单不覆盖这些补审；两批证据分别保存，不能把机器扫描或被聚合件引用当作全部处理完毕。重复增量、勘误和回件合并，原件保留；来源中的附件和二级回件仍需独立核验。
 
-共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护。两名审计员仅核查源码/报告；root 另行执行 upgrade 私有实现和实验。本轮询问已发布到 surface40 的维护 inbox，直接输入被拒绝且零输入；未取得其本轮回复，不能称充分沟通完成。
+共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护。两名审计员仅核查源码/报告；root 另行执行 upgrade 私有实现和实验。11:21 UTC 已收取并全文读取[本轮两件询问的匹配答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-owner-reply.md)及[详细经验答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/standalone-caller-v1/EXPERIENCE-REPLY.md)。原普通helper输入被拒绝且零输入；文件回件声明已全文读取，并列原请求SHA。经验交流已取得答复，原生投递、全部负例复现、41项穷尽审核及共享发布仍分开验收。
+
+## surface40 本轮答复的采用与待验边界
+
+| 经验/现象 | upgrade 处理 | 尚未证明 |
+|---|---|---|
+| 忙碌或Goal续轮不能挡住就绪消息；真实草稿/UNKNOWN是不同状态 | 继续即时交错通信及原次证据规则；不为握手暂停Goal，不清稿重贴 | 当前R30未进入业务，不能声称忙态往返压测通过 |
+| 0.4.51当前维护进程自动Pre/PostToolUse已观察，旧进程热更新未知 | 版本、启动入口和实际自动hook分列；不按磁盘配置追认旧进程 | owner原件是其现场结果，不证明本root已加载0.4.51 |
+| 原Claude同session改由303进程承载后，旧episode consume报告ProcessExited | 保留旧attempt/episode，按原证据结算失败；新注册不继承旧consume成功 | 同session不等于同PID/出生时间；新303完整往返仍需实跑 |
+| 新可执行文件名识别及稳定草稿DRAFT_NOT_READY | 已核[共享MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55)源码及CI：审计时OPEN、非Draft，head `b461edc5`；版本目录executable身份识别及sender contract failure结算修复未移植进R30。详见[独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/owner-update-audit/REPORT.md) | parser识别通过不等于原生收到或业务接受；保留原paste intent和真实草稿，不追认旧进程采用 |
+| 首次预留期file_posts 63→109，约2878秒，无原主管回件证据 | 46次询问不计吞吐；发布→曝光→全文→reply→consume→rearm→release分别计时 | owner完整预留往返仍0/2 |
+| CCC发送锁失败跨度、81MB state | 只接受配对acquire/release与save/RPC分段计时；不清锁、不把wait=True直接改成False | 死锁、每次全量写81MB及其因果均未证明 |
+| caller身份、PID复用、同pane其他thread、child借root、缺daemon | 沿原UUID/TTY/进程出生/原生日志绑定；参考同版embedded身份用例 | 逐项真实负例未全部执行；不能用fixture冒充原生 |
+| 真实草稿、折叠/残缺composer、RPC后超时、旧marker/缺fence | 拒绝在不确定原次重发；历史fence不回填 | 取消忙态门禁不放开真实草稿与UNKNOWN |
+| ANSWERED未consume、STOP/撤销、consume中进程退出、flush失败 | 持久callback/占用/接受分层；有界推进并保留失败 | 文件回件不是派包，consume不是RELEASE；手动hook不是自动采用 |
+| 论文任务与共享应用 | 独立来源核验、草拟与证据裁决可并行；Word/Zotero等资源按租约单写 | 通信回执不证明科研结论；不为通信维护增加科研审轮 |
+
+答复未重新逐项审计全部41类，也未审验upgrade的2400/2400、pilot或配对结果。以上采用不扩大既有验证结论；共享改动仍由surface40合并，私有冻结实验和失败分母不迁移。
 
 ## 本轮优先结论
 
@@ -485,12 +502,12 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 | C01/C38/C41 | R28原响应有HTTP200、message_stop/EOF，但无content_block及有效assistant，启动超时。R29有Goal SET和1/5分钟退避提示，仍未ready。后续debug入口计数：main A7/B6、Goal hook A5/B3、away-summary A2/B3，含重试/fallback，不是唯一request ID；主journal各六条不是全部API活动。 | A两次429的时间顺序强烈支持Goal-hook归属，缺request-ID关联不能绝对wire归因，也不能套用B；Goal的`No assistant message found`是独立schema请求结果。原R29观察器只有LOADED，仅证明preload，不能把缺REQUEST解释为未请求或单纯未读响应。保留原900秒启动预算及未完成分母，见[原生诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/native-diagnosis/report.md)。 |
 | C15/C37 | 兼容补丁四格CI通过，但本地完整回归13个failure cases暴露生成控制器缺`upgrade_toml`。CI跳过了依赖本机原生安装的路径。 | 修复真实materializer私有依赖闭包及许可随包携带，加入无原生CLI依赖的生成包roundtrip/缺模块负控；完整回归与CI分别验收。固定v24与在途R29不变。 |
 | C20/C31/C34 | [08:45Z执行者增量原件](/Users/lzhs/Documents/cnm/tasks/06_Mintransition/verification/ccc-successor-claude-20261010/maintenance-inbox/claudeB-CC948292-to-surface1000020040-reply-deadline-equals-executor-cron-period-consume-late-20261019-v1.json)现已有[独立期限审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/deadline-audit/REPORT.md)：EXECUTOR_READY_161正文在deadline前42.974896秒完整展示，显式consumed回执晚29.344876秒，原controller仍`REPLY_CONSUMED=true`。 | 标为reply-consume延迟/成功迟到ACK，不是正式业务任务超时。TASK回复明确非正式包；正式包由actual_visible_TASK_ACCEPTED起算600秒，本次未重建其接受/报告。展示不等于理解/接受；cron600秒配置已核，“唯一唤醒源/仅空闲触发”未证。它与C41原T+1059/600及C34旧144.9秒样本不同，不混合。保留原deadline，读正文后及时consume以减少可控延迟。 |
-| C37/C40 | [观察器候选修复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)覆盖新建Bun.FetchSession；47/47 Node及实际303内嵌Bun的global/session × reader/iterator四轮各256并发loopback流通过。候选SHA `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。 | 原global-only绕过机制由源码/本地复现确认，但原R29缺分支遥测，历史路径不能追认。安装、实例覆盖和实际拦截分开；四轮各用新观察上下文。实际二进制仅隔离`--version`加本地fixture，零模型/业务样本；已有session/缓存构造器未覆盖，类别UNKNOWN，开销未校准，不是协作提效证明。 |
-| C10/C24/C27/C40 | [社区四类缺口的五项实际API组合测试](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/community-gaps/RESULTS.md)全部通过，12.909秒、零failure/error/skip；覆盖空历史/断链、旧owner释放及旧candidate隔离、callback/local同时持久ready、无新事件发现backlog。 | 未改实现、零模型/客户端，未重跑full/CI。旧2171项不包含这五测及新observer验证。无ring cursor/generation watcher/async select，不能冒充字面场景；显式foreground发现不等于idle唤醒。精确原release重试应只读成功；断链测试不证明可检出整段尾部删除。 |
+| C37/C40 | [观察器候选修复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)覆盖新建Bun.FetchSession；47/47 Node及实际303内嵌Bun的global/session × reader/iterator四轮各256并发loopback流通过。候选SHA `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。 | 原global-only绕过机制由源码/本地复现确认，但原R29缺分支遥测，历史路径不能追认。该专项当时仅隔离`--version`加本地fixture，零模型/业务样本。随后[R30](VALIDATION-20261019-R30.md)两路实际加载并拦截bun_fetch_session，但仍无启动probe或业务成功；已有session/缓存构造器未覆盖，类别UNKNOWN，开销未校准，不是协作提效证明。 |
+| C10/C24/C27/C40 | [社区四类缺口的五项实际API组合测试](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/community-gaps/RESULTS.md)全部通过，12.909秒、零failure/error/skip；覆盖空历史/断链、旧owner释放及旧candidate隔离、callback/local同时持久ready、无新事件发现backlog。 | 该五测补证当时未改实现、零模型/客户端、未重跑full/CI。旧2171项不包含这五测及新observer验证；后续d8a1585四格CI各2176项、F0/E0、macOS skip96/Ubuntu skip106，见[R30](VALIDATION-20261019-R30.md)。无ring cursor/generation watcher/async select，不能冒充字面场景；显式foreground发现不等于idle唤醒。精确原release重试应只读成功；断链测试不证明可检出整段尾部删除。 |
 
 新增cron原件SHA256为`c9c9cc9fe4d139a754cd6167a4f8024e3336bf59860fcdc05c1c57f188f960dc`。它不属于最初1045文件库存，也不是surface40对本轮询问的回复；保留增量身份，不改写既有覆盖率。
 
-以上补证不改R29原终态：TIMEOUT / INSUFFICIENT_EVIDENCE，pilot0/3、业务0/33（1 TIMEOUT＋32 MISSING）、配对0/15、普通通信可验证闭环0/192（并非全已发送）。原次、旧会话和冻结证据保留；本次文档补记接收任务时R30尚未启动，此前不启动下一轮的记录仅属R29收口。surface40对本轮询问的回复仍未取得，不把新增本地审计当owner确认。
+以上补证不改R29原终态：TIMEOUT / INSUFFICIENT_EVIDENCE，pilot0/3、业务0/33（1 TIMEOUT＋32 MISSING）、配对0/15、普通通信可验证闭环0/192（并非全已发送）。原次、旧会话和冻结证据保留。“R30尚未启动、surface40回复未取得”仅为此前补记时点的历史状态；截至11:25:32 UTC，[R30](VALIDATION-20261019-R30.md)也已独立终态TIMEOUT，pilot0/3、业务0/33、配对0/15、闭环0/192。surface40两份询问的匹配答复现已全文读取并独立核验，详见本台账开头；经验回件不等于原生业务或提效验收。
 
 ## 勘误和状态合并规则
 

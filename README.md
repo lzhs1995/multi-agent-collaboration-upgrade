@@ -33,41 +33,51 @@ Shared MAC/thesis-refiner integration has a separate maintainer.
 
 ## Current validation — 2026-10-19
 
-Tested code: `9a09f32296f160b32bd3fb7d74ee93ad37715747`. Subsequent delivery edits
-are documentation only.
+Tested code and R30 frozen v25: `d8a158509680de53f9c8bdc8c541408c3054f605`.
+All 356 exported files match that commit. Subsequent delivery edits are
+documentation only.
 
-本机 Python 3.14 完整回归原次于 2026-10-19T10:09:34.828919+00:00 结束：**2171 项，0 failures、0 errors、0 skipped，1226.361 秒**；被监测脚本前后 SHA256 一致，零模型请求。
-
-- [CI: Ubuntu/macOS × Python 3.10/3.14](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39232997253)
-  succeeded in all four jobs: 2,171 total tests each, zero failures/errors,
+- [CI: Ubuntu/macOS × Python 3.10/3.14](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39241757006)
+  succeeded in all four jobs: 2,176 total tests each, zero failures/errors,
   with 106 Ubuntu and 96 macOS skips per job. Skipped tests are not passes.
+  The historical local 2,171-test run had zero skips and belongs to `9a09f32`;
+  it is not a new full local run of this commit.
+- Separate observer validation: 47/47 Node tests and four rounds of 256
+  concurrent local streams using Claude 303's embedded Bun passed. Those tests
+  do not belong to the Python CI and used no model requests.
 - Component pressure: 24 processes, 7,200 reserves, 31,200 terminal-release
   checks and 2,400/2,400 independent successes; no observed double ownership,
   registry busy errors or lost history. This is not a native efficiency result.
 - Claude Code was upgraded from experimental 2.1.170 to official 2.1.303.
-  Three CLI entrypoints and both R29 native processes were verified on 303.
+  Three CLI entrypoints and both R29/R30 native processes were verified on 303.
   Original sessions, binaries and failure evidence were retained.
-- R29 ended **TIMEOUT / INSUFFICIENT_EVIDENCE**: pilot **0/3**, business **0/33**
+- R30 ended **TIMEOUT / INSUFFICIENT_EVIDENCE** at 11:25:32 UTC: pilot **0/3**, business **0/33**
   (1 TIMEOUT + 32 MISSING), comparable pairs **0/15**. The ordinary-message
   plan retains 192 unique IDs, with **0/192** verified closed loops; this does
   not mean that 192 messages were sent. Only the first of seven prepared groups
   actually launched its 1 Codex + 2 Claude clients.
-- Both Claude lanes requested `claude-opus-5-5` but produced no assistant record.
-  A logged RPM 429 and an empty stream; B's underlying cause remains unknown.
-  Goal checks eventually paused themselves. Stable Goal/loop operation, costs
+- Both Claude main journals have no assistant result or startup probe. The
+  repaired observer actually intercepted native `Bun.FetchSession.fetch`;
+  A had a reader error, B had rate-limit evidence, and observed responses had
+  no nonempty text/tool block. Incomplete responses and request attribution
+  remain unknown. Goal checks paused themselves. Stable Goal/loop operation, costs
   and at least 15% collaboration speedup remain unproven.
 
-The tested code and the native experiment are distinct: R29 used immutable v24
-(`b0ac022`), not the later packaging repair. The prior green CI that missed 13
-local packaging failures is retained in the validation history.
+R30's driver and watchdog exited; all seven stop-input markers were verified.
+Original clients remain preserved, and remote cancellation and Goal termination
+are unverified. Historical R29 used v24 (`b0ac022`); its result is unchanged.
+The prior green CI that missed 13 local packaging failures is retained in the
+validation history.
 
-Read the [final R29 report](docs/VALIDATION-20261019-R29.md),
+Read the [final R30 report](docs/VALIDATION-20261019-R30.md),
 [Claude version evidence](docs/CLAUDE-VERSION-VALIDATION.md),
 [41-category issue ledger](docs/COLLABORATION-ISSUE-LEDGER.md), and
 [15-item community review](docs/COMMUNITY-ADOPTION-20261019.md).
-The ledger is not an exhaustive manual review: 923 scanned files remain unread
-in full, community mechanisms have explicit test gaps, and surface40's reply
-and shared integration are still pending.
+Surface40's two requested replies were received and their hashes verified;
+its shared [MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55)
+was independently reviewed. Shared adoption remains separate from this private
+experiment. The ledger is not an exhaustive manual review: 923 scanned files
+remain unread in full, and community mechanisms retain explicit test gaps.
 
 ## Run offline checks
 

@@ -71,10 +71,27 @@ R29 原次保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普�
 
 [终态原生快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-final.json)、[独立终态审查](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-delivery-review/terminal-review.md)及后续原生诊断分别保存各阶段证据。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。此前“不再重开”指 R29 原次收口，不是对已授权后续独立实验的永久禁令；本次文档补记接收任务时 R30 尚未启动。升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。
 
-## 后续观察器修复：本地通过，实业务待验
+## 后续观察器修复：本地通过，R30 实际覆盖见下
 
 冻结观察器只包裹 `globalThis.fetch`；实际303源码的 `p5n` 在当前global等于捕获值 `wn` 时可选择缓存的 `Bun.FetchSession.fetch`，绕过该包裹。源码及本地复现确认兼容缺陷，但 R29 未留分支遥测，不能追认每次历史请求必经该分支。LOADED只证明preload执行；原代码在transport前写REQUEST，因此“响应未读”本身不足以解释没有REQUEST。
 
 [候选修复与验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)保留原生session，为新构造实例覆盖fetch观察路径，并区分构造器已安装、实例安装和实际拦截。候选 SHA256 为 `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。**47/47 Node通过；实际303内嵌Bun 1.4.4完成global/session × reader/iterator四轮各256条并发loopback流**，合计1024流、1048576个delta、216189952字节。每轮使用新观察上下文，不是单个512请求寿命内观察1024请求。另以独立Bun验证global路径；该Bun无FetchSession。
 
 这些均为本地验证，原生可执行文件只运行隔离的 `--version` 加loopback fixture；重建源码选择表达式，不执行原生业务 `p5n`。没有模型请求、业务样本或提效测量，旧2171项完整/CI也不含这次观察器验证。已存在的session/缓存构造器仍不覆盖，重复路径计数不是通用网络尝试计数；请求类别保持UNKNOWN，不从prompt猜测。未读、截断或预先消费的响应不能据text=false判空，观察开销未校准。新实验仍须独立证明实际加载及业务响应覆盖。
+
+## R30 最终补记：303 与 FetchSession 均真实采用，业务未开始
+
+R30 使用 d8a1585 冻结 v25，于 11:10:26.545509 UTC 发出原启动请求；900 秒窗口后，11:25:31.556429 UTC 发布 TIMEOUT，driver/watchdog 均 exit 2。pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、有效配对 0/15、普通通信闭环 0/192。完整结果见 [R30 报告](VALIDATION-20261019-R30.md)。
+
+| Lane | 原 session | PID / 实际版本 | 主 journal assistant / probe |
+|---|---|---|---|
+| A | `88e07a68-2129-497e-b15b-618a8feb4b11` | 61220 / 2.1.303 | 0 / 0 |
+| B | `feead08c-49e1-428d-a278-d9064ba4cce0` | 61210 / 2.1.303 | 0 / 0 |
+
+两路均真实加载 f698017e 观察器并拦截 `bun_fetch_session`，补齐新版本的实际观察路径证据。A 有 3 条 RESPONSE（HTTP200 3），B 有 13 条（HTTP200 11、429 2），另有一次 FETCH_REJECTED；非空白文本和 tool-use 块均未观察到。A 有 READ_ERROR；B 有 SSE rate_limit_error 和 HTTP429 rate_limit_exceeded。没有用不完整响应推断完整空正文，也没有据此认定 key 无效。
+
+debug 显式 source 为主任务 A2/B8、Goal hook A1/B4、后台 A0/B2，包含入口/重试计数。单响应 `request_class=UNKNOWN`，缺 request-ID 关联，不能把全部 429 或空响应按时间归为主任务。HTTP200/message_stop/usage 与可见输出、probe、业务接受分别判断。R29 的后台成功不属于 R30。
+
+A 于 11:11:52.906 UTC、B 于 11:21:09.581 UTC 因 Goal Stop 检查超时自行暂停；主管未发送暂停/唤醒。两路自动 Pre/PostToolUse 为 0；Stop advisory 已自动执行但 thread_scope 未认证，不能算完整采用。7 个停止输入标记已核验，原客户端保留；远端取消和 Goal 结束未证。
+
+版本滞后已解决，独立 `/loop` 长期稳定、双路协作正确性及 ≥15% 提效仍未证明。不能将 R30 的失败归结为“仍在使用 170”，也不能将升级本身当成稳定性验收。
