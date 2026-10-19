@@ -4,9 +4,9 @@
 
 枚举截止 `2026-10-19T08:38:48.957633+00:00`：**1,045 个常规文件、910 个 JSON，12,505,850 字节**；JSON 解码/解析无错误。按文件名启发式分为 report 430、addendum 286、reply 163、generator 124、erratum 33、resolution 8、ack 1。这些数字只说明文件形态。全量机器索引不等于逐件人工全文复核或逐个重现。
 
-机器显式引用索引含 4,323 条字段级引用；分类证据固定 79 个来源。其余 966 个文件仍保留在未分类清单中；不以它们被聚合件提及而宣布处理完毕。重复增量、勘误和回件在类别中合并，原件保留。来源字段指向的补件并非自动替代原报告。
+机器显式引用索引含 4,323 条字段级引用；初版分类证据固定 79 个来源。09:15Z 补审对其余 966 文件完成全字节扫描（11,907,579 字节，读错和 SHA 漂移均为 0），其中 43 份报告正文完成审读，923 份仍未全文审读。初版分类清单不覆盖这些补审；两批证据分别保存，不能把机器扫描或被聚合件引用当作全部处理完毕。重复增量、勘误和回件合并，原件保留；来源中的附件和二级回件仍需独立核验。
 
-共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护；本轮仅改 upgrade 的文档和私有证据。此次没有发消息给 surface40、启动模型、运行测试、改共享配置或重跑旧压力；根任务的另行沟通和验证以其实际回执为准。
+共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护。两名审计员仅核查源码/报告；root 另行执行 upgrade 私有实现和实验。本轮询问已发布到 surface40 的维护 inbox，直接输入被拒绝且零输入；未取得其本轮回复，不能称充分沟通完成。
 
 ## 本轮优先结论
 
@@ -411,8 +411,8 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 ### C37 入口相同但 import 闭包/活hook不同
 
 **事实：**addendum3“只重复两套hook”已撤回：入口相同，0.4.48→0.4.51五个模块不同；旧advisory文字仍在旧闭包。
-**原因边界：**显式profile指旧release；文档更新和磁盘修改不热载入既有进程。
-**状态：**勘误未观察该旧文字实际触发；v176原Codex自动hook仍0.4.34。
+**原因边界：**显式 profile 指旧 release 不足以证明永不热加载。补审发现该绝对化说法已被撤回；settings 更新时间只提示可能重读，触发机制未证。
+**状态：**不同客户端/窗口分别保留：owner 报告原 Claude42977 未重启而自然采用0.4.48（48个PreToolUse、4个Stop摘要，PostToolUse不可见）；另一客户端仍报告旧文字实际注入；v176原Codex自动hook仍0.4.34。均为来源报告，不能外推全客户端采用。
 **效率影响：**过期拒绝提示、重复hook成本和行为不一致；成本未量化。 本轮没有新增压力/速度样本。
 **upgrade 采用与归属：**纳入本次改进台账和验收要求；共享修复与live落实不由文档存在推定。 surface40/原CCC owner负责共享层；upgrade只修改其私有实现。 落点：[scripts/upgrade_hook_observer.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/upgrade_hook_observer.py)、[SKILL.md](/Users/lzhs/projects/multi-agent-collaboration-upgrade/SKILL.md)。
 **待实测/落实：**完整依赖闭包与实际自动hook证据，不能只比较入口SHA。
@@ -420,9 +420,9 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 
 ### C38 默认配置更新不代表原进程key采用
 
-**事实：**同窗7.30 key进程连续high demand无工具，7.29进程有成功；原进程仍用启动时key。
-**原因边界：**证据指向原进程credential/provider条件，非协作runtime已证根因；不外推其他账号。
-**状态：**报告者的按进程比较，非本轮provider复测；密钥不复制到台账。
+**事实：**历史窗口中不同 key 进程产出不同；后续勘误记录 compaction 在34分36秒后完成，撤回由零产出直接推断 key 永久不可用的结论，owner 接受勘误。
+**原因边界：**配置选择、原进程凭据采用、provider失败、压缩、hook曝光与读取延迟分别核验；一个窗口或进程对照不足以单独确定 credential/provider 因果。
+**状态：**保留原报告及其撤回链；不是本轮provider复测，密钥不复制到台账。
 **效率影响：**模型不可用可吞掉整回合，不能计协作失败延迟为纯调度开销。 本轮没有新增压力/速度样本。
 **upgrade 采用与归属：**纳入本次改进台账和验收要求；共享修复与live落实不由文档存在推定。 surface40/原CCC owner负责共享层；upgrade只修改其私有实现。 落点：[SKILL.md](/Users/lzhs/projects/multi-agent-collaboration-upgrade/SKILL.md)。
 **待实测/落实：**区分配置写入/进程采用/完整模型流成功/业务接受。
@@ -457,6 +457,36 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 **upgrade 采用与归属：**纳入本次改进台账和验收要求；共享修复与live落实不由文档存在推定。 surface40/原CCC owner负责共享层；upgrade只修改其私有实现。 落点：[scripts/orchestration_contracts.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/orchestration_contracts.py)、[scripts/orchestration_timeline.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/orchestration_timeline.py)。
 **待实测/落实：**按原deadline冻结，记首证据与实际业务调用，下一包优化。
 **来源：**[S059](#s059), [S071](#s071)。
+
+## 09:15Z 补审并入的十项处置
+
+下列编号对应[结构化补审 findings.json](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/coverage-followup/findings.json)。每条保存源文件索引、事实、局限和后续动作；不增加虚假的“已修复”数量。
+
+| 补审 | 归类 | 本次采用及待验证边界 |
+|---|---|---|
+| CF01 | C38/C10 | 撤回零产出即死 key；按原时间窗分解 provider、模型回合、曝光、全文读取、consume。历史488.3/346.1/2244.1秒均为来源统计，非本次测量。 |
+| CF02 | C16/C39/C38 | WAITING_REPLY不证明接收端存活或死亡。诊断应分别显示最后原生活动、实际provider错误、支持入口能力和声明的等待原因；不以busy设禁令。 |
+| CF03 | C17/C10 | 查找权威指令须包括Codex附件和按时序的勘误，不能只搜Claude转录。相关20GB指令的原附件尚未独立核验，也不改变本任务10GB门槛。 |
+| CF04 | C20/C24/C27 | 迟到ACK可作追加诊断提案；原nonce、expiry、FAIL/EXPIRED不变，不据此复活原次、验收或重放。历史1952.3秒为报告者数据，功能尚未实现。 |
+| CF05 | C19/C37/C21 | 比较完整import闭包及实际自动hook；撤回“显式profile永不重读”。手动helper PASS与旧hook实际拒绝同时保留。 |
+| CF06 | C21/C23/C24/C33 | 准备好信息即走支持入口通信，无需暂停Goal/loop。历史草稿恢复、正常通信和共享写权限分别判断；正常Stop不等于取消文件scheduler，不要求模型空转。文字歧义交surface40裁决。 |
+| CF07 | C10/C24/C17 | compaction摘要不算native user；记录tail字节/时间窗，解析JSON事件标志，列表保留数不当累计次数，规范化hash不当原始字节相等。 |
+| CF08 | C40/C41/C20/C34 | TASK_ACCEPTED、首次实际工作、报告冻结和原deadline分别留证；BLOB时间戳解析失败保留UNKNOWN。903秒停顿/480秒时限与T+422/600秒是不同历史样本，不能推断因果提效。 |
+| CF09 | C26/C19/C24/C33 | footer/hook发布及内部采用不证明原外部control socket可用；端点缺失及callback NO_INPUT继续开放。 |
+| CF10 | C16/C23/C24/C34 | owner文件回复不证明接收/读取；离线busy解析不证明当前native成功；不代原主管结算，不扩大历史草稿清理权限。研究脚本argparse问题不外推共享runtime缺陷。 |
+
+43份全文审读清单：[reviewed-sources.json](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/coverage-followup/reviewed-sources.json)。923份精确未读补集：[unreviewed-files.json](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/coverage-followup/unreviewed-files.json)。补审未展开报告中的全部附件或原生转录，也未新增原生测试。
+
+## 本轮实地增补（保留 C01–C41 原分类）
+
+| 关联 | 本轮具体事实 | 采用与剩余验证 |
+|---|---|---|
+| C04/C37 | Claude 170→303：官方 Goal 错误恢复、Opus 5.5、loop 变更相关；293还撤回过290的一项loop修复。三个入口已升级，R29双Claude实际进程/原生日志均为303。 | 安装、进程采用、原生请求型号和成功完成分别留证。R29请求为`claude-opus-5-5`，仍无assistant；不能据版本或请求名证明后端成功。详见[版本报告](CLAUDE-VERSION-VALIDATION.md)。 |
+| C01/C38/C41 | R28原响应有HTTP200、message_stop/EOF，但无content_block及有效assistant，启动超时。R29有Goal SET和1/5分钟退避提示，仍未ready。 | 接口成功状态、重试活跃与有效产出分开；保留原900秒启动窗口和未完成分母。R29观察器只有LOADED，不能把缺请求文件解释为未请求。 |
+| C15/C37 | 兼容补丁四格CI通过，但本地完整回归13个failure cases暴露生成控制器缺`upgrade_toml`。CI跳过了依赖本机原生安装的路径。 | 修复真实materializer私有依赖闭包及许可随包携带，加入无原生CLI依赖的生成包roundtrip/缺模块负控；完整回归与CI分别验收。固定v24与在途R29不变。 |
+| C20/C31/C34 | [08:45Z执行者增量原件](/Users/lzhs/Documents/cnm/tasks/06_Mintransition/verification/ccc-successor-claude-20261010/maintenance-inbox/claudeB-CC948292-to-surface1000020040-reply-deadline-equals-executor-cron-period-consume-late-20261019-v1.json)自报落盘→cron 507.0秒、触发→consume 122.3秒、晚于deadline 29.3秒，最终仍REPLY_CONSUMED。 | 记录等待来源与实际处理时间；这是来源报告，附件时间链未独立重建。“必然超时”不是已证普遍规律。先读已有回件正文、再做无关全量探针可避免部分可控延迟；共享deadline语义交surface40核验。本轮固定deadline不延长。 |
+
+新增cron原件SHA256为`c9c9cc9fe4d139a754cd6167a4f8024e3336bf59860fcdc05c1c57f188f960dc`。它不属于最初1045文件库存，也不是surface40对本轮询问的回复；保留增量身份，不改写既有覆盖率。
 
 ## 勘误和状态合并规则
 

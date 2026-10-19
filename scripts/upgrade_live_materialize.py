@@ -32,13 +32,40 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_hook_observer.py", "upgrade_input_gate.py", "upgrade_live_inspect.py", "upgrade_bootstrap.py",
            "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py",
            "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py",
-           "upgrade_handshake_capability.py", "upgrade_body_read.py")
+           "upgrade_handshake_capability.py", "upgrade_body_read.py",
+           "upgrade_toml.py", "upgrade_toml_re.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
     ref = write_bytes_once(path, raw)
     Path(ref["path"]).chmod(0o400 if secret else (0o555 if executable else 0o444))
     return artifact_ref(Path(ref["path"]))
+
+
+def render_private_support(support):
+    """Render the complete private support closure before creating any arm."""
+    buffers, changes = {}, []
+    for name in SUPPORT:
+        raw = read_regular(support / name)
+        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py"):
+            raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
+                                                     "_upgrade_install_scope(live=True)").encode()
+        raw = private_imports(raw.decode()).encode()
+        private_name = PRIVATE_MODULES[Path(name).stem] + ".py"
+        compile(raw, private_name, "exec", dont_inherit=True)
+        buffers["scripts/" + private_name] = (raw, False)
+        changes.append({"path": "scripts/" + private_name, "source": file_ref(support / name),
+                        "transformations": ["private_live_support", "distinct_module_namespace"],
+                        "after": {"sha256": digest(raw), "bytes": len(raw)}})
+    # Vendor notices travel with the private copy, under the same manifest.
+    for name in ("licenses/TOMLI-LICENSE", "docs/VENDORED-TOMLI.md"):
+        source = support.parent / name
+        raw = read_regular(source)
+        buffers[name] = (raw, False)
+        changes.append({"path": name, "source": file_ref(source),
+                        "transformations": ["private_support_vendor_notice"],
+                        "after": {"sha256": digest(raw), "bytes": len(raw)}})
+    return buffers, changes
 
 
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
@@ -144,18 +171,10 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             changes.append({"path": name, "transformations": kinds,
                 "before": {"sha256": old["sha256"], "bytes": old["bytes"]},
                 "after": {"sha256": digest(raw), "bytes": len(raw)}})
-    for name in SUPPORT:
-        raw = read_regular(support / name)
-        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py"):
-            raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
-                                                     "_upgrade_install_scope(live=True)").encode()
-        raw = private_imports(raw.decode()).encode()
-        private_name = PRIVATE_MODULES[Path(name).stem] + ".py"
-        compile(raw, private_name, "exec", dont_inherit=True)
-        buffers["scripts/" + private_name] = (raw, False)
-        changes.append({"path": "scripts/" + private_name, "source": file_ref(support / name),
-                        "transformations": ["private_live_support", "distinct_module_namespace"],
-                        "after": {"sha256": digest(raw), "bytes": len(raw)}})
+    support_buffers, support_changes = render_private_support(support)
+    require(not set(support_buffers).intersection(buffers), "source is already an upgrade controller")
+    buffers.update(support_buffers)
+    changes.extend(support_changes)
     if response_observation:
         # CJS is an immutable artifact, not a Python support module. It must
         # enter the original release manifest before startup pins are created.

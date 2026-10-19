@@ -142,6 +142,15 @@ probes after the same settings EPERM. Missing request-observation files leave
 response semantics unknown. A stalled startup
 remains missing business evidence, not a successful pressure sample.
 
+Pin client versions separately from controller versions. Verify the actual
+native process and journal version after an authorized upgrade; changing an
+entrypoint does not update existing clients. A native request's model identifies
+what was requested, not which backend successfully completed it. Revalidate
+observer coverage across client versions: LOADED with no response records cannot
+override native request evidence. Goal retry notices are not successful task
+execution, and Goal testing is not independent loop validation. Preserve original
+attempts and deadlines; see [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
+
 Original handshake member selectors may be a numeric `surface:<N>` or a UUID.
 Canonicalize UUID aliases and allow repeated aliases only for the same member;
 reject a UUID selector belonging to another member or any cross-member collision.
