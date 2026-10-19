@@ -26,6 +26,11 @@ stream outcome. Even two completed overlapping streams establish only that
 observation, not sustained capacity or native collaboration acceptance. Preserve
 these diagnostic requests separately from registered business/message samples;
 do not launch an unchanged campaign into a just-observed capacity refusal.
+Keep HTTP error status, saved response-body errors and local reader exceptions
+separate. A saved JSON `rate_limit_error` with HTTP 429 remains rate-limit
+evidence even if a subsequent EOF read raises `OSError`; preserve both facts.
+Usage growth and elapsed time can justify a new bounded capacity observation,
+but never establish recovery or justify replaying an existing native attempt.
 Claude's default footer without a custom statusline is supported only when the
 matching complete borders are followed by the exact permissions row. Empty
 compose and idle turn remain separate checks; preserve drafts and reject unknown
@@ -41,6 +46,7 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
+[r23 preparation and provider observations](docs/VALIDATION-20261019-R23.md),
 [r22 timeout and candidate improvements](docs/VALIDATION-20261019-R22.md) and
 [r21 terminal report and UUID repair](docs/VALIDATION-20261019-R21.md), with
 earlier batches in the [2026-10-18 validation report](docs/VALIDATION-20261018.md).
