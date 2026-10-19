@@ -135,6 +135,7 @@ check failures separately; do not treat Goal pause as proven termination or as
 permission to re-input. Goal checks do not validate independent long-running loop.
 See [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
 Current measured results and open live-validation gaps are recorded in the
+[r31 terminal result and control-overhead findings](docs/VALIDATION-20261019-R31.md),
 [r30 final delivery](docs/VALIDATION-20261019-R30.md),
 [r29 final delivery](docs/VALIDATION-20261019-R29.md),
 [r28 implementation and regression](docs/VALIDATION-20261019-R28.md),

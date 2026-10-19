@@ -521,6 +521,8 @@ R31 新增实测与修复（保留 C01–C41 编号）：
 | C09/C31 | 每次 advance 重置公平计数，原 R31 的 A claim→prepare→dispatch 先于 B claim；B 已启动但正式握手迟迟未推进。 | 同优先级按持久阶段排序，新的单步 Runner 连续调用实测 A claim/B claim/A prepare/B prepare/A dispatch/B dispatch。收尾、依赖、写域和原次门禁不变；尚无新版本原生提效样本。 |
 | C10/C24/C34/C40 | A 原 callback 于 12:50:36.429Z 返回 exit75，17.024 秒后原 Codex 日志出现完整 DONE；12:53:23.781Z 原 reconcile-only 成功，bridge_retries=0。 | 原次迟到收件不能解释为 key 失效或确定未送达。观察原日志并只读结算，不重发；callback 与业务 ACCEPT 分别证明。见[R31](VALIDATION-20261019-R31.md)。 |
 
+R31终态补记：13:04:49Z超时停止，双Claude实际启动2/2，A握手及8/8检查后的ACCEPTED已证，B截至13:09:05Z原fence后仍无正式握手。33槽为1 TIMEOUT＋32 MISSING，pilot0/3、完整轮次0/33、可用配对0/15。7组STOPPED_INPUT已核；A租约已释放，但disarm被停止门禁拒绝，B原租约与旧进程仍保留。不得把停止新输入写成全体解除或远端取消。上述两项调度修复已推送 `ae2c3c6`，未热加载进原次；缺少修复后原生配对，提效未证明。
+
 1. v17 的原建议与 owner v136 不一致时，保留原建议作为历史，采用 owner 改写；用户后续明确要求优先。尤其 C14/C16/C21 不恢复 busy 禁令。
 2. profile addendum3 的“只重复执行两套入口”已由 `addendum3.erratum-1` 撤回；差异须沿 import 闭包核对。勘误本身也未证明旧文字已在实际回合出现。
 3. callback 144.9秒按 erratum 拆分24.9秒与120秒；3858.7秒预留静默为另一指标。

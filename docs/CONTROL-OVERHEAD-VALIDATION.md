@@ -32,7 +32,24 @@ fixture 仪器化实测新 status 调用 state 一次；单步 local claim 创�
 
 ## 未完成验证
 
-仍有六个观察用 NativeReader、action gates、callback 和最终刷新保留完整私有校验。没有大 pin 性能基准、原生新版本配对或 15% 提效结果。新提交需要单独四格 CI；此前 `7fa8e4e` 的 CI 不能移算。R31 的客户端、输入、时间、失败与样本分母保持原样。
+仍有六个观察用 NativeReader、action gates、callback 和最终刷新保留完整私有校验。没有大 pin 性能基准、原生新版本配对或 15% 提效结果。R31 的客户端、输入、时间、失败与样本分母保持原样。
+
+## 精确提交 CI
+
+修复提交 `ae2c3c645dabfa97be736fefff9609dadf4f715b` 的[四格 CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39257614544)于 13:08:22–13:08:26 UTC 实际触发一次，13:17:20 UTC 完成，结论为 FAILURE。原始每格均输出 Ran 2194 tests；未单独输出 discovered，以下通过数按总数减跳过、失败和错误推导。
+
+| 环境 | 通过 | 跳过 | 失败 | 错误 | 测试用时 |
+|---|---:|---:|---:|---:|---:|
+| Ubuntu / Python 3.10 | 2079 | 114 | 0 | 1 | 467.153 秒 |
+| Ubuntu / Python 3.14 | 2080 | 114 | 0 | 0 | 521.094 秒 |
+| macOS / Python 3.10 | 2089 | 104 | 0 | 1 | 462.993 秒 |
+| macOS / Python 3.14 | 2090 | 104 | 0 | 0 | 461.354 秒 |
+
+两格 Python 3.10 都在新增测试 `test_lease_change_between_status_and_advice_is_refused` 的第120行报同一 `ValueError`：该版本的 `datetime.fromisoformat` 不接受原时间末尾的 `Z`。后续提交 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 仅先将它转换为 `+00:00`，保留加一秒的变更和原拒绝断言。定向8项在 Python 3.14 下通过，测试耗时9.094秒；完整stdout、测试前后相同源码SHA和执行记录保存在[兼容性修复证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-final-publication/python310-fixture-repair)。这不是本机Python 3.10验证。
+
+`9e5adfd` 的[新四格 CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39259307066)于13:20:24–13:20:27 UTC只触发一次，run.headSha已精确核对，最终结果待收。此前 `7fa8e4e` 的通过结果与 `ae2c3c6` 的失败结果均不移算。
+
+最初的 `dispatch-intent.json` 写错上游仓库，未执行；原文件保留。`dispatch-intent-corrected.json` 与 `dispatch-result.json` 记录更正后的 upgrade 仓库以及唯一实际触发。该更正不是第二次 CI 执行，原始状态、日志和计数保存在 [CI 证据目录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/ci-ae2c3c6)。
 
 ## 原始证据
 
