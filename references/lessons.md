@@ -330,3 +330,48 @@ queued、missing保留，不补样、不额外求ACK。helper即使短正文也�
 从而生成MESSAGE_REFERENCE_V2；原生notice接收不证明完整body读取。
 实际生成握手的1600调用竞争仅100次模拟传输submit调用，另1500预期拒绝；真实模型输入0，
 不能作为真实模型提效结果。66项新增集成回归与58项独立审计已通过。
+
+## R32：区分无序路径集合与有序实验流程
+
+原准备脚本已物化七组配置，随后将 layout 的插入顺序与经过 JSON 排序的
+registration 顺序直接比较，错误报告路径范围变化。实际十四条唯一路径均未占用，
+逐组 advertised／physical／lock 映射全部一致；这不是 Claude 启动或 API 失败。
+
+修复采用两个独立判断：路径集合必须唯一且相等，组名到各路径的原绑定必须逐项相等。
+不能仅改成 set 后忽略重复路径，也不能把这一规则用于真正有序的33轮注册执行序列。
+
+原次恢复先重核七组仍未启动、原四脚本与全部冻结配置未变、旧原次已终态、
+十四条路径未占用和原绝对截止有效；随后只发布尚不存在的候选／授权元数据。
+没有重新物化、删除原根目录、重开批次或重放输入。恢复脚本及核验结果单独留证。
+未持久化的旧时点快照保持缺失，只报告恢复前后的重新观察，不补造过去的证明。
+这条恢复经验不授权处理已存在的原生输入或不确定投递。
+
+## R32：独立 lane 不应互等握手，验收提示不能滞留在慢调用后
+
+现场显示 A 已 PREPARED 后，advance 仍先执行 B 的同步 prepare，A 的派发因此等待。
+候选改为先 claim 所有符合条件的独立 lane，再优先 dispatch 已 PREPARED 的 lane，
+随后推进另一 lane 的 prepare。外层收尾、审阅、原次 reconcile 优先级保持原样。
+
+另一缺陷是本次已产生 candidate／恢复原次 ACCEPT 提示，却继续进入慢 reconcile
+或 prepare，主管拿不到提示便无法验收。现于下一次同步 transport 前返回仍有效的
+review handoff；最终重新核状态，删除已过期提示或返回原次验收恢复命令。
+既有 local-business handoff 优先，不自动 ACCEPT、不提前释放、不重放输入。
+
+三个针对慢 reconcile／后续 prepare 的反例在修复前真实失败，修复后完整 advance
+模块42项通过，独立增量复审无阻塞发现。该验证属于新候选，不计入冻结 R32 的
+原生压测结果；同步 dispatch 本身仍等待。attempted／counts 只活在本次调用中，
+不能宣称 max_steps=1 在持续 pre-intent 拒绝下跨调用无条件公平。
+
+## R32：callback 之后的只读检查不等于继续写入
+
+原验收器用“最后业务调用”代替“最后潜在写入”，把callback后成功的目录检查
+误判为改动产物；同时output_root紧邻分号时漏计真实workload。新冻结注册metrics
+v4及output-effects-v1，显式路径匹配涵盖shell分隔符，业务活动和潜在写入分别统计。
+仅成功、完整的原生Claude Read与受控干净shell ls可以排除；未知、失败、未完成
+调用继续保留。no_business_input和preparation exit仍检查全部业务活动。
+
+新任务包直接给出受控命令；先完成检查再callback仍是首选。当前Codex若只有
+functions.exec包装，就不具备后置读取豁免，必须在本地ACCEPT前完成输出检查。
+不能用合成native exec_command测试证明真实客户端具有该工具。45项反例及兼容
+回归通过，独立集成审查未发现新增必失败路径；这些不等于真实压力通过。旧三种
+metrics、R32原始失败与全部原始证据保持不变，后续新批次另报完整结果。

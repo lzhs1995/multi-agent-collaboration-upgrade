@@ -10,7 +10,8 @@ import statistics
 import time
 from pathlib import Path
 
-from orchestration_campaign import METRICS_V3_COMMUNICATION, ORDER, validate_campaign
+from orchestration_campaign import (METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS, ORDER,
+                                    campaign_effect_policy, validate_campaign)
 from orchestration_common import (boot_id, contract_errors, count, file_ref, json_ref, object_sha, parse_time, read_json,
                                   read_ref, utc_now, write_json, exclusive_lock)
 from orchestration_contracts import campaign_version, evidence_class
@@ -66,8 +67,10 @@ def derive_run(co, native_end, *, closeout_clock=None):
         for other in readers:
             require(ends[other] >= readers[other].verify_pin(evidence["native_end"][other]), "run ends before terminal evidence")
         after = readers[lane].action_summary(evidence["native_end"][lane]["offset"], ends[lane],
-                    task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
-        require(after["attempted_task_calls"] == 0, "task output actions continued after terminal boundary")
+                    task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
+                    effect_policy=campaign_effect_policy(co.campaign))
+        attempts = "attempted_potential_write_calls" if campaign_effect_policy(co.campaign) else "attempted_task_calls"
+        require(after[attempts] == 0, "task output actions continued after terminal boundary")
         if info["verification"].get("first_action_at"):
             firsts.append(parse_time(info["verification"]["first_action_at"]))
         if "protocol" in evidence:
@@ -89,7 +92,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
     for lane, reader in readers.items():
         start = reader.verify_pin(co.header["native_start"][lane])
         observations[lane] = reader.action_summary(start, ends[lane], task_id=co.spec["run_id"],
-                                      output_root=str(co.root / "work"), allow_empty=True)
+                                      output_root=str(co.root / "work"), allow_empty=True,
+                                      effect_policy=campaign_effect_policy(co.campaign))
         for ref, record in reader.records(start, ends[lane]):
             text = native_text(record, reader.provider, "user")
             if text is None or text in allowed[lane]:
@@ -114,7 +118,7 @@ def derive_run(co, native_end, *, closeout_clock=None):
     else:
         require(closeout_clock is None, "v2 measurements cannot adopt v3 closeout clocks")
     communication = None
-    if co.campaign["metrics"] == METRICS_V3_COMMUNICATION:
+    if co.campaign["metrics"] in (METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS):
         from upgrade_communication_attribution import attribute_inputs
         communication = attribute_inputs(co.campaign, co.header, native_end, readers,
                                          not_after=measurement_end["at"])

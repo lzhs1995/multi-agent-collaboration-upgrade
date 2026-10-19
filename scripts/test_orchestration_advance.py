@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from orchestration_campaign import control_script
-from orchestration_common import ContractError, file_ref, json_ref, write_json
+from orchestration_common import ContractError, file_ref, json_ref, utc_now, write_json
 from orchestration_coordinator import Coordinator, State
 from orchestration_evidence import marker_for
 from orchestration_run import Runner, main
@@ -113,7 +113,7 @@ class AdvanceTests(unittest.TestCase):
             ("local", "claim"), ("review", "claim"), ("parallel", "claim")])
         self.assertEqual(first["stop_reason"], "local_business_ready_before_prepare")
         self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [
-            ("review", "prepare"), ("parallel", "prepare"), ("review", "dispatch"), ("parallel", "dispatch")])
+            ("review", "prepare"), ("review", "dispatch"), ("parallel", "prepare"), ("parallel", "dispatch")])
         self.assertEqual(result["states"]["review"], "DISPATCHED")
         self.assertEqual(result["states"]["parallel"], "DISPATCHED")
         self.assertEqual(result["states"]["followup"], "PENDING")
@@ -159,11 +159,15 @@ class AdvanceTests(unittest.TestCase):
     def test_repeated_single_steps_do_not_starve_ready_lane_behind_review(self):
         info, candidate = self.local_candidate()
         with self.fixture_transport():
-            results = [self.r.advance(self.run) for _ in range(4)]
+            results = [self.r.advance(self.run) for _ in range(6)]
         self.assertEqual([(r["actions"][0]["node_id"], r["actions"][0]["action"]) for r in results],
-                         [("review", "claim"), ("parallel", "claim"), ("review", "prepare"), ("parallel", "prepare")])
+                         [("review", "claim"), ("parallel", "claim"), ("review", "prepare"),
+                          ("review", "dispatch"), ("parallel", "prepare"), ("parallel", "dispatch")])
         self.assertEqual(results[-1]["states"]["local"], "EVIDENCE_READY")
+        self.assertEqual(results[-1]["states"]["review"], "DISPATCHED")
+        self.assertEqual(results[-1]["states"]["parallel"], "DISPATCHED")
         self.assertIsNone(self.co.leases.read()[info["task_id"]]["released_at"])
+        self.assertEqual(json_ref(candidate["candidate"])["task_id"], info["task_id"])
 
     def test_fair_progress_survives_new_runner_for_every_single_step(self):
         from orchestration_observe import _next_action_from_co
@@ -180,11 +184,66 @@ class AdvanceTests(unittest.TestCase):
             results = [Runner(self.f.ref, fixtures=True).advance(self.run, max_steps=1) for _ in range(6)]
         self.assertEqual([(r["actions"][0]["node_id"], r["actions"][0]["action"]) for r in results], [
             ("review", "claim"), ("parallel", "claim"),
-            ("review", "prepare"), ("parallel", "prepare"),
-            ("review", "dispatch"), ("parallel", "dispatch")])
+            ("review", "prepare"), ("review", "dispatch"),
+            ("parallel", "prepare"), ("parallel", "dispatch")])
         self.assertEqual(results[-1]["states"], {"review": "DISPATCHED", "parallel": "DISPATCHED"})
         self.assertEqual([r["initialization_seconds"] for r in results], [90] * 6)
         self.assertTrue(all(len(r["actions"]) == 1 and r["stop_reason"] == "step_budget" for r in results))
+
+    def test_prepared_lane_dispatches_after_claim_before_other_handshake(self):
+        self.narrow("review", "parallel")
+        co = self.start()
+        co.claim("review")
+        self.f.prepare(co, "review")
+        with self.fixture_transport(), \
+             patch.object(Transport, "prepare", side_effect=AssertionError("other handshake is not needed yet")) as prepare:
+            result = self.r.advance(self.run, max_steps=2)
+        prepare.assert_not_called()
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]],
+                         [("parallel", "claim"), ("review", "dispatch")])
+        self.assertEqual(result["states"], {"review": "DISPATCHED", "parallel": "PREPARING"})
+        with self.fixture_transport():
+            resumed = Runner(self.f.ref, fixtures=True).advance(self.run, max_steps=2)
+        self.assertEqual([(r["node_id"], r["action"]) for r in resumed["actions"]],
+                         [("parallel", "prepare"), ("parallel", "dispatch")])
+        self.assertEqual(resumed["states"], {"review": "DISPATCHED", "parallel": "DISPATCHED"})
+
+    def test_refused_prepared_lane_does_not_repeat_or_block_other_lane_in_batch(self):
+        self.narrow("review", "parallel")
+        co = self.start()
+        calls = []
+        def dispatch(t):
+            calls.append(t.key)
+            if t.key == "review":
+                raise ContractError("original gate refused before native intent")
+            self.f.intent(t.co, t.key)
+            return self.f.dispatch(t.co, t.key)
+        with self.fixture_transport(), patch.object(Transport, "dispatch", dispatch):
+            result = self.r.advance(self.run, max_steps=12)
+        self.assertEqual(calls, ["review", "parallel"])
+        self.assertEqual(result["states"], {"review": "PREPARED", "parallel": "DISPATCHED"})
+        self.assertEqual(result["status"], "PENDING_OR_BLOCKED")
+        self.assertFalse((co.root / "nodes/review/dispatch-intent.json").exists())
+        self.assertFalse(result["input_retry_authorized"])
+        self.assertEqual(sum(e["node_id"] == "parallel" and e["state"] == "DISPATCH_INTENT"
+                             for e in co.events()), 1)
+
+    def test_terminal_release_precedes_prepared_dispatch_and_pending_claim(self):
+        info, candidate = self.local_candidate()
+        marker = marker_for(info, json_ref(candidate["candidate"]))
+        self.f.control("accept", self.run, node_id="local", marker=marker)
+        with patch.object(Coordinator, "_release", side_effect=OSError("crash after accepted event")):
+            with self.assertRaises(OSError):
+                self.r.accept(self.run, "local", marker)
+        self.co.claim("review")
+        self.f.prepare(self.co, "review")
+        with patch.object(Transport, "dispatch", side_effect=AssertionError("repair comes first")) as dispatch:
+            result = self.r.advance(self.run, max_steps=1)
+        dispatch.assert_not_called()
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [("local", "repair-releases")])
+        self.assertIsNotNone(self.co.leases.read()[info["task_id"]]["released_at"])
+        self.assertEqual(result["states"]["review"], "PREPARED")
+        self.assertEqual(result["states"]["parallel"], "PENDING")
 
     def test_ineligible_pending_node_does_not_hold_back_prepared_lane(self):
         self.narrow("review", "followup")
@@ -309,6 +368,73 @@ class AdvanceTests(unittest.TestCase):
         self.assertTrue(handoff["output_files"])
         self.assertEqual(result["states"]["local"], "EVIDENCE_READY")
         self.assertIsNone(self.co.leases.read()[info["task_id"]]["released_at"])
+        self.assertEqual(before, self.native_bytes())
+
+    def assert_review_handoff_before_reconcile(self, original_accept):
+        self.narrow("local", "review")
+        info, candidate = self.local_candidate()
+        if original_accept:
+            self.f.control("accept", self.run, node_id="local",
+                           marker=marker_for(info, json_ref(candidate["candidate"])))
+        co = self.co
+        co.claim("review")
+        self.f.prepare(co, "review")
+        intent = self.f.intent(co, "review")
+        self.r.transport(co, "review")._uncertain("preserved original native input")
+        before, intent_bytes = self.native_bytes(), Path(intent["path"]).read_bytes()
+        with patch.object(Transport, "reconcile", side_effect=AssertionError("review must be returned first")) as reconcile, \
+             patch.object(Runner, "accept", side_effect=AssertionError("independent native review required")):
+            result = self.r.advance(self.run, max_steps=12)
+        reconcile.assert_not_called()
+        self.assertEqual([r["action"] for r in result["actions"]], ["candidate"])
+        self.assertEqual(result["stop_reason"], "review_ready_before_reconcile")
+        self.assertEqual(result["supervisor_actions"][0]["action"],
+                         "resume-original-acceptance" if original_accept else "review-and-accept")
+        self.assertEqual(result["states"], {"local": "EVIDENCE_READY", "review": "UNCERTAIN"})
+        self.assertIsNone(co.leases.read()[info["task_id"]]["released_at"])
+        self.assertEqual(before, self.native_bytes())
+        self.assertEqual(intent_bytes, Path(intent["path"]).read_bytes())
+
+    def test_review_handoff_returns_before_unrelated_slow_reconcile(self):
+        self.assert_review_handoff_before_reconcile(False)
+
+    def test_review_handoff_original_acceptance_returns_before_slow_reconcile(self):
+        self.assert_review_handoff_before_reconcile(True)
+
+    def test_review_handoff_returns_before_newly_available_prepare(self):
+        self.narrow("local", "review")
+        info, candidate = self.local_candidate()
+        other = self.co.claim("review")
+        journal = OperationJournal(self.co.root / "nodes/review", self.f.ref,
+                                   other["task_id"], self.f.campaign["controller"])
+        with self.assertRaises(KeyboardInterrupt):
+            journal.once("preflight", {}, Mock(side_effect=KeyboardInterrupt))
+        intent = file_ref(journal.root / "preflight/intent.json")
+        before = self.native_bytes()
+        import orchestration_advance
+        review = orchestration_advance._review
+        completed = False
+        def original_preflight_completes(*args):
+            nonlocal completed
+            value = review(*args)
+            if not completed:
+                # An external original operation finishes while this candidate
+                # is selected; the next fresh observation can suggest prepare.
+                write_json(journal.root / "preflight/result.json", dict(
+                    intent=intent, status="RETURNED", value={"returncode": 0}, completed_at=utc_now()), exclusive=True)
+                completed = True
+            return value
+        with patch.object(orchestration_advance, "_review", side_effect=original_preflight_completes), \
+             patch.object(Transport, "prepare", side_effect=AssertionError("review must not wait for prepare")) as prepare:
+            result = self.r.advance(self.run, max_steps=12)
+        self.assertTrue(completed)
+        prepare.assert_not_called()
+        self.assertEqual([r["action"] for r in result["actions"]], ["candidate"])
+        self.assertEqual(result["stop_reason"], "review_ready_before_prepare")
+        self.assertEqual(result["states"], {"local": "EVIDENCE_READY", "review": "PREPARING"})
+        self.assertEqual(result["supervisor_actions"][0]["action"], "review-and-accept")
+        self.assertIsNone(self.co.leases.read()[info["task_id"]]["released_at"])
+        self.assertEqual(intent, file_ref(journal.root / "preflight/intent.json"))
         self.assertEqual(before, self.native_bytes())
 
     def test_local_handoff_is_removed_if_another_turn_already_created_candidate(self):

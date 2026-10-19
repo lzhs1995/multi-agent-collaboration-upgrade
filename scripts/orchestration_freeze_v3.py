@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from orchestration_adapter import validate_adapter
-from orchestration_campaign import METRICS_V3_COMMUNICATION, anchored_ref, validate_campaign
+from orchestration_campaign import METRICS_V3_OUTPUT_EFFECTS, anchored_ref, validate_campaign
 from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref,
     read_ref, require, strict_json, tree_manifest, utc_now, write_bytes_once, write_json)
 from orchestration_freeze import copy_runtime
@@ -169,7 +169,7 @@ def freeze_campaign(request_ref):
             inputs=inputs, input_tree=input_tree, adapter=adapter, controller=runtime["controller"], python=runtime["python"],
             workload=file_ref(destination / "scripts/orchestration_workload.py"),
             checker=file_ref(destination / "scripts/orchestration_checker.py"), checker_timeout_seconds=30,
-            metrics=copy.deepcopy(METRICS_V3_COMMUNICATION), decision_provider="rules", minimum_improvement_percent=15,
+            metrics=copy.deepcopy(METRICS_V3_OUTPUT_EFFECTS), decision_provider="rules", minimum_improvement_percent=15,
             third_party_api=False, replacement_sessions=False)
         # Re-read the same adopted original files, including their current model.
         # A fresh external native inventory is verified again by every real run.

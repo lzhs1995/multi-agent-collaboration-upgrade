@@ -52,6 +52,23 @@ lanes to run concurrently and use active callbacks and independent acceptance.
 The B supervisor calls `advance --run RUN --max-steps 12 --max-seconds 45` with
 the exact frozen runner/campaign arguments, then handles its native control and
 review handoffs. It never duplicates actions already performed by advance.
+New controllers claim eligible lanes, then dispatch a prepared lane before
+preparing another lane. Verify that the other lane can still progress after a
+refusal and that original closeout/review/reconciliation priorities remain.
+When a call has produced a still-current acceptance handoff, return it before
+another synchronous transport operation, with a final evidence refresh. Preserve
+local-business handoff priority, native ACCEPT and release/disarm boundaries.
+Per-call attempt fairness does not promise fairness across repeated one-step
+calls that fail before an input intent; synchronous dispatch is still blocking.
+Frozen R32 retains its original policy and cannot count these later fixes.
+New freezes register metrics v4 and `output-effects-v1`. Complete output checks
+before the original callback, or before ACCEPT for local Codex work. Only a
+successful completed native Claude Read or the task pack's exact controlled
+inspection command qualifies as a later read. Bare ls, arbitrary wrappers,
+failed and unfinished reads remain potential writes. A Codex client exposing
+only functions.exec must finish these checks before ACCEPT. This separation
+does not relax no-business-input or preparation-exit evidence and does not
+change any frozen campaign's result.
 Its action budget starts after the first complete fenced observation. Later
 observations count against it; the next action checks it again. Record all four
 returned timing fields: initialization, action, finalization and total elapsed

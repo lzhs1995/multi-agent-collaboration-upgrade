@@ -186,24 +186,31 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             break
         options = [o for o in options if (o[1], o[3]) not in attempted]
         # Recorded lifecycle progress survives single-step invocations. Claim
-        # all eligible independent lanes before prepare, then prepare before
-        # dispatch. Keep closeout/review/reconcile priorities and fresh gates.
-        phases = {State.PENDING.value: 0, State.PREPARING.value: 1, State.PREPARED.value: 2}
+        # all eligible independent lanes first, then dispatch a prepared lane
+        # before waiting for another lane's handshake. Keep outer priorities
+        # and fresh gates; synchronous transport can still exceed the budget.
+        phases = {State.PENDING.value: 0, State.PREPARED.value: 1, State.PREPARING.value: 2}
         options.sort(key=lambda o: (o[0], phases.get(o[2], 3) if o[0] == 1 else 0,
                                     counts.get(o[1], 0)))
         if not options:
             result["stop_reason"] = "supervisor_or_original_evidence_required"
             break
         _, key, expected, action = options[0]
-        if action in ("prepare", "dispatch", "reconcile", "callback", "disarm") and any(
-                handoff["action"] == "execute-local-business-once"
-                and view["recorded_states"][node] == State.LOCAL_RUNNING.value
-                for node, handoff in handoffs.items()):
-            # A native local command cannot start until this foreground call
-            # returns. Keep short claims/closeout batched, but do not hide that
-            # handoff behind an original synchronous transport operation.
-            result["stop_reason"] = "local_business_ready_before_" + action
-            break
+        if action in ("prepare", "dispatch", "reconcile", "callback", "disarm"):
+            # Native local work and independent acceptance cannot start until
+            # this foreground call returns. Keep short actions batched, then
+            # return ready handoffs before another synchronous transport. The
+            # final refresh below still removes or recovers stale handoffs.
+            if any(handoff["action"] == "execute-local-business-once"
+                   and view["recorded_states"][node] == State.LOCAL_RUNNING.value
+                   for node, handoff in handoffs.items()):
+                result["stop_reason"] = "local_business_ready_before_" + action
+                break
+            if any(handoff["action"] in ("review-and-accept", "resume-original-acceptance")
+                   and view["recorded_states"][node] == State.EVIDENCE_READY.value
+                   for node, handoff in handoffs.items()):
+                result["stop_reason"] = "review_ready_before_" + action
+                break
         attempted.add((key, action))
         counts[key] = counts.get(key, 0) + 1
         row = dict(node_id=key, action=action, expected_state=expected)

@@ -11,11 +11,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from orchestration_campaign import control_script, find_control, native_control, node_output
+from orchestration_campaign import campaign_effect_policy, control_script, find_control, native_control, node_output
 from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, evidence_class, state_root
 from orchestration_common import (canonical, checked_path, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
                                   read_ref, strict_json, tree_manifest, utc_now, verify_tree, within)
-from orchestration_native import (NativeReader, delivery_identity, native_text, native_verification, require,
+from orchestration_native import (NativeReader, READ_ONLY_LS_PREFIX, READ_ONLY_RTK_PREFIX,
+                                  delivery_identity, native_text, native_verification, require,
                                   verify_delivery, verify_no_input)
 
 
@@ -143,12 +144,27 @@ def task_scope(campaign, header, node, info):
             "If the command yields, collect that same process until it returns. "
             "An uncertain return permits only original-attempt observation, never another send. "
             "The command retains its live identity, report and native reception checks.")
+    inspection_instruction = ""
+    if campaign_effect_policy(campaign) is not None:
+        inspect_paths = [str(node_directory(campaign, header, node) / "preflight"),
+                         str(node_directory(campaign, header, node)), info["output_root"]]
+        inspect_program = shlex.join(["ls", "-la", *inspect_paths])
+        inspect_command = shlex.join([*READ_ONLY_RTK_PREFIX, *READ_ONLY_LS_PREFIX, inspect_program])
+        inspection_instruction = (
+            "\nComplete output verification before invoking the callback. If a later directory inspection "
+            "is necessary, the bounded read-only shell form is exactly: " + inspect_command +
+            "\nUse Claude's native Bash or Codex's native exec_command with login:false and tty:false. "
+            "Only a successful, completed recognized read is exempt from the output-write boundary. "
+            "Native Claude Read is also supported. Bare ls, arbitrary scripts and functions.exec JavaScript "
+            "wrappers remain unknown; if no supported native tool is available, finish output inspection "
+            "before the callback. Failed or unfinished reads do not qualify. Never append commands or "
+            "redirect this inspection. This template does not authorize post-callback output writes.")
     return (node["scope"] + instruction + "\nWrite only these deliverables under " + info["output_root"] + ": " +
             json.dumps(node["deliverables"], ensure_ascii=False) +
             ". Verify the orchestration input hashes before work. Preserve the assigned CLI session and model. "
             "Freeze all outputs before the report-bound callback; no output writes after the callback. "
             "No replacement agents, API calls, source/shared-runtime writes, reasks or continuing loops. "
-            "Use rtk for shell commands." + callback_instruction +
+            "Use rtk for shell commands." + callback_instruction + inspection_instruction +
             executor_messages(campaign, header["run"]["run_id"], node["id"]) +
             " Then remain available for a fresh finalized task pack.")
 
@@ -525,7 +541,8 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rer
         lower = protocol["delivery_record"]["offset"]
     else:
         require(evidence["review_kind"] == "solo_self_review", "local work must use solo_self_review")
-    readers[node["executor"]].action_summary(lower, ends[node["executor"]], task_id=info["task_id"], output_root=info["output_root"])
+    readers[node["executor"]].action_summary(lower, ends[node["executor"]], task_id=info["task_id"],
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
     return evidence
 
 
@@ -635,7 +652,8 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         # Handshake is not business dispatch. No useful task call may exist at
         # this boundary, even when the transport claims it did not send input.
         observation = readers[lane].action_summary(info["native_start"]["offset"], ends[lane],
-                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
+                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
+                        effect_policy=campaign_effect_policy(campaign))
         require(observation["attempted_task_calls"] == 0, "business action contradicts zero-input claim")
         require(not value["output_tree"]["files"] and not value["output_tree"]["directories"],
                 "zero-input settlement requires genuinely empty output")
@@ -645,13 +663,16 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         protocol = verify_protocol(campaign, header, node, info, value, ends[lane], ends["codex"], fixtures=fixtures)
         require(protocol["callback_at"] <= at, "failure settlement precedes original callback")
         observation = readers[lane].action_summary(protocol["delivery_record"]["offset"], ends[lane],
-                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
-        require(observation["last_action_at"] is None or parse_time(observation["last_action_at"]) <= protocol["callback_at"],
+                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
+                        effect_policy=campaign_effect_policy(campaign))
+        last = observation["last_potential_write_at" if campaign_effect_policy(campaign) else "last_action_at"]
+        require(last is None or parse_time(last) <= protocol["callback_at"],
                 "output work continued after callback")
     else:
         require(reason == "local_boundary" and info["mode"] == "local_cli", "no proven terminal write boundary")
         readers["codex"].action_summary(info["native_start"]["offset"], value["failure_native"]["offset"],
-                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
+                        task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
+                        effect_policy=campaign_effect_policy(campaign))
     return dict(status="FAILED_PRESERVED", evidence_class=evidence_class(campaign, "verified_cli_failure", fixtures),
                 **task_identity(campaign, header, node), settled_at=at.isoformat(), boundary=reason)
 
@@ -698,12 +719,14 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
         require(evidence.get("review_kind") == "solo_self_review" and "protocol" not in evidence,
                 "local work requires honest solo_self_review; no invented self ACK/callback")
         action_start, action_end = start, acceptance["offset"]
-    action = readers[lane].action_summary(action_start, action_end, task_id=info["task_id"], output_root=info["output_root"])
+    action = readers[lane].action_summary(action_start, action_end, task_id=info["task_id"],
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
     first = parse_time(action["first_action_at"])
     require(parse_time(info["started_at"]) <= first <= accepted_at, "useful action lies outside node lifetime")
     if protocol:
         require(protocol["delivery_at"] <= first <= protocol["callback_at"], "task action precedes delivery or follows callback")
-        require(parse_time(action["last_action_at"]) <= protocol["callback_at"], "task writes continued after callback")
+        last = action["last_potential_write_at" if campaign_effect_policy(campaign) else "last_action_at"]
+        require(last is None or parse_time(last) <= protocol["callback_at"], "task writes continued after callback")
     return dict(status="ACCEPTED", evidence_class=evidence_class(campaign, "verified_cli_node", fixtures),
                 **identity, checks=checks["checks"], accepted_at=accepted_at.isoformat(),
                 first_action_at=action["first_action_at"], completed_task_calls=action["completed_task_calls"],

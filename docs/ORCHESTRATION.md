@@ -16,14 +16,26 @@ B uses `advance --run RUN --max-steps 12 --max-seconds 45` on the pinned
 `orchestration_run.py` runner, with the original campaign path and SHA arguments.
 It batches eligible claim, prepare, dispatch, original-attempt reconciliation,
 callback import, candidate creation, release repair and disarm. Each action
-reloads authoritative state and enters its original gate. Independent lanes
-progress fairly; UNKNOWN grants no resend. A1 retains its manual entrypoints
+reloads authoritative state and enters its original gate. Within one invocation,
+eligible independent lanes are claimed before transport; a prepared lane then
+dispatches before another lane enters a potentially slow handshake. Closeout,
+review and reconciliation retain their outer priorities. Per-call attempt counts
+prevent a refused action from monopolizing that call; they do not guarantee
+fairness across repeated one-step calls after a refusal before input intent.
+UNKNOWN grants no resend. A1 retains its manual entrypoints
 and can dispatch both independent Claude lanes concurrently.
 
 The returned `supervisor_actions` and waiting recovery commands are executable
 handoffs. Native START, local business work, independent review/ACCEPT and FINISH
 remain the real supervisor's responsibility. An existing local action or native
 acceptance is collected or recovered, never repeated after a lost return.
+Once this call has generated a review/acceptance handoff that remains current,
+it returns that handoff before entering another synchronous prepare, dispatch,
+reconcile, callback or disarm operation. Existing local-business handoffs keep
+priority. The final state refresh removes stale handoffs or returns the original
+acceptance recovery command. This shortens avoidable supervisor waiting without
+automatically accepting work or releasing ownership. Synchronous transport itself
+still waits; changes to this selection policy do not alter frozen R32 controllers.
 The defaults are one action and 45 seconds; limits are 32 actions and 600 seconds.
 The action budget begins after the first complete fenced observation. Later
 observations count against it, and time is checked again before the next action.
@@ -100,6 +112,24 @@ authenticated native-root authority within its active thread/task scope, with
 full entry/exit validation and fresh per-reader journal/fence checks. Every new
 action retains its independent live gate. A copied context cannot revive a scope
 after exit. These optimizations apply to both benchmark arms.
+
+New v3 freezes register metrics version 4 (`output-effects-v1`). Successful,
+completed native Claude `Read` calls and a finite directory-inspection command
+may occur after the callback without becoming output writes. New task packs
+render the exact command with their absolute paths:
+`rtk proxy /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/sh -f -c 'ls -la /ABS/OUTPUT'`.
+Use native Claude `Bash` or native Codex `exec_command` with `login:false` and
+`tty:false`; arbitrary `functions.exec` JavaScript remains unknown. The policy
+trusts the system env/sh/ls binaries and configured RTK proxy forwarding, not
+arbitrary wrappers. Failed, unfinished and unknown calls remain potential
+writes; output verification must finish before the callback when the native
+tool does not support this form. Explicit output-path attribution now includes
+shell separators and is not suppressed by a control-script name in arguments.
+It cannot prove effects hidden behind aliases, relative paths or arbitrary
+programs. The three earlier metrics definitions and their task packs preserve
+their original meaning and bytes: R32's bare post-callback `ls` remains its
+original failure. This new template and policy apply only to newly frozen tasks;
+local regression results do not establish live correctness or speedup.
 
 `orchestration_coordinator.py` implements three policies over the same graph:
 

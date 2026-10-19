@@ -15,7 +15,8 @@ from pathlib import Path
 
 from orchestration_common import (ContractError, checked_path, contract_errors, count, digest, file_ref, finite, json_ref,
                                   parse_time, read_ref, verify_tree, within)
-from orchestration_native import NativeReader, native_text, native_verification, require
+from orchestration_native import (NativeReader, OUTPUT_EFFECT_POLICY, READ_ONLY_LS_PREFIX, READ_ONLY_RTK_PREFIX,
+                                  native_text, native_verification, require)
 from orchestration_planner import ID_RE, executor_providers, validate_plan
 from orchestration_contracts import campaign_version, evidence_class, validate_private_campaign
 
@@ -57,6 +58,26 @@ METRICS_V3_COMMUNICATION = {
     "interventions": "unclassified_user_inputs_are_unmeasured; status_queries_reported_separately; "
                      "exact_registered_communication_with_original_sender_intent_fence_and_native_record_excluded",
 }
+
+# Explicit new registration: neither callback boundaries nor historical action
+# attribution are reinterpreted for the three earlier frozen metric definitions.
+METRICS_V3_OUTPUT_EFFECTS = {
+    **METRICS_V3_COMMUNICATION,
+    "version": 4,
+    "first_action": "first_successful_completed_output_scoped_tool_call_start; "
+                    "shell_separator_boundaries; control_name_substrings_do_not_exempt_calls",
+    "output_effect_policy": OUTPUT_EFFECT_POLICY,
+    "output_boundary": "successful_proven_reads_exempt; writes_unknown_failed_and_pending_retained",
+    "readonly_shell": {"prefix": list(READ_ONLY_LS_PREFIX),
+                       "optional_outer_prefix": list(READ_ONLY_RTK_PREFIX),
+                       "program": "one_or_more_literal_ls_-la_absolute_path_commands_separated_by_semicolon",
+                       "trust": "system_env_sh_ls_binaries_and_configured_rtk_proxy_forwarding; "
+                                "bare_ls_and_arbitrary_wrappers_unknown"},
+}
+
+
+def campaign_effect_policy(campaign):
+    return OUTPUT_EFFECT_POLICY if campaign.get("metrics") == METRICS_V3_OUTPUT_EFFECTS else None
 
 
 def anchored_ref(path, expected_sha256):
@@ -142,7 +163,8 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     require(campaign.get("third_party_api") is False and campaign.get("replacement_sessions") is False,
             "only the explicitly bound original CLI sessions may own model calls")
     require(campaign.get("decision_provider") == "rules", "live campaign uses frozen rules provider")
-    require(campaign.get("metrics") in ((METRICS,) if version == 2 else (METRICS_V3, METRICS_V3_COMMUNICATION)),
+    require(campaign.get("metrics") in ((METRICS,) if version == 2 else
+                                       (METRICS_V3, METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS)),
             "measurement definitions were not frozen")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,
             "approved promotion threshold is 15 percent")

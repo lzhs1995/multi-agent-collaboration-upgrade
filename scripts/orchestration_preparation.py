@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from orchestration_campaign import campaign_effect_policy
 from orchestration_common import (canonical, contract_errors, digest, evidence_names, exclusive_lock, file_ref, json_ref, object_sha,
                                   parse_time, read_ref, tree_manifest, utc_now, write_json)
 from orchestration_evidence import (dispatch_journal, node_directory, pack_extension, task_scope,
@@ -268,7 +269,8 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         start = reader.verify_pin(info["native_start"] if lane == node["executor"] else header["native_start"][lane])
         end = reader.verify_pin(ends[lane])
         require(start <= reader.verify_pin(proof["native_end"][lane]) <= end, "preparation native fences changed")
-        actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True)
+        actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
+                                        effect_policy=campaign_effect_policy(campaign))
         require(actions["attempted_task_calls"] == 0, "business action contradicts preparation exit")
         if lane in ("codex", node["executor"]):
             reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],

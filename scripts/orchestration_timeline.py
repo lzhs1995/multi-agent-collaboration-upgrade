@@ -6,7 +6,7 @@ never runs a checker, settles a callback, constructs transport or writes state.
 """
 from datetime import datetime, timezone
 
-from orchestration_campaign import control_script, native_control
+from orchestration_campaign import campaign_effect_policy, control_script, native_control
 from orchestration_common import file_ref, json_ref, parse_time
 from orchestration_coordinator import State
 from orchestration_evidence import (marker_for, original_callback_evidence, verify_dispatched,
@@ -134,7 +134,8 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
             reader = NativeReader(campaign["sessions"][node["executor"]], fixtures=co.fixtures)
             actions = reader.action_summary(reader.verify_pin(info["native_start"]),
                 reader.verify_pin(native_ends[node["executor"]]), task_id=info["task_id"],
-                output_root=info["output_root"], allow_empty=True, allow_incomplete=True, include_evidence=True)
+                output_root=info["output_root"], allow_empty=True, allow_incomplete=True, include_evidence=True,
+                effect_policy=campaign_effect_policy(campaign))
             completed = [a for a in actions["actions"] if a["status"] != "PENDING"]
             successes = [a for a in completed if a["status"] == "COMPLETED"]
             if successes:

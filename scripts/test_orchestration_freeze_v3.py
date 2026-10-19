@@ -13,7 +13,7 @@ import unittest
 import uuid
 
 from orchestration_adapter import validate_adapter
-from orchestration_campaign import METRICS_V3_COMMUNICATION, validate_campaign
+from orchestration_campaign import METRICS_V3_OUTPUT_EFFECTS, validate_campaign
 from orchestration_common import (ContractError, digest, file_ref, json_ref, read_json,
                                   tree_manifest, verify_tree, write_json)
 import orchestration_freeze_v3 as freezer
@@ -92,7 +92,7 @@ class V3FreezeTests(unittest.TestCase):
         result = self.freeze()
         self.assertEqual((result["status"], result["input_operations"]), ("FROZEN_NOT_MEASURED", 0))
         campaign = validate_campaign(result["campaign"])
-        self.assertEqual(campaign["metrics"], METRICS_V3_COMMUNICATION)
+        self.assertEqual(campaign["metrics"], METRICS_V3_OUTPUT_EFFECTS)
         self.assertIn("scripts/upgrade_communication_attribution.py", campaign["adapter"]["files"])
         self.assertEqual(campaign["controller"], self.runtime["controller"])
         self.assertTrue(Path(campaign["adapter"]["path"]).is_relative_to(self.paths["controllers"]))

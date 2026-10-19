@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import shlex
 import stat
 import uuid
 from functools import wraps
@@ -18,6 +19,15 @@ from pathlib import Path
 from orchestration_common import ContractError, checked_path, contract_errors, count, digest, finite, json_ref, parse_time, strict_json
 
 MAX_RECORD = 16 * 1024 * 1024
+OUTPUT_EFFECT_POLICY = "output-effects-v1"
+# This is a deliberately finite inspection language, not a shell safety parser.
+# env -i prevents startup variables and exported functions reaching the fresh
+# noninteractive shell; the fixed PATH resolves ls to the trusted system binary.
+# Bare ls and arbitrary interpreter/exec wrappers remain unknown. The policy
+# trusts the operating system's /usr/bin/env, /bin/sh and /bin/ls implementations
+# and, when used, the configured rtk proxy command's transparent forwarding.
+READ_ONLY_LS_PREFIX = ("/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LC_ALL=C", "/bin/sh", "-f", "-c")
+READ_ONLY_RTK_PREFIX = ("rtk", "proxy")
 
 
 def native_verification(function):
@@ -49,6 +59,80 @@ def task_work(arguments, output_root):
     if any(token in arguments for token in controls):
         return False
     return bool(re.search(re.escape(output_root.rstrip("/")) + r'(?=/|[\s"\x27\\]|$)', arguments))
+
+
+def output_scoped_call(arguments, output_root):
+    """New-policy scope matching, including shell separators and control text.
+
+    A control name occurring in an arbitrary argument does not prove that the
+    whole invocation is control-only. This remains explicit-path attribution;
+    it does not prove effects of commands that conceal their output path.
+    """
+    return isinstance(arguments, str) and bool(re.search(
+        re.escape(output_root.rstrip("/")) + r'(?=/|[\s"\x27\\;|&<>()\[\]{},]|$)', arguments))
+
+
+def controlled_read_only_ls(command):
+    """Recognize only a clean-system-shell sequence of literal ls -la calls."""
+    if not isinstance(command, str):
+        return False
+    # Deliberately reject even quoted substitutions/expansions and escapes.
+    # Supporting more shell grammar would weaken this bounded proof.
+    if any(char in command for char in "\r\n\t$`\\&|<>*?[]{}~!#"):
+        return False
+    try:
+        outer = shlex.split(command, comments=False, posix=True)
+        if tuple(outer[:2]) == READ_ONLY_RTK_PREFIX:
+            outer = outer[2:]
+        if len(outer) != len(READ_ONLY_LS_PREFIX) + 1 or tuple(outer[:-1]) != READ_ONLY_LS_PREFIX:
+            return False
+        lexer = shlex.shlex(outer[-1], posix=True, punctuation_chars=";")
+        lexer.whitespace_split, lexer.commenters = True, ""
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    segments, current = [], []
+    for token in tokens:
+        if token == ";":
+            if not current:
+                return False
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if not current:
+        return False
+    segments.append(current)
+    return all(len(argv) >= 3 and argv[:2] == ["ls", "-la"] and
+               all(path.startswith("/") and "\x00" not in path for path in argv[2:])
+               for argv in segments)
+
+
+def call_output_effect(provider, name, arguments):
+    """Only positive, complete tool/argument recognition can prove a read."""
+    if provider == "claude" and name in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        return "WRITE"
+    if not isinstance(arguments, dict):
+        return "UNKNOWN"
+    if provider == "claude" and name == "Read":
+        allowed = {"file_path", "offset", "limit", "pages"}
+        if (set(arguments) <= allowed and isinstance(arguments.get("file_path"), str) and
+                arguments["file_path"].startswith("/") and
+                all(type(arguments[key]) is int and arguments[key] >= (1 if key == "limit" else 0)
+                    for key in ("offset", "limit") if key in arguments) and
+                ("pages" not in arguments or isinstance(arguments["pages"], str))):
+            return "READ_ONLY"
+    if provider == "claude" and name == "Bash":
+        allowed = {"command", "description", "timeout", "run_in_background", "dangerouslyDisableSandbox"}
+        if (set(arguments) <= allowed and arguments.get("run_in_background", False) is False and
+                controlled_read_only_ls(arguments.get("command"))):
+            return "READ_ONLY"
+    if provider == "codex" and name in ("exec_command", "functions.exec_command"):
+        allowed = {"cmd", "workdir", "login", "max_output_tokens", "yield_time_ms", "tty"}
+        if (set(arguments) <= allowed and arguments.get("login") is False and
+                arguments.get("tty", False) is False and controlled_read_only_ls(arguments.get("cmd"))):
+            return "READ_ONLY"
+    return "UNKNOWN"
 
 
 def tool_failed(value):
@@ -336,11 +420,14 @@ class NativeReader:
 
     @contract_errors("native actions")
     def action_summary(self, start, end, *, task_id, output_root, allow_empty=False,
-                       allow_incomplete=False, include_evidence=False):
+                       allow_incomplete=False, include_evidence=False, effect_policy=None):
         """Derive useful action, model, retries and interventions from raw records."""
+        require(effect_policy in (None, OUTPUT_EFFECT_POLICY), "unregistered output effect policy")
+        scoped = task_work if effect_policy is None else output_scoped_call
         model_seen, failed_api, explicit_retries = set(), 0, set()
         tool_calls, completed_calls = {}, {}
         call_refs, result_refs, pending_refs, last_result_at = {}, {}, {}, {}
+        effects = {}
         user_texts = []
         prior = None
         for _, r in self.records(0, start):
@@ -376,10 +463,20 @@ class NativeReader:
                     model_seen.add(p["model"])
                 if r.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
                     args = p.get("arguments", p.get("input", ""))
-                    if task_work(args, output_root) and isinstance(p.get("call_id"), str):
+                    if effect_policy is not None and output_scoped_call(
+                            args if isinstance(args, str) else json.dumps(args, ensure_ascii=False), output_root):
+                        require(isinstance(args, str), "task-bound native arguments must be text")
+                        require(isinstance(p.get("call_id"), str) and p["call_id"], "task-bound native call id missing")
+                    if scoped(args, output_root) and isinstance(p.get("call_id"), str):
                         require(p["call_id"] not in tool_calls, "duplicate native tool call id")
                         tool_calls[p["call_id"]] = parse_time(r["timestamp"])
                         call_refs[p["call_id"]] = ref
+                        if effect_policy is not None:
+                            try:
+                                decoded = strict_json(args)
+                            except (ContractError, ValueError, TypeError):
+                                decoded = None
+                            effects[p["call_id"]] = call_output_effect(self.provider, p.get("name"), decoded)
                 if r.get("type") == "response_item" and p.get("type") in ("function_call_output", "custom_tool_call_output"):
                     output = p.get("output")
                     complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
@@ -399,10 +496,14 @@ class NativeReader:
                         continue
                     if r.get("type") == "assistant" and block.get("type") == "tool_use":
                         args = json.dumps(block.get("input", {}), ensure_ascii=False)
-                        if task_work(args, output_root) and isinstance(block.get("id"), str):
+                        if effect_policy is not None and scoped(args, output_root):
+                            require(isinstance(block.get("id"), str) and block["id"], "task-bound native call id missing")
+                        if scoped(args, output_root) and isinstance(block.get("id"), str):
                             require(block["id"] not in tool_calls, "duplicate native tool call id")
                             tool_calls[block["id"]] = parse_time(r["timestamp"])
                             call_refs[block["id"]] = ref
+                            if effect_policy is not None:
+                                effects[block["id"]] = call_output_effect(self.provider, block.get("name"), block.get("input"))
                     if r.get("type") == "user" and block.get("type") == "tool_result":
                         complete(block.get("tool_use_id"), block.get("content"), r, ref, block.get("is_error") is True)
                 if r.get("type") == "system" and r.get("subtype") == "api_error":
@@ -431,6 +532,21 @@ class NativeReader:
                 result=result_refs.get(key), pending_results=pending_refs.get(key, []),
                 status=("FAILED" if completed_calls[key][1] else "COMPLETED") if key in completed_calls else "PENDING")
                 for key, at in tool_calls.items()])
+        if effect_policy is not None:
+            # Failed tools may have changed files before reporting failure.
+            # Even a recognized read needs a successful terminal result before
+            # it is exempted; pending calls retain the existing completion gate.
+            effective = {key: ("UNKNOWN" if effect == "READ_ONLY" and
+                              (key not in completed_calls or completed_calls[key][1]) else effect)
+                         for key, effect in effects.items()}
+            potential = [key for key, effect in effective.items() if effect != "READ_ONLY"]
+            completed = [completed_calls[key][0] for key in potential if key in completed_calls]
+            result.update(attempted_potential_write_calls=len(potential),
+                          completed_potential_write_calls=len(completed),
+                          last_potential_write_at=max(completed).isoformat() if completed else None)
+            if include_evidence:
+                for action in result["actions"]:
+                    action["effect"] = effective[action["call_id"]]
         return result
 
 

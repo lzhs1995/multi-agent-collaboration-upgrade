@@ -19,11 +19,31 @@ The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
+For a prepared experiment's exact socket scope, verify the unique path set and
+each group's original path binding independently of JSON mapping order. Keep
+the registered experiment execution order unchanged. If preparation stops after
+materialization but before publication, first prove that no clients or native
+input were started and that the original scripts, source, configuration, scope
+and deadline are unchanged. Complete only missing metadata under a separately
+recorded finalization; do not rerun materialization, overwrite published files,
+reset the deadline or replay input. A changed pin, occupied path or partial
+native attempt requires its own diagnosis, not this recovery. See
+[R32 preparation and control fixes](docs/VALIDATION-20261019-R32.md).
 For new B/v3 campaigns, use the pinned runner's `advance --run RUN --max-steps 12
 --max-seconds 45` as the primary orchestration entrypoint. It batches original
 gated actions across independent lanes; it does not perform native START,
 local business, independent ACCEPT or FINISH. Handle its supervisor/recovery
 handoffs, collecting existing original actions rather than repeating them.
+Claim eligible independent lanes, then dispatch a prepared lane before waiting
+for another lane's handshake. Preserve closeout, review and original-reconciliation
+priorities. If this invocation has produced a still-current review/acceptance
+handoff, return it before entering another synchronous transport operation;
+refresh its evidence before returning. Native local-work handoffs keep their
+existing priority. Neither behavior performs ACCEPT or releases ownership.
+Attempt fairness is bounded to this invocation; repeated one-step calls after a
+pre-intent refusal have no unconditional fairness guarantee. Synchronous dispatch
+still waits for its original result. New controller behavior must be validated
+separately from the terminal R32, which retains its frozen source and outcome.
 The first complete fenced observation has its own initialization phase; the
 45-second action budget starts after it. Subsequent observations count against
 that action budget. Report initialization, action, finalization and total elapsed
@@ -222,13 +242,22 @@ request extra ACKs or count task notices/callbacks. A short helper body still
 uses a pinned MESSAGE_REFERENCE_V2 notice because the helper adds its header.
 Notice receipt does not prove body reading. Boundary labels do not establish
 active/idle or continuous-goal state; require actual native observations.
-New freezes use metrics version 3 to attribute registered ordinary messages.
+New freezes use metrics version 4, retaining version 3's registered ordinary-message attribution.
 Exclude only the exact original native record backed by its unique sender
 helper call, complete pinned body, original receiver binding and input fence.
 Duplicate, changed or missing evidence stays unclassified; never exempt a
 message prefix. Preserve original UUID bytes and hashes while comparing UUID
 identity semantically; ambiguous original journal locations remain UNKNOWN.
 Older metrics versions and frozen campaigns keep their original interpretation.
+Version 4 also registers `output-effects-v1`: successful, complete native Claude
+`Read` and the exact clean-shell `ls` template in the task pack do not count as
+output writes. Failed, pending and unknown calls remain potential writes; all
+business activity still counts against a no-business-input or preparation-exit
+claim. Finish output inspection before callback (or before ACCEPT for local
+Codex work). Arbitrary `functions.exec` wrappers remain UNKNOWN; if that is the
+only available Codex tool, no post-boundary read exemption is available. This
+policy does not reinterpret R32 or authorize later writes. See
+[output effects and tool limits](docs/ORCHESTRATION.md).
 New isolated clients receive a pinned `mac_upgrade_body_read.py` command that
 returns the complete verified body in their native tool result. The separate
 observer must authenticate the original receiver journal, input-intent fence,
@@ -405,9 +434,11 @@ and leases across that observation; retain native snapshot checks and accepted
 output revalidation. Status may select ready nodes from the state it just
 validated instead of replaying it twice. Every action and final refresh still
 constructs a fresh Coordinator. Do not cache runtime hashes across actions.
-For equal-priority new work, order eligible recorded phases PENDING, PREPARING,
-then PREPARED, so single-step invocations do not repeatedly favor the first
-executor. Preserve closeout/review/reconcile priority and all dependency, scope
+For equal-priority new work, order eligible recorded phases PENDING, PREPARED,
+then PREPARING: claim independent lanes, dispatch a prepared lane, then prepare
+another lane. Attempt fairness is limited to the current invocation; repeated
+single-step pre-intent refusals have no unconditional fairness guarantee.
+Preserve closeout/review/reconcile priority and all dependency, scope
 and original-attempt checks. The R31 field observation found costly repeated
 startup-pin validation and delayed second-lane preparation; fixture validation
 of this repair does not establish live throughput or 15% improvement. Frozen
