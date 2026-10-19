@@ -26,6 +26,12 @@ stream outcome. Even two completed overlapping streams establish only that
 observation, not sustained capacity or native collaboration acceptance. Preserve
 these diagnostic requests separately from registered business/message samples;
 do not launch an unchanged campaign into a just-observed capacity refusal.
+`CCC_CLAUDE_REQUEST_OBSERVATIONS_DIR` selects an auxiliary output directory;
+it does not load the CCC Bun observer. The private launcher removes inherited
+preloads and pins the native binary. Verify observer activation separately before
+interpreting missing files. The inspected CCC observer records request headers
+and redirect credential scope, not complete response status, SSE or usage.
+Neither its presence nor absence establishes model completion or failure.
 Keep HTTP error status, saved response-body errors and local reader exceptions
 separate. A saved JSON `rate_limit_error` with HTTP 429 remains rate-limit
 evidence even if a subsequent EOF read raises `OSError`; preserve both facts.

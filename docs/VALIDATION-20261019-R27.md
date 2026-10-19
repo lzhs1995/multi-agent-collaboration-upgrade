@@ -72,6 +72,19 @@ request-observations 目录均不存在；固定 client.log 也没有完整响�
 
 ## 已验证修复与经验边界
 
+追加静态核查确认，原生成控制器的 `clean_child_environment` 清除继承的
+`BUN_OPTIONS`，原 startup 两端只设置观测目录，没有配置 preload；原 wrapper
+直接执行固定原生 Claude binary，没有调用 CCC observer launcher。
+`install_cmux_node_options` 管理的是 cmux 的 Node 选项，并不启用该 Bun 观察器。
+因此目录缺失不能作为网络、凭据或隔离失败的证据。
+
+检查 CCC 观察器源码后确认，它记录最新请求的 headers/会话标识及 redirect
+凭据范围，不保存 HTTP 状态、完整 SSE、响应结束或 usage。即使启用它，
+也不能补齐当前缺失的响应终态证据。未对原进程注入 preload，没有新增模型
+请求，也未更改冻结控制器。原主请求根因仍为 UNKNOWN。
+证据：`maintenance/r27-request-observer-audit/STATIC-AUDIT.json`，包含原生成
+控制器、startup、wrapper 与观察器源码的逐文件 SHA 和静态断言。
+
 r26 后的修复支持实测完整 Goal footer，并保存原握手拒绝时的 screen、
 SHA、parser、读序号、阶段和异常。原始读取失败不补读，原输入预算不变。
 完整本机回归 **2,094/2,094**，零失败和错误，受监测源码前后相同。
