@@ -117,7 +117,7 @@ class ObservationReuseTests(unittest.TestCase):
             result = status(co)
             leases = co.leases.read()
             lease = leases[info["task_id"]]
-            lease["released_at"] = (datetime.fromisoformat(lease["released_at"]) + timedelta(seconds=1)).isoformat()
+            lease["released_at"] = (datetime.fromisoformat(lease["released_at"].replace("Z", "+00:00")) + timedelta(seconds=1)).isoformat()
             write_json(co.leases.root / "leases.json", leases)
             return result
         with patch.object(self.r, "_status_from_co", side_effect=changed):
