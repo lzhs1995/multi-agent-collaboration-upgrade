@@ -32,6 +32,38 @@ preloads and pins the native binary. Verify observer activation separately befor
 interpreting missing files. The inspected CCC observer records request headers
 and redirect credential scope, not complete response status, SSE or usage.
 Neither its presence nor absence establishes model completion or failure.
+New materializations can opt in with `--observe-claude-responses`. The private
+response observer is a pinned controller artifact, scoped to the original root
+PID and its private 0700 directory. It observes only data the original consumer
+reads; it never clones, drains, retries or creates a request. Require an actual
+`LOADED` record with the matching source hash before treating it as active.
+Use Bun's character escaping for `BUN_OPTIONS`, not shell quoting; configuration
+roundtrips and a successful `--version` alone do not prove preload activation.
+Reject unsupported literal backslashes before materialization. APFS path casing
+may differ across Python and Bun: verify the same nonsymlink directory and its
+original inode through both names instead of requiring identical casing.
+Preserve HTTP status, SSE errors, usage, cancellation and EOF separately.
+Native Bun may call `body.cancel()` after iterator EOF. Observe `readMany().done`
+without counting its prefetched values, then count only consumed iterator values.
+Cancellation after that EOF fact does not erase completion. Failed cancellation
+does not end observation of a still-readable body; record failure separately.
+If a pending iterator cancels without an observed reader EOF, retain unknown
+origin rather than inferring natural EOF or deliberate user cancellation.
+Decoded text and parsed JSON cannot establish raw wire-byte hashes; truncated,
+unread or unsupported paths remain incomplete. Request class stays UNKNOWN.
+The observer has bounded request, parse and snapshot budgets, keeps error names
+on a fixed allowlist and stops a failing telemetry sink. Promise/Response identity
+and consumer values are preserved on supported paths, but observer callbacks
+add overhead and rejection handlers; do not claim identical timing or process
+`unhandledRejection` behavior. Its local pressure results are separate from
+native model startup, task acceptance and paired efficiency measurements.
+Use identical observer configuration and source bytes in both comparison arms;
+local instrumentation overhead does not establish collaboration efficiency.
+Four local AB/BA pairs at 256 concurrent requests measured 3.57–7.46 times
+the uninstrumented controller elapsed time. This optional diagnostic has material
+cost in that workload; correctness passing is not a performance pass. Disclose
+instrumentation and its calibration when reporting any future paired result.
+See [response observation validation](docs/RESPONSE-OBSERVATION-VALIDATION.md).
 Keep HTTP error status, saved response-body errors and local reader exceptions
 separate. A saved JSON `rate_limit_error` with HTTP 429 remains rate-limit
 evidence even if a subsequent EOF read raises `OSError`; preserve both facts.

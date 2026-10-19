@@ -183,6 +183,24 @@ separate findings. No report here installs or promotes the upgrade to production
 
 ## Startup repair verification
 
+Optional response observation for new private clients is documented in
+[response observation validation](RESPONSE-OBSERVATION-VALIDATION.md). Enable
+it only through `--observe-claude-responses` at materialization. Require its
+immutable pin, real LOADED/source-hash evidence and bounded consumer terminal
+records; do not retrofit old runtime files. Run its Node/Bun consumer tests and
+`test_upgrade_response_startup` alongside the startup checks below. Bun preload
+arguments use Bun escaping rather than shell quoting.
+For a new paired campaign, freeze the same enabled/disabled setting and exact
+observer SHA/byte count across all seven groups before any client launch. Record
+that comparison in preparation evidence and reject a mixed configuration for
+efficiency reporting. The current driver validates each runtime independently;
+it does not automatically enforce this cross-group instrumentation equality.
+Keep this explicit check separate from the immutable single-runtime pins.
+The fixed-source local AB/BA test measured 3.57–7.46× controller elapsed time
+with observation enabled at 256 concurrent requests. Keep the diagnostic opt-in;
+do not describe its overhead as negligible or its correctness checks as a speed
+pass. This local ratio does not predict provider latency or collaboration speed.
+
 Run `test_upgrade_client_isolation`, `test_upgrade_live_startup` and
 `test_upgrade_benchmark` after changing startup code, followed by the complete
 current-source suite. These tests exercise real local Seatbelt descendants,

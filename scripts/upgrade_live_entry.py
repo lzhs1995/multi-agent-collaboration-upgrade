@@ -19,7 +19,7 @@ import uuid
 from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref,
                                   read_ref, read_regular, utc_now, write_json)
 from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
-from upgrade_startup_contract import validate_startup
+from upgrade_startup_contract import response_observation_enabled, validate_startup
 from upgrade_socket_boundary import binding_boundary
 
 
@@ -126,6 +126,16 @@ def start_client(ref, spec, binding, lane):
     require(surface not in spec["protected_surface_uuids"], "PRODUCTION_SURFACE_REFUSED")
     client = spec["clients"][lane]
     env = clean_child_environment(client["environment"])
+    # Only the validated opt-in contract can introduce observer state. A parent
+    # process's observer identity/directory must never leak into these clients.
+    for name in tuple(env):
+        if name.startswith("UPGRADE_RESPONSE_"):
+            del env[name]
+    if response_observation_enabled(binding) and lane != "codex":
+        env["UPGRADE_RESPONSE_OBSERVATIONS_DIR"] = client["environment"]["UPGRADE_RESPONSE_OBSERVATIONS_DIR"]
+        # execve through the pinned native wrapper preserves this PID. The
+        # preload independently checks it before installing any fetch observer.
+        env["UPGRADE_RESPONSE_OBSERVER_ROOT_PID"] = str(os.getpid())
     import cmux_daemon_identity as identity
     process = identity.process(os.getpid())
     record = dict(schema="upgrade-client-launch-v2", startup=ref, lane=lane, created_at=utc_now(),

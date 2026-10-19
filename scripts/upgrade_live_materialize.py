@@ -20,7 +20,8 @@ from upgrade_live_integrity import artifact_ref
 from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_materialize import hook_config, rendered_helper
 from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
-    client_environment, native_goal_condition, pressure_lane_document,
+    RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
+    bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
     pressure_startup_prompt, readiness_prompt, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
@@ -42,13 +43,17 @@ def immutable_bytes(path, raw, *, executable=False, secret=False):
 
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
-                     goal_startup=None, lane_instructions=None):
+                     goal_startup=None, lane_instructions=None, response_observation=False):
+    require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     context = validate_context(context_ref)
     require(arm in ("A1", "B"), "A0 is a retained historical control, not a new live lane")
     paths = arm_paths(context, arm)
     require(native_policy in (NATIVE_POLICY, SOCKET_POLICY), "SOCKET_POLICY_UNKNOWN")
     require(not any(p.exists() for p in paths.values()),
             "arm exists; preserve it and inspect its original runtime")
+    if response_observation:
+        # Refuse unsupported native preload paths before any arm artifact exists.
+        bun_preload_option(response_observer_path(paths))
     source_pin = context["source_controller"]
     verify_tree(source_pin)
     source, support = Path(source_pin["path"]), Path(__file__).resolve().parent
@@ -151,6 +156,16 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         changes.append({"path": "scripts/" + private_name, "source": file_ref(support / name),
                         "transformations": ["private_live_support", "distinct_module_namespace"],
                         "after": {"sha256": digest(raw), "bytes": len(raw)}})
+    if response_observation:
+        # CJS is an immutable artifact, not a Python support module. It must
+        # enter the original release manifest before startup pins are created.
+        name = "scripts/" + RESPONSE_OBSERVER_FILE
+        require(name not in buffers, "SOURCE_RESPONSE_OBSERVER_COLLISION")
+        raw = read_regular(support / RESPONSE_OBSERVER_FILE)
+        buffers[name] = (raw, False)
+        changes.append({"path": name, "source": file_ref(support / RESPONSE_OBSERVER_FILE),
+                        "transformations": ["private_opt_in_response_observer"],
+                        "after": {"sha256": digest(raw), "bytes": len(raw)}})
     hooks = hook_config(source, controller, context["python"]["path"])
     wrappers = {provider: patch_cmux_wrapper(provider,
         read_regular(binaries[provider + "_wrapper"]), binaries[provider], paths, node=binaries["node"])
@@ -166,6 +181,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["socket_boundary"] = socket_boundary
     if goal_contract is not None:
         binding["startup_contract"] = goal_contract
+    if response_observation:
+        binding["response_observation"] = RESPONSE_OBSERVATION
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -182,6 +199,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
+    if response_observation:
+        pins[RESPONSE_OBSERVER_PIN] = artifact_ref(response_observer_path(paths))
     if goal_contract is not None:
         for lane, raw in instruction_buffers.items():
             ref = immutable_bytes(Path(goal_contract["lane_instructions"][lane]["path"]), raw)
@@ -238,6 +257,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                             "AGENTS.md": policy.encode(),
                             "credential-observations/enabled-v1": b"ccc-request-credentials-v1\n"}
         else:
+            if response_observation:
+                (root / "response-observations").mkdir(mode=0o700)
             config_files = {"settings.json": claude_config(claude_original, hooks), "CLAUDE.md": policy.encode()}
             write_json(root / ".claude.json", claude_seed, exclusive=True)
             (root / ".claude.json").chmod(0o600)
@@ -255,7 +276,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                                            goal_contract["goal_startup"])
                     if goal_contract is not None else
                     readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
-        env = client_environment(roots, paths, lane, binaries["rtk"])
+        env = client_environment(roots, paths, lane, binaries["rtk"],
+                                 response_observation=response_observation)
         clients[lane] = dict(provider=provider, native_root=str(root), session_id=session,
                              argv=argv, environment=env)
     writable = [paths[name] for name in ("state", "campaigns", "evidence", "tmp")]
@@ -312,6 +334,8 @@ def main(argv=None):
     parser.add_argument("--protected-surface-uuid", action="append", default=[])
     parser.add_argument("--native-policy", choices=(NATIVE_POLICY, SOCKET_POLICY), default=NATIVE_POLICY,
                         help="prepare an explicit candidate policy; does not authorize client startup")
+    parser.add_argument("--observe-claude-responses", action="store_true",
+                        help="pin opt-in observation of responses consumed by new private Claude clients")
     args = parser.parse_args(argv)
     try:
         from orchestration_campaign import anchored_ref
@@ -321,7 +345,8 @@ def main(argv=None):
         credentials = {name: getattr(args, name + "_credentials") for name in ("codex", "claude")
                        if getattr(args, name + "_credentials")}
         ref = materialize_live(context, args.arm, binaries=binaries, credential_files=credentials,
-                               protected_surface_uuids=args.protected_surface_uuid, native_policy=args.native_policy)
+                               protected_surface_uuids=args.protected_surface_uuid, native_policy=args.native_policy,
+                               response_observation=args.observe_claude_responses)
         print(json.dumps(dict(status="MATERIALIZED_NOT_LAUNCHED", runtime=ref, input_operations=0),
                          ensure_ascii=False, indent=2))
         return 0

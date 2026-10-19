@@ -8,6 +8,7 @@ import os
 import json
 from pathlib import Path
 import shlex
+import stat
 import uuid
 
 from orchestration_common import checked_path, file_ref, json_ref, read_regular, require
@@ -23,6 +24,41 @@ GOAL_SCHEMA = "upgrade-startup-v3"
 GOAL_LANES = {"claude_a", "claude_b"}
 GOAL_FIELDS = {"goal_startup", "lane_instructions"}
 MAX_INSTRUCTION_BYTES = 256 * 1024
+RESPONSE_OBSERVATION = "consumed-response-v1"
+RESPONSE_OBSERVER_FILE = "upgrade_claude_response_observer.cjs"
+RESPONSE_OBSERVER_PIN = "claude_response_observer"
+
+
+def response_observation_enabled(binding):
+    if "response_observation" not in binding:
+        return False
+    require(binding["response_observation"] == RESPONSE_OBSERVATION,
+            "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    return True
+
+
+def response_observer_path(paths):
+    return checked_path(paths["controllers"] / "releases/private-live-v2/source/scripts" /
+                        RESPONSE_OBSERVER_FILE)
+
+
+def bun_preload_option(path):
+    # Native Bun parses BUN_OPTIONS itself; shell quoting can silently prevent
+    # loading. Native trials reject literal backslashes in module filenames;
+    # escape only the supported whitespace and quote argument delimiters.
+    raw = str(path)
+    require(not any(c in raw for c in "\\\n\r\x00"),
+            "STARTUP_RESPONSE_OBSERVER_PATH_CHANGED")
+    return "--preload " + "".join("\\" + c if c in " \t'\"" else c for c in raw)
+
+
+def verify_response_observation_directory(native_root):
+    directory = checked_path(Path(native_root) / "response-observations")
+    info = directory.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) == 0o700,
+            "STARTUP_RESPONSE_OBSERVATION_DIRECTORY_CHANGED")
+    return directory
 
 
 def require_goal_condition(condition):
@@ -121,7 +157,8 @@ def readiness_prompt(controller, python, rtk, lane):
             "正式任务须等待独立 adoption 核验。保留本会话，不得新建替代会话。")
 
 
-def client_environment(roots, paths, lane, rtk):
+def client_environment(roots, paths, lane, rtk, *, response_observation=False):
+    require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     result = environment(roots, paths, lane)
     # Frozen native binaries do not use PATH resolution. Tools still need a
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
@@ -129,6 +166,9 @@ def client_environment(roots, paths, lane, rtk):
         paths["bin"], Path(rtk).parent, "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"))))
     if lane != "codex":
         result["PATH"] = str(paths["bin"] / "claude-tools") + os.pathsep + result["PATH"]
+        if response_observation:
+            result["BUN_OPTIONS"] = bun_preload_option(response_observer_path(paths))
+            result["UPGRADE_RESPONSE_OBSERVATIONS_DIR"] = str(roots[lane] / "response-observations")
     return result
 
 
@@ -145,6 +185,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
         require(source == Path(controller).resolve(), "STARTUP_CONTROLLER_CHANGED")
     import json
     binding = json.loads(read_regular(source / "upgrade-binding.json"))
+    response_observation = response_observation_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -193,6 +234,11 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if response_observation:
+        required.add(RESPONSE_OBSERVER_PIN)
+        local[RESPONSE_OBSERVER_PIN] = response_observer_path(paths)
+        require(pins.get(RESPONSE_OBSERVER_PIN, {}).get("mode") == 0o444,
+                "STARTUP_RESPONSE_OBSERVER_MODE_CHANGED")
     if goal_mode:
         for lane in LANES:
             key = lane + "_instructions"
@@ -252,6 +298,8 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     for lane in LANES:
         client = spec["clients"][lane]
         verify_client_temp(paths, lane)
+        if response_observation and lane != "codex":
+            verify_response_observation_directory(roots[lane])
         provider = "codex" if lane == "codex" else "claude"
         require(set(client) == {"provider", "native_root", "session_id", "argv", "environment"}
                 and client["provider"] == provider and client["native_root"] == str(roots[lane]),
@@ -269,5 +317,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
                     if goal_mode else
                     readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
-                client_environment(roots, paths, lane, pins["rtk"]["path"]), "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
+                client_environment(roots, paths, lane, pins["rtk"]["path"],
+                                   response_observation=response_observation),
+                "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding
