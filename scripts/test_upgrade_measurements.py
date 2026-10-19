@@ -6,7 +6,8 @@ from pathlib import Path
 
 from orchestration_common import ContractError
 from orchestration_permit import steps
-from upgrade_benchmark import register, validate_registration
+from upgrade_benchmark import validate_registration
+from test_upgrade_benchmark import legacy_registration as register
 from upgrade_measurements import compare, native_usage, next_allowed
 
 

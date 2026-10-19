@@ -59,11 +59,27 @@ add overhead and rejection handlers; do not claim identical timing or process
 native model startup, task acceptance and paired efficiency measurements.
 Use identical observer configuration and source bytes in both comparison arms;
 local instrumentation overhead does not establish collaboration efficiency.
+New paired registrations use `upgrade-paired-registration-v3`, including an
+explicit `compact` boolean and one `response_observation` policy for all seven
+groups. Observation defaults to disabled. To enable it, pass
+`--observe-claude-responses` to both registration and each materialization from
+the same frozen source. Configure, permit issue, driver launch, campaign freeze
+and validation reject a different setting, SHA or byte count. Reports check
+the original registration, runtime/startup and complete external closeout row;
+copied pins cannot authenticate changed timings, costs or intervention counts.
+These checks establish configuration only, never actual observer LOADED.
+Historical v1/v2 registrations retain their interpretation and are labeled
+`legacy_unverified`; do not rewrite them to obtain the new qualification.
 Four local AB/BA pairs at 256 concurrent requests measured 3.57–7.46 times
 the uninstrumented controller elapsed time. This optional diagnostic has material
 cost in that workload; correctness passing is not a performance pass. Disclose
 instrumentation and its calibration when reporting any future paired result.
+The subsequent temporary-file cleanup repair avoids deleting a temp file after
+a failed exclusive open and avoids redundant unlink after successful rename.
+Four old/new pairs passed correctness but produced two speedups and two
+slowdowns; stable improvement and absence of regression remain unproven.
 See [response observation validation](docs/RESPONSE-OBSERVATION-VALIDATION.md).
+See [configuration and cleanup validation](docs/OBSERVER-COMPARISON-VALIDATION.md).
 Keep HTTP error status, saved response-body errors and local reader exceptions
 separate. A saved JSON `rate_limit_error` with HTTP 429 remains rate-limit
 evidence even if a subsequent EOF read raises `OSError`; preserve both facts.

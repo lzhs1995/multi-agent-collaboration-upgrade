@@ -328,3 +328,94 @@ test('activation rejects symlink directories and clears only its own exact Bun p
     }
   } finally {globalThis.fetch=original;fs.rmSync(root,{recursive:true});}
 });
+
+test('atomic publication cleans only its own unrenamed temporary file', async t => {
+  for (const fault of ['none', 'open-exists', 'write', 'close-before', 'close-after', 'rename']) {
+    await t.test(fault, () => {
+      const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'upgrade-observer-atomic-')));
+      fs.chmodSync(directory, 0o700);
+      const originals = Object.fromEntries(['openSync', 'writeFileSync', 'closeSync', 'renameSync', 'unlinkSync']
+        .map(name => [name, fs[name]]));
+      const originalFetch = globalThis.fetch;
+      const sentinel = Buffer.from('pre-existing temporary file belongs to another publication');
+      const injected = Object.assign(new Error('injected ' + fault), {code: 'EIO'});
+      const calls = {open: 0, write: 0, close: 0, rename: 0, unlink: 0};
+      let temporary, ownedFd, closeInjected = false;
+      try {
+        fs.openSync = function(filename, flags, mode) {
+          if (typeof filename !== 'string' || !filename.startsWith(directory + path.sep) ||
+              !filename.endsWith('.json.tmp')) return originals.openSync(filename, flags, mode);
+          temporary = filename; calls.open++;
+          assert.ok(filename.startsWith(directory + path.sep) && filename.endsWith('.json.tmp'));
+          assert.ok(flags & fs.constants.O_EXCL); assert.ok(flags & fs.constants.O_NOFOLLOW);
+          assert.equal(mode, 0o600);
+          if (fault === 'open-exists') {
+            // Let the real filesystem reject O_EXCL against a real, populated file.
+            const otherFd = originals.openSync(filename, 'wx', 0o600);
+            originals.writeFileSync(otherFd, sentinel); originals.closeSync(otherFd);
+          }
+          ownedFd = originals.openSync(filename, flags, mode);
+          return ownedFd;
+        };
+        fs.writeFileSync = function(fd, data) {
+          calls.write++; assert.equal(fd, ownedFd);
+          if (fault === 'write') {
+            originals.writeFileSync(fd, 'partial record');
+            throw injected;
+          }
+          return originals.writeFileSync(fd, data);
+        };
+        fs.closeSync = function(fd) {
+          if (fd !== ownedFd) return originals.closeSync(fd);
+          calls.close++; assert.equal(fd, ownedFd);
+          if (fault === 'close-before' && !closeInjected) {
+            closeInjected = true; throw injected;
+          }
+          const result = originals.closeSync(fd);
+          if (fault === 'close-after' && !closeInjected) {
+            closeInjected = true; throw injected;
+          }
+          return result;
+        };
+        fs.renameSync = function(from, to) {
+          calls.rename++; assert.equal(from, temporary);
+          if (fault === 'rename') throw injected;
+          return originals.renameSync(from, to);
+        };
+        fs.unlinkSync = function(filename) {
+          calls.unlink++; assert.equal(filename, temporary);
+          return originals.unlinkSync(filename);
+        };
+        const activate = () => install({UPGRADE_RESPONSE_OBSERVATIONS_DIR: directory,
+          UPGRADE_RESPONSE_OBSERVER_ROOT_PID: String(process.pid)});
+        if (fault === 'none') assert.equal(activate(), true);
+        else if (fault === 'open-exists') assert.throws(activate, {code: 'EEXIST'});
+        else assert.throws(activate, error => error === injected);
+        Object.assign(fs, originals);
+
+        const names = fs.readdirSync(directory);
+        if (fault === 'none') {
+          assert.equal(calls.unlink, 0); assert.equal(calls.rename, 1);
+          assert.equal(names.length, 1); assert.ok(names[0].endsWith('.json'));
+          const filename = path.join(directory, names[0]);
+          assert.equal(JSON.parse(fs.readFileSync(filename)).phase, 'LOADED');
+          assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+        } else if (fault === 'open-exists') {
+          assert.equal(calls.unlink, 0); assert.equal(calls.write, 0); assert.equal(calls.close, 0);
+          assert.deepEqual(names, [path.basename(temporary)]);
+          assert.deepEqual(fs.readFileSync(temporary), sentinel);
+          assert.equal(globalThis.fetch, originalFetch);
+        } else {
+          assert.equal(calls.unlink, 1); assert.deepEqual(names, []);
+          assert.equal(globalThis.fetch, originalFetch);
+        }
+        if (fault === 'close-before' || fault === 'close-after') assert.equal(calls.close, 2);
+      } finally {
+        Object.assign(fs, originals); globalThis.fetch = originalFetch;
+        // The injected failures may leave a descriptor open if an assertion failed.
+        if (ownedFd !== undefined) { try { originals.closeSync(ownedFd); } catch {} }
+        fs.rmSync(directory, {recursive: true});
+      }
+    });
+  }
+});

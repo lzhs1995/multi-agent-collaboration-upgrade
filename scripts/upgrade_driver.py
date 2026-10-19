@@ -19,7 +19,7 @@ from orchestration_common import (ContractError, boot_id, exclusive_lock, file_r
     parse_time, read_ref, require, utc_now, verify_tree, write_json)
 from orchestration_freeze_v3 import authorize, freeze_campaign
 from orchestration_permit import elapsed, read_permit, require_running
-from upgrade_benchmark import group_registration, validate_registration
+from upgrade_benchmark import group_registration, runtime_observation, validate_registration
 from upgrade_live_control import control, publish_bootstrap
 from upgrade_live_runtime import validate_adoption, validate_live_runtime
 from upgrade_failure_watch import CodexFailureWatch
@@ -57,6 +57,7 @@ def configure(request_ref, *, overall_timeout_seconds=None):
     for group, runtime_ref in request["runtimes"].items():
         _, runtime = validate_live_runtime(runtime_ref)
         group_registration(request["registration"], group, runtime["context"], runtime["arm"])
+        runtime_observation(registration, runtime_ref, runtime)
         checked = control(runtime_ref, "check")
         require(not checked["launched"] and not checked["stopped"] and not checked["adoption_published"],
                 "driver registration must precede original launch and adoption")
@@ -292,6 +293,7 @@ class Driver:
         permit_ref, permit = read_permit(self.registration_ref, ordinal, active=True)
         require(permit["runtime"] == runtime_ref, "active group runtime differs from registration")
         _, runtime = validate_live_runtime(runtime_ref)
+        runtime_observation(self.registration, runtime_ref, runtime)
         spec = json_ref(runtime["startup"])
         group_info = group_registration(self.registration_ref, group, runtime["context"], runtime["arm"])
         context = json_ref(runtime["context"])

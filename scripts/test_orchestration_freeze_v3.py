@@ -119,6 +119,34 @@ class V3FreezeTests(unittest.TestCase):
             self.freeze()
         self.assertFalse(self.campaign_root.exists())
 
+    def observation_mismatch(self):
+        # A fresh synthetic registration claims an enabled observer; this
+        # materialized runtime is genuinely configured disabled.
+        registration = json_ref(self.registration)
+        source = file_ref(Path(__file__).with_name("upgrade_claude_response_observer.cjs"))
+        registration["response_observation"] = dict(mode="consumed-response-v1",
+            sha256=source["sha256"], bytes=source["bytes"])
+        return write_json(self.registration["path"], registration)
+
+    def test_observer_mismatch_refuses_issue_and_freeze_before_creating_outputs(self):
+        from upgrade_schedule import issue
+        mismatch = self.observation_mismatch()
+        self.request_ref = write_json(self.request_ref["path"], dict(self.request, registration=mismatch))
+        for action in (lambda: issue(mismatch, self.runtime_ref), self.freeze):
+            with self.assertRaisesRegex(ContractError, "response observation differs"):
+                action()
+        self.assertFalse((self.root / "schedule").exists())
+        self.assertFalse(self.campaign_root.exists())
+        self.assertFalse((self.paths["controllers"] / "adapters" / self.group["campaign_id"]).exists())
+
+    def test_private_campaign_refuses_observer_mismatch_after_real_runtime_validation(self):
+        from orchestration_contracts import validate_private_campaign
+        result = self.freeze()
+        campaign = json_ref(result["campaign"])
+        campaign["registration"] = self.observation_mismatch()
+        with self.assertRaisesRegex(ContractError, "response observation differs"):
+            validate_private_campaign(campaign, fixtures=False)
+
     def test_missing_adoption_wrong_authorization_and_stop_are_not_bypassed(self):
         original = copy.deepcopy(self.request)
         cases = [dict(adoption=dict(self.adoption, path=str(self.root / "forged.json"))),

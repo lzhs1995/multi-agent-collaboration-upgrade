@@ -15,7 +15,7 @@ from orchestration_campaign import anchored_ref, validate_campaign
 from orchestration_common import (ContractError, exclusive_lock, file_ref, json_ref,
                                   read_ref, require, utc_now, write_json)
 from orchestration_permit import campaign_permit, read_halt, read_permit, require_running, schedule_path, steps
-from upgrade_benchmark import group_registration, validate_registration
+from upgrade_benchmark import group_registration, runtime_observation, validate_registration
 from upgrade_client_isolation import sandbox_check
 from upgrade_live_runtime import validate_live_runtime
 from upgrade_measurements import compare, measurement, next_allowed
@@ -58,6 +58,7 @@ def issue(registration_ref, runtime_ref):
     registration = validate_registration(registration_ref)
     external(registration)
     _, runtime = validate_live_runtime(runtime_ref)
+    runtime_observation(registration, runtime_ref, runtime)
     root = Path(registration["root"]) / "schedule"
     with exclusive_lock(root / "publisher.lock"):
         registration, permits, closures = ledger(registration_ref)
@@ -162,7 +163,7 @@ def report(registration_ref):
                              elapsed_seconds=None, human_interventions=None,
                              usage=dict(tokens=None, cost=None), evidence_class="unverified_original_attempt",
                              reason=str(exc), permit=file_ref(path)))
-    value = compare(registration, rows)
+    value = compare(registration, rows, registration_ref=registration_ref)
     value.update(registration=registration_ref, generated_at=utc_now(), input_operations=0,
                  halt=halted[0] if halted else None)
     return value

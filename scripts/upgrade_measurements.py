@@ -5,13 +5,14 @@ import math
 import statistics
 from pathlib import Path
 
-from orchestration_common import ContractError, file_ref, json_ref, parse_time
+from orchestration_common import ContractError, file_ref, json_ref, parse_time, read_ref, require
 from orchestration_native import NativeReader
 from orchestration_permit import elapsed, steps
-from upgrade_benchmark import CLASSES
+from upgrade_benchmark import (CLASSES, REGISTRATION_V3, runtime_observation, validate_registration)
 
 CODEX_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")
 CLAUDE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+LIVE_MEASUREMENTS = ("registered_live_measurement_v1", "registered_live_measurement_v2")
 
 
 def _counts(value, fields, optional=()):
@@ -131,6 +132,13 @@ def measurement(campaign_ref, run_id, *, fixtures=False):
     cap = registration["contract"]["run_timeout_seconds"]
     on_time = timing["seconds"] <= cap if timing["seconds"] is not None else None
     status = "TIMEOUT" if on_time is False else result["status"]
+    observation = {}
+    evidence_class = "offline_fixture" if fixtures else LIVE_MEASUREMENTS[0]
+    if registration["schema"] == REGISTRATION_V3 and not fixtures:
+        from upgrade_live_runtime import validate_live_runtime
+        _, runtime = validate_live_runtime(campaign["runtime"])
+        observation["observer_configuration"] = runtime_observation(registration, campaign["runtime"], runtime)
+        evidence_class = LIVE_MEASUREMENTS[1]
     return dict(**step, arm=campaign["arm"], workload_class=campaign["workload_class"], status=status,
                 contract_pass=result["contract_pass"], within_cap=on_time, elapsed_seconds=timing["seconds"],
                 elapsed_wall_seconds=timing["wall_seconds"], clock_status=timing["clock_status"],
@@ -142,7 +150,7 @@ def measurement(campaign_ref, run_id, *, fixtures=False):
                 retries=result["metrics"]["retries"], failed_api_attempts=result["metrics"]["failed_api_attempts"],
                 finish=result["finish"], campaign=campaign_ref, run_metrics=result["metrics"],
                 usage=usage_for(campaign, header, finish, cold=step["phase"] == "cold", fixtures=fixtures),
-                evidence_class="offline_fixture" if fixtures else "registered_live_measurement_v1")
+                evidence_class=evidence_class, **observation)
 
 
 def next_allowed(row):
@@ -150,7 +158,9 @@ def next_allowed(row):
             and type(row["human_interventions"]) is int and row["human_interventions"] >= 0
             and row.get("arm") in ("A1", "B")
             and (row["arm"] == "A1" or row["human_interventions"] == 0)
-            and row.get("evidence_class") == "registered_live_measurement_v1")
+            and row.get("evidence_class") in LIVE_MEASUREMENTS
+            and (row["evidence_class"] == LIVE_MEASUREMENTS[0] or
+                 isinstance(row.get("observer_configuration"), dict)))
 
 
 def finite_number(value, *, positive=False):
@@ -158,7 +168,51 @@ def finite_number(value, *, positive=False):
             and (value > 0 if positive else value >= 0))
 
 
-def compare(registration, rows):
+def observation_checks(registration, registration_ref, rows):
+    """External report checks, with one full campaign validation per group.
+
+    A claimed row must match the original external closeout in full; copying
+    valid runtime pins does not authenticate caller-supplied timing or counters.
+    This checks configuration symmetry, not actual observer activation.
+    """
+    from orchestration_campaign import validate_campaign
+    from orchestration_permit import read_permit, schedule_path
+    from upgrade_live_runtime import validate_live_runtime
+    require(registration_ref is not None and validate_registration(registration_ref) == registration,
+            "v3 comparison requires the pinned original registration")
+    groups, checks = {}, {}
+    for row in rows:
+        key = (row["group"], row["run_id"])
+        try:
+            require(row.get("evidence_class") == LIVE_MEASUREMENTS[1], "v3 original measurement required")
+            group = row["group"]
+            if group not in groups:
+                campaign = validate_campaign(row["campaign"])
+                require(campaign["registration"] == registration_ref and campaign["session_group"] == group,
+                        "observation campaign registration/group changed")
+                _, runtime = validate_live_runtime(campaign["runtime"])
+                groups[group] = (row["campaign"], runtime_observation(registration, campaign["runtime"], runtime))
+            campaign_ref, observation = groups[group]
+            require(row["campaign"] == campaign_ref and row["observer_configuration"] == observation,
+                    "original measurement observer configuration changed")
+            permit_ref, permit = read_permit(registration_ref, row["ordinal"])
+            require(permit["runtime"] == observation["runtime"]
+                    and (permit["step"]["group"], permit["step"]["run_id"]) == key,
+                    "observation original permit changed")
+            closure = json_ref(file_ref(schedule_path(registration, "closures", row["ordinal"])))
+            require(closure.get("schema") == "upgrade-run-closure-v1"
+                    and closure.get("registration") == registration_ref and closure.get("permit") == permit_ref
+                    and closure.get("campaign") == campaign_ref and closure.get("finish") == row["finish"]
+                    and closure.get("measurement") == row and closure.get("next_allowed") is next_allowed(row),
+                    "measurement differs from original external closeout")
+            read_ref(row["finish"], "original observation closeout finish")
+            checks[key] = dict(verified=True, reason=None)
+        except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
+            checks[key] = dict(verified=False, reason=str(exc))
+    return checks
+
+
+def compare(registration, rows, *, registration_ref=None):
     """Include every registered slot; exploratory medians cannot qualify a run."""
     known = {(r["group"], r["run_id"]): r for r in rows}
     if len(known) != len(rows):
@@ -166,6 +220,13 @@ def compare(registration, rows):
     expected = {(s["group"], s["run_id"]) for s in steps(registration)}
     if not set(known) <= expected:
         raise ContractError("unregistered measurement")
+    modern = registration.get("schema") == REGISTRATION_V3
+    checks = observation_checks(registration, registration_ref, rows) if modern else {}
+    def verified(row):
+        if not modern:
+            return row.get("evidence_class") == LIVE_MEASUREMENTS[0]
+        return (row.get("evidence_class") == LIVE_MEASUREMENTS[1] and
+                checks.get((row["group"], row["run_id"]), {}).get("verified") is True)
     complete = []
     for step in steps(registration):
         group = registration["groups"][step["group"]]
@@ -183,11 +244,13 @@ def compare(registration, rows):
         members = {a: indexed[(m["group"], m["run_id"])] for a, m in pair["members"].items()}
         a, b = members["A1"], members["B"]
         comparable = all(r["status"] == "PASS" and r["contract_pass"] is True and r["within_cap"] is True
-                         and r.get("evidence_class") == "registered_live_measurement_v1"
+                         and verified(r)
                          and finite_number(r["elapsed_seconds"], positive=True) for r in members.values())
         improvement = 100 * (a["elapsed_seconds"] - b["elapsed_seconds"]) / a["elapsed_seconds"] if comparable else None
         ca, cb = a["usage"].get("cost"), b["usage"].get("cost")
-        cost_increase = (cb - ca) / ca * 100 if finite_number(ca, positive=True) and finite_number(cb) else None
+        cost_verified = not modern or all(verified(r) for r in members.values())
+        cost_increase = ((cb - ca) / ca * 100 if cost_verified and
+                         finite_number(ca, positive=True) and finite_number(cb) else None)
         intervention_ok = (all(type(r["human_interventions"]) is int and r["human_interventions"] >= 0
                                for r in members.values()) and b["human_interventions"] == 0
                            and b["human_interventions"] <= a["human_interventions"])
@@ -200,18 +263,25 @@ def compare(registration, rows):
     medians = {kind: statistics.median([p["improvement_percent"] for p in warm if p["workload_class"] == kind])
                if all(p["comparable"] for p in warm if p["workload_class"] == kind) else None for kind in CLASSES}
     full_median = statistics.median(available) if len(available) == registration["contract"]["warm_pairs"] else None
-    all_verified = all(next_allowed(r) for r in complete)
+    all_verified = all(next_allowed(r) and verified(r) for r in complete)
     interventions_ok = all(p["intervention_contract_pass"] for p in pairs)
     regressions = [k for k, v in medians.items() if v is not None and v < -registration["contract"]["maximum_class_regression_percent"]]
     eligible = (all_verified and interventions_ok and all(p["comparable"] for p in pairs) and full_median is not None
                 and full_median >= registration["contract"]["minimum_improvement_percent"] and not regressions)
-    return dict(schema="upgrade-paired-report-v1", benchmark_id=registration["benchmark_id"],
-                runs=complete, pairs=pairs, pilot_passes=sum(next_allowed(r) for r in complete if r["phase"] == "pilot"),
+    return dict(schema="upgrade-paired-report-v2" if modern else "upgrade-paired-report-v1",
+                benchmark_id=registration["benchmark_id"],
+                qualification_scope=("observer_configuration_verified" if all_verified else "observer_configuration_unverified")
+                    if modern else "legacy_unverified",
+                observer_configuration=(dict(expected=registration["response_observation"],
+                    rows=[dict(group=g, run_id=r, **check) for (g, r), check in checks.items()],
+                    activation="NOT_ESTABLISHED_BY_CONFIGURATION") if modern else None),
+                runs=complete, pairs=pairs,
+                pilot_passes=sum(next_allowed(r) and verified(r) for r in complete if r["phase"] == "pilot"),
                 expected_runs=len(complete), observed_runs=len(rows),
-                verified_runs=sum(r.get("evidence_class") == "registered_live_measurement_v1" for r in complete),
-                measured_runs=sum(r.get("evidence_class") == "registered_live_measurement_v1"
+                verified_runs=sum(verified(r) for r in complete),
+                measured_runs=sum(verified(r)
                                   and finite_number(r["elapsed_seconds"], positive=True) for r in complete),
-                passing_runs=sum(next_allowed(r) for r in complete),
+                passing_runs=sum(next_allowed(r) and verified(r) for r in complete),
                 complete_correct_and_intervention_contract=all_verified and interventions_ok,
                 complete_correct_unattended=all_verified and all(r["human_interventions"] == 0 for r in complete),
                 paired_warm_median_improvement_percent=full_median, warm_class_median_improvement_percent=medians,

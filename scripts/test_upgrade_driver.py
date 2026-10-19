@@ -99,6 +99,35 @@ class DriverTests(unittest.TestCase):
                     driver.configure(self.request, overall_timeout_seconds=value)
                 publish.assert_not_called()
 
+    def test_configure_refuses_each_mixed_observer_group_before_publication(self):
+        # Original driver fixtures keep historical semantics. This independent
+        # synthetic request exercises v3's real policy check at configure.
+        registration = dict(self.case.registration, schema="upgrade-paired-registration-v3",
+            compact=False, response_observation=dict(mode="disabled", sha256=None, bytes=None))
+        registration_ref = write_json(self.case.ref["path"], registration)
+        runtimes = {}
+        for group, ref in self.case.runtimes.items():
+            runtime = json_ref(ref)
+            startup = dict(json_ref(runtime["startup"]), pins={})
+            runtime["startup"] = write_json(runtime["startup"]["path"], startup)
+            runtimes[group] = write_json(ref["path"], runtime)
+        request = dict(json_ref(self.request), registration=registration_ref, runtimes=runtimes)
+        self.case.runtimes = runtimes
+        for group, ref in runtimes.items():
+            runtime = json_ref(ref)
+            startup = json_ref(runtime["startup"])
+            mismatch = dict(startup, pins={"claude_response_observer": dict(sha256="0" * 64, bytes=1)})
+            runtime["startup"] = write_json(runtime["startup"]["path"], mismatch)
+            changed = dict(runtimes, **{group: write_json(ref["path"], runtime)})
+            request_ref = write_json(self.root / "observer-request.json", dict(request, runtimes=changed))
+            with self.subTest(group=group), patch.object(driver, "write_json") as publish:
+                with self.assertRaisesRegex(ContractError, "response observation differs"):
+                    driver.configure(request_ref)
+                publish.assert_not_called()
+            runtime["startup"] = write_json(runtime["startup"]["path"], startup)
+            runtimes[group] = write_json(ref["path"], runtime)
+        self.assertEqual(self.actions, [])
+
     def test_before_overall_deadline_permits_work_but_exact_boundary_halts_and_reports(self):
         original = file_ref(self.ref["path"])
         with self.deadline_clock(7199.999):

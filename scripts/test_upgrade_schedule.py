@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from orchestration_common import ContractError, file_ref, json_ref, write_json
 from orchestration_permit import elapsed, launch_start, read_halt, read_permit, steps, wait_permit, work_budget
-from upgrade_benchmark import ARM_STRATEGIES, register, validate_registration
+from upgrade_benchmark import ARM_STRATEGIES, validate_registration
+from test_upgrade_benchmark import legacy_registration as register
 import upgrade_schedule as schedule
 
 

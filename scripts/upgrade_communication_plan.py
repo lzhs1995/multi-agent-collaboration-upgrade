@@ -47,9 +47,9 @@ RULES = (
 
 def registration_plan(registration):
     """Return the complete fixed denominator before native sessions are adopted."""
-    from upgrade_benchmark import layout
+    from upgrade_benchmark import compact_layout, layout
 
-    expected, _ = layout(registration["root"], compact=registration.get("schema") == "upgrade-paired-registration-v2")
+    expected, _ = layout(registration["root"], compact=compact_layout(registration))
     require(registration["groups"] == expected, "communication registration groups changed")
     identity = object_sha({"benchmark_id": registration["benchmark_id"], "root": registration["root"]})[:16]
     samples = []

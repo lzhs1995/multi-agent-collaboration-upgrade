@@ -6,9 +6,19 @@ import unittest
 import uuid
 from pathlib import Path
 
-from orchestration_common import ContractError, json_ref, write_json
+from orchestration_common import ContractError, file_ref, json_ref, write_json
 from upgrade_benchmark import (ARM_STRATEGIES, CLASSES, group_registration, register,
-                               validate_registered_campaign, validate_registration)
+                               runtime_observation, validate_registered_campaign, validate_registration)
+
+
+def legacy_registration(root, benchmark_id, *, compact=False):
+    """Synthetic historical fixture only; production register emits v3."""
+    ref = register(root, benchmark_id, compact=compact)
+    value = json_ref(ref)
+    value.pop("compact")
+    value.pop("response_observation")
+    value["schema"] = "upgrade-paired-registration-v2" if compact else "upgrade-paired-registration-v1"
+    return write_json(ref["path"], value)
 
 
 class RegistrationTests(unittest.TestCase):
@@ -70,7 +80,8 @@ class RegistrationTests(unittest.TestCase):
         compact_ref = register(root, "approved-compact", compact=True)
         self.addCleanup(shutil.rmtree, root)
         compact = validate_registration(compact_ref)
-        self.assertEqual(compact["schema"], "upgrade-paired-registration-v2")
+        self.assertEqual(compact["schema"], "upgrade-paired-registration-v3")
+        self.assertIs(compact["compact"], True)
         self.assertEqual(compact["pairs"], self.value["pairs"])
         self.assertEqual(compact["contract"], self.value["contract"])
         self.assertEqual(sum(len(g["runs"]) for g in compact["groups"].values()), 33)
@@ -85,7 +96,57 @@ class RegistrationTests(unittest.TestCase):
                                                 group["arm"]), group)
         self.assertFalse((root / "g").exists())
         self.assertEqual(validate_registration(self.ref), self.value)
-        self.assertEqual(self.value["schema"], "upgrade-paired-registration-v1")
+        self.assertEqual(self.value["schema"], "upgrade-paired-registration-v3")
+
+    def test_legacy_shapes_remain_readable_without_rewriting(self):
+        for compact in (False, True):
+            root = Path("/tmp").resolve() / ("o" + uuid.uuid4().hex[:5])
+            ref = legacy_registration(root, "legacy-fixture", compact=compact)
+            self.addCleanup(shutil.rmtree, root)
+            raw = Path(ref["path"]).read_bytes()
+            value = validate_registration(ref)
+            self.assertNotIn("response_observation", value)
+            self.assertIsNone(runtime_observation(value, {}, {}))
+            self.assertEqual(Path(ref["path"]).read_bytes(), raw)
+
+    def test_enabled_policy_pins_complete_current_source_and_disabled_is_explicit(self):
+        ref = register(self.root / "enabled", "enabled", response_observation=True)
+        value = validate_registration(ref)
+        source = file_ref(Path(__file__).with_name("upgrade_claude_response_observer.cjs"))
+        self.assertEqual(value["response_observation"], dict(mode="consumed-response-v1",
+                         sha256=source["sha256"], bytes=source["bytes"]))
+        self.assertEqual(self.value["response_observation"], dict(mode="disabled", sha256=None, bytes=None))
+
+    def test_malformed_policy_and_version_downgrade_are_refused(self):
+        changes = [dict(mode="disabled", sha256="0" * 64, bytes=1),
+                   dict(mode="consumed-response-v1", sha256="0" * 64, bytes=True),
+                   dict(mode="consumed-response-v1", sha256="bad", bytes=1),
+                   dict(mode="consumed-response-v1", sha256="0" * 64, bytes=0),
+                   dict(mode="unknown", sha256=None, bytes=None), None]
+        for policy in changes:
+            value = copy.deepcopy(self.value)
+            value["response_observation"] = policy
+            with self.subTest(policy=policy), self.assertRaises(ContractError):
+                validate_registration(write_json(self.ref["path"], value))
+        for change in (dict(compact=1), dict(schema="upgrade-paired-registration-v2")):
+            with self.subTest(change=change), self.assertRaises(ContractError):
+                validate_registration(write_json(self.ref["path"], dict(self.value, **change)))
+
+    def test_seven_group_policy_rejects_each_mismatching_member_and_changed_startup(self):
+        # Minimal already-validated-runtime inputs; real startup validation is
+        # separately exercised by materialized campaign/freezer tests.
+        refs = {}
+        for group in self.value["groups"]:
+            refs[group] = write_json(self.root / group / "startup.json", dict(pins={}))
+        for group, ref in refs.items():
+            runtime = dict(startup=ref)
+            self.assertEqual(runtime_observation(self.value, {}, runtime)["policy"],
+                             self.value["response_observation"])
+            changed = write_json(ref["path"], dict(pins={"claude_response_observer": dict(sha256="0" * 64, bytes=1)}))
+            with self.subTest(group=group), self.assertRaisesRegex(ContractError, "differs from runtime"):
+                runtime_observation(self.value, {}, dict(startup=changed))
+            with self.assertRaises(ContractError):
+                runtime_observation(self.value, {}, runtime)
 
     def test_compact_long_root_refuses_before_creating_any_directories(self):
         # Short enough for the RPC socket, too long for Claude's child TMPDIR.

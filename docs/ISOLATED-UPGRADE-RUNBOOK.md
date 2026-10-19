@@ -69,11 +69,15 @@ Artificial sleeps to create an advantage are prohibited.
    research corpus manifest, source revision and test evidence. Use this same
    source/corpus snapshot for every group; never edit a campaign adapter in place.
 3. Register a new, short private root using `upgrade_benchmark.py register
-   --compact`. The v2 registration maps the seven groups to `g/0` through `g/6`;
+   --compact`. New v3 registrations use explicit `compact=true` to map the seven groups to `g/0` through `g/6`;
    semantic group names, all 33 slots, 15 pairs and their order are unchanged.
-   Historical v1 registrations remain readable and are never rewritten. Use each
+   Historical v1/v2 registrations remain readable and are never rewritten. Use each
    registration's exact `context_path` with `upgrade_experiment.py init` and then
    materialize that group's arm with `upgrade_live_materialize.py`.
+   Registration also pins one response-observation policy for every group,
+   disabled by default. For enabled observation pass `--observe-claude-responses`
+   at registration and at all seven materializations from the same source.
+   The enabled policy includes the complete observer SHA256 and byte count.
 
    The longest private `tmp/ARM/c.sock` path must fit in 103 bytes. Claude 2.1.170
    also requires the resolved `tmp/ARM/a/claude-UID` and `tmp/ARM/b/claude-UID`
@@ -185,21 +189,29 @@ separate findings. No report here installs or promotes the upgrade to production
 
 Optional response observation for new private clients is documented in
 [response observation validation](RESPONSE-OBSERVATION-VALIDATION.md). Enable
-it only through `--observe-claude-responses` at materialization. Require its
+it through `--observe-claude-responses` at registration and materialization. Require its
 immutable pin, real LOADED/source-hash evidence and bounded consumer terminal
 records; do not retrofit old runtime files. Run its Node/Bun consumer tests and
 `test_upgrade_response_startup` alongside the startup checks below. Bun preload
 arguments use Bun escaping rather than shell quoting.
 For a new paired campaign, freeze the same enabled/disabled setting and exact
 observer SHA/byte count across all seven groups before any client launch. Record
-that comparison in preparation evidence and reject a mixed configuration for
-efficiency reporting. The current driver validates each runtime independently;
-it does not automatically enforce this cross-group instrumentation equality.
-Keep this explicit check separate from the immutable single-runtime pins.
+that comparison in preparation evidence. Registration v3 enforces its common
+policy at driver configure, permit issue, driver launch, campaign freeze and
+private campaign validation. Reports additionally require the original pinned
+registration/runtime/startup and the complete original external closure row.
+Missing or changed evidence cannot qualify timings, costs or passing counts;
+all 33 slots remain in the denominator. No repeated seven-tree scan is added to
+native-reader paths. This verifies configuration, not actual LOADED; retain
+that separate live check. Legacy v1/v2 arithmetic remains readable with
+`qualification_scope=legacy_unverified`, without retrospective qualification.
 The fixed-source local AB/BA test measured 3.57–7.46× controller elapsed time
 with observation enabled at 256 concurrent requests. Keep the diagnostic opt-in;
 do not describe its overhead as negligible or its correctness checks as a speed
 pass. This local ratio does not predict provider latency or collaboration speed.
+The cleanup follow-up's four old/new pairs had mixed timing direction, so do not
+claim the repair eliminates this cost. See
+[configuration and cleanup validation](OBSERVER-COMPARISON-VALIDATION.md).
 
 Run `test_upgrade_client_isolation`, `test_upgrade_live_startup` and
 `test_upgrade_benchmark` after changing startup code, followed by the complete

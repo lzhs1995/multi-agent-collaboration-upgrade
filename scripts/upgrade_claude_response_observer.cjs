@@ -345,15 +345,19 @@ function install(env = process.env) {
     const number = record.request_sequence || 0;
     const destination = path.join(directory, `${process.pid}-${epoch}-${number}.json`);
     const temp = destination + '.tmp';
-    let fd;
+    let fd, created = false, renamed = false;
     try {
       fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      created = true;
       fs.writeFileSync(fd, JSON.stringify(record) + '\n');
       fs.closeSync(fd); fd = undefined;
       fs.renameSync(temp, destination);
+      renamed = true;
     } finally {
-      if (fd !== undefined) fs.closeSync(fd);
-      guarded(() => fs.unlinkSync(temp));
+      if (fd !== undefined) guarded(() => fs.closeSync(fd));
+      // A successful rename consumed our temporary name. A failed exclusive
+      // open never owned it, so neither case authorizes unlinking that name.
+      if (created && !renamed) guarded(() => fs.unlinkSync(temp));
     }
   }
   publish({...identity, phase: 'LOADED', loaded_at_ms: Date.now(),

@@ -69,6 +69,7 @@ def validate_private_campaign(campaign, *, fixtures):
             proof_ref = campaign.get("client_isolation")
             proof = validate_adoption(campaign["runtime"], proof_ref, runtime=runtime)
             _match_adopted_sessions(campaign["runtime"], campaign["sessions"], proof_ref, proof)
-        from upgrade_benchmark import validate_registered_campaign
+        from upgrade_benchmark import runtime_observation, validate_registered_campaign, validate_registration
         validate_registered_campaign(campaign)
+        runtime_observation(validate_registration(campaign["registration"]), campaign["runtime"], runtime)
     return context, runtime

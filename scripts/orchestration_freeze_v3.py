@@ -19,7 +19,8 @@ from orchestration_common import (ContractError, checked_path, digest, file_ref,
 from orchestration_freeze import copy_runtime
 from orchestration_native import NativeReader, native_text
 from orchestration_planner import ISOLATED_EXECUTORS, validate_plan
-from upgrade_benchmark import ARM_STRATEGIES, CLASSES, group_registration
+from upgrade_benchmark import (ARM_STRATEGIES, CLASSES, group_registration,
+                               runtime_observation, validate_registration)
 from upgrade_experiment import arm_paths
 from upgrade_live_runtime import authenticated_sessions, validate_live_runtime
 
@@ -124,6 +125,7 @@ def freeze_campaign(request_ref):
             "separate v3 freeze request required")
     context, runtime = validate_live_runtime(request["runtime"], context_ref=request["experiment"])
     group = group_registration(request["registration"], request["session_group"], request["experiment"], runtime["arm"])
+    runtime_observation(validate_registration(request["registration"]), request["runtime"], runtime)
     paths = arm_paths(context, runtime["arm"])
     root = paths["campaigns"] / group["campaign_id"]
     destination = paths["controllers"] / "adapters" / group["campaign_id"]

@@ -24,11 +24,14 @@ requested and native-canonical directory must identify the same owned 0700 inode
 with no symlink ancestors; each publication rechecks both names. Preload cleanup
 decodes only a single supported option and verifies the original module inode.
 
-Future paired preparation must pin identical observation settings and observer
-SHA/byte count for all seven groups. The current driver validates each runtime
-independently and does not enforce this cross-group equality automatically.
-Mixed instrumentation cannot support the paired efficiency claim. No new live
-campaign or existing frozen-runtime mutation is part of this change.
+New paired registration v3 pins identical observation settings and observer
+SHA/byte count for all seven groups; configure, permit issue, driver launch,
+freeze and campaign validation now enforce that common policy. Enable the flag
+at both registration and materialization from the same frozen source. Reports
+verify original pins and the complete original external closure row. Actual
+LOADED remains a separate observation; historical v1/v2 qualification is
+`legacy_unverified`. See [the follow-up validation](OBSERVER-COMPARISON-VALIDATION.md).
+No new live campaign or existing frozen-runtime mutation is part of this change.
 
 The observer wraps the original fetch/response consumers without cloning,
 teeing, draining or sending requests. It returns original promises, responses,
@@ -69,7 +72,7 @@ unobserved. None of these summaries proves business correctness or releases a
 provider slot. Actual LOADED/source-hash and response evidence must be checked
 separately from configuration, native readiness probes and automatic hooks.
 
-## Fixed-source validation
+## Original fixed-source validation (before cleanup repair)
 
 Observer SHA256:
 `cf857020d46fc1b980496d25a88c648f16517cb7c5ca7ce5a8b35a9a807d1671`
@@ -157,9 +160,9 @@ The unresolved deliverable is the registered **1 Codex + 2 Claude** experiment,
 not another replay of local HTTP traffic. Preserve the original r27 controller,
 deadline, clients and failure evidence. A future bounded campaign must:
 
-1. Freeze all seven groups before launch; independently compare observer enable
-   state and source SHA/byte count, because the current driver has no automatic
-   cross-group check. Keep the observer's measured cost visible in the report.
+1. Freeze all seven groups before launch using v3's common observation policy.
+   Require every runtime to match and retain separate actual LOADED checks.
+   Keep the observer's measured cost visible in the report.
 2. Establish actual loading separately from native Goal SET, completed response,
    readiness probe and automatic hook adoption. Record missing stages as missing.
    Only the native Claude process consuming an actual model response can validate
