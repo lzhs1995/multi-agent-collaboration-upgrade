@@ -19,7 +19,7 @@ from orchestration_common import (ContractError, boot_id, checked_path, contract
 from orchestration_campaign import (control_script, find_control, native_control, node_output, node_write_scope,
                                     require_live_identity, validate_campaign)
 from orchestration_contracts import campaign_version, evidence_class
-from orchestration_native import NativeReader, require
+from orchestration_native import NativeReader, native_verification, require
 from orchestration_planner import ID_RE, executor_providers, validate_plan
 
 STRATEGIES = ("serial", "omo", "codeg")
@@ -196,6 +196,7 @@ class LeaseRegistry:
 
 class Coordinator:
     @contract_errors("coordinator")
+    @native_verification
     def __init__(self, root, campaign_ref, *, fixtures=False):
         self.root = checked_path(root)
         self.campaign_ref = campaign_ref
@@ -352,6 +353,7 @@ class Coordinator:
         return result
 
     @contract_errors("run lifecycle")
+    @native_verification
     def state(self):
         states = {key: State.PENDING for key in self.nodes}
         data = {key: {} for key in self.nodes}
@@ -372,7 +374,7 @@ class Coordinator:
             else:
                 require(not set(event["data"]) & set(data[key]), "immutable lifecycle data was overwritten")
                 require(set(event["data"]) == self._fields(target), "unexpected transition evidence")
-                self._check_transition(key, target, event["data"], data[key])
+                self._check_transition(key, target, event["data"], data[key], replay=True)
             states[key] = target
             data[key].update(event["data"])
         for key, info in data.items():
@@ -483,7 +485,8 @@ class Coordinator:
             lease = self.leases.verify_original(info["task_id"], manifest["lease"])
         return lease
 
-    def _check_transition(self, key, target, extra, info):
+    @native_verification
+    def _check_transition(self, key, target, extra, info, *, replay=False):
         from orchestration_evidence import (validate_candidate, verify_prepared, verify_dispatch_intent,
                                             verify_dispatched, verify_node, verify_failure)
         if target == State.PREPARED:
@@ -493,9 +496,19 @@ class Coordinator:
         elif target == State.DISPATCHED:
             verify_dispatched(self.campaign, self.header, self.nodes[key], info, extra["delivery"], fixtures=self.fixtures)
         elif target == State.EVIDENCE_READY:
-            validate_candidate(self.campaign, self.header, self.nodes[key], info, extra["candidate"], fixtures=self.fixtures)
+            # Candidate publication is not acceptance. Its original checker
+            # result stays pinned; the gated ACCEPT below independently reruns it.
+            validate_candidate(self.campaign, self.header, self.nodes[key], info, extra["candidate"],
+                               fixtures=self.fixtures, rerun=False)
         elif target == State.ACCEPTED:
-            value = verify_node(self.campaign, self.header, self.nodes[key], info, json_ref(extra["accepted_evidence"]), fixtures=self.fixtures)
+            value = verify_node(self.campaign, self.header, self.nodes[key], info,
+                                json_ref(extra["accepted_evidence"]), fixtures=self.fixtures,
+                                rerun=not replay)
+            # The synchronous checker may take time. Recheck the exact original
+            # evidence pins before publishing acceptance, not just their earlier
+            # decoded values. No replacement evidence or extra checker run.
+            json_ref(info["candidate"], "candidate after independent verification")
+            json_ref(extra["accepted_evidence"], "acceptance after independent verification")
             require(value == extra["verification"], "accepted verification differs from independent evidence")
         elif target == State.FAILED_PRESERVED:
             value = verify_failure(self.campaign, self.header, self.nodes[key], info, extra["failure"], fixtures=self.fixtures)
@@ -611,8 +624,11 @@ class Coordinator:
             evidence = json_ref(evidence_ref)
             require(evidence_ref["path"] == str(self.root / "nodes" / node_id / "accepted-evidence.json"),
                     "acceptance evidence path changed")
+            # Reconstruct the pinned result without executing a checker here.
+            # _append's new ACCEPTED transition independently reruns it once,
+            # compares the result, and only then publishes the terminal event.
             result = verify_node(self.campaign, self.header, self.nodes[node_id], data[node_id], evidence,
-                                 fixtures=self.fixtures, rerun=True)
+                                 fixtures=self.fixtures, rerun=False)
             terminal = self._append(node_id, State.ACCEPTED, dict(accepted_evidence=evidence_ref, verification=result))
             self._release(node_id, data[node_id], terminal)
             return result

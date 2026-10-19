@@ -15,7 +15,8 @@ from orchestration_campaign import control_script, find_control, native_control,
 from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, evidence_class, state_root
 from orchestration_common import (canonical, checked_path, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
                                   read_ref, strict_json, tree_manifest, utc_now, verify_tree, within)
-from orchestration_native import (NativeReader, delivery_identity, native_text, require, verify_delivery, verify_no_input)
+from orchestration_native import (NativeReader, delivery_identity, native_text, native_verification, require,
+                                  verify_delivery, verify_no_input)
 
 
 def task_identity(campaign, header, node):
@@ -180,12 +181,25 @@ def checker_request(campaign, header, node, info, outputs):
     return request
 
 
-def run_checker(campaign, request):
-    # There is intentionally no `command` field in node evidence.
+def _verify_checker_sources(campaign):
     read_ref(campaign["python"], "frozen Python")
     read_ref(campaign["checker"], "trusted checker")
     within(campaign["checker"]["path"], campaign["adapter"]["path"])
     verify_tree(campaign["adapter"])
+
+
+def _verify_checker_result(value):
+    require(isinstance(value, dict) and isinstance(value.get("checks"), list) and value["checks"],
+            "checker must return nonempty structured checks")
+    require(all(isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"] and c.get("passed") is True
+                for c in value["checks"]), "one or more independent correctness checks failed")
+    require(len({c["id"] for c in value["checks"]}) == len(value["checks"]), "duplicate correctness checks")
+    return value
+
+
+def run_checker(campaign, request):
+    # There is intentionally no `command` field in node evidence.
+    _verify_checker_sources(campaign)
     # input= opens an anonymous pipe for writing in the parent. Darwin's
     # descriptor path audit cannot authenticate that pipe as a private file.
     # Use one exclusive private scratch directory and a read-only stdin instead;
@@ -207,12 +221,7 @@ def run_checker(campaign, request):
             "checker output exceeds bounded evidence size")
     require(result.returncode == 0, "trusted checker failed: " + result.stderr.decode(errors="replace")[:500])
     value = strict_json(result.stdout, "trusted checker output")
-    require(isinstance(value, dict) and isinstance(value.get("checks"), list) and value["checks"],
-            "checker must return nonempty structured checks")
-    require(all(isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"] and c.get("passed") is True
-                for c in value["checks"]), "one or more independent correctness checks failed")
-    require(len({c["id"] for c in value["checks"]}) == len(value["checks"]), "duplicate correctness checks")
-    return value
+    return _verify_checker_result(value)
 
 
 def make_test_result(campaign, header, node, info, outputs):
@@ -227,19 +236,41 @@ def make_test_result(campaign, header, node, info, outputs):
                 request_sha256=digest(canonical(request)), started_at=started, finished_at=utc_now(), result=result)
 
 
+def _verify_checker_artifacts(campaign, evidence, request):
+    verify_tree(evidence["output_tree"])
+    if "input_tree" in campaign:
+        verify_tree(campaign["input_tree"])
+    for dependency in request["dependencies"]:
+        verify_tree(dependency["output_tree"])
+        read_ref(dependency["accepted_evidence"], "dependency acceptance")
+    for ref in evidence["output_files"] + campaign["inputs"] + [r for d in request["dependencies"] for r in d["output_files"]]:
+        read_ref(ref)
+
+
+@contract_errors("independent checks")
 def verify_checks(campaign, header, node, info, evidence, *, rerun):
+    require(type(rerun) is bool, "checker rerun policy must be boolean")
     tests = json_ref(evidence["tests"], "independent test result")
+    require(set(tests) == {"schema", "checker", "request_sha256", "started_at", "finished_at", "result"},
+            "test result fields incomplete or changed")
     require(tests.get("schema") == "orchestration-check-result-v2" and tests.get("checker") == campaign["checker"],
             "test result uses an unfrozen checker")
     request = checker_request(campaign, header, node, info, evidence["output_files"])
     require(tests.get("request_sha256") == digest(canonical(request)), "test result belongs to different output/input/task")
     started, finished = parse_time(tests["started_at"]), parse_time(tests["finished_at"])
     require(parse_time(info["started_at"]) <= started <= finished, "test result chronology invalid")
-    require(rerun, "final acceptance requires rerunning the trusted frozen checker")
-    result = run_checker(campaign, request)
-    require(tests.get("result") == result, "stored test result differs from independent rerun")
-    for ref in evidence["output_files"] + campaign["inputs"] + [r for d in request["dependencies"] for r in d["output_files"]]:
-        read_ref(ref)
+    result = _verify_checker_result(tests["result"])
+    _verify_checker_artifacts(campaign, evidence, request)
+    if rerun:
+        observed = run_checker(campaign, request)
+        require(canonical(result) == canonical(observed), "stored test result differs from independent rerun")
+    else:
+        # Historical replay authenticates the frozen evidence without executing
+        # code or creating request scratch. It cannot authorize a new acceptance.
+        _verify_checker_sources(campaign)
+    _verify_checker_artifacts(campaign, evidence, request)
+    _verify_checker_sources(campaign)
+    read_ref(evidence["tests"], "independent test result")
     return dict(checks=len(result["checks"]), started_at=started, finished_at=finished)
 
 
@@ -291,6 +322,7 @@ def prepared_supervisor(campaign, node, gate):
 
 
 @contract_errors("prepared task")
+@native_verification
 def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
             "complete prepared-task evidence required")
@@ -370,6 +402,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
 
 
 @contract_errors("dispatch intent")
+@native_verification
 def verify_dispatch_intent(campaign, header, node, info, ref, *, fixtures=False):
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     return _dispatch_intent(campaign, header, node, info, ref, prepared, fixtures=fixtures)
@@ -390,6 +423,7 @@ def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
 
 
 @contract_errors("task delivery")
+@native_verification
 def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
@@ -464,7 +498,8 @@ def original_callback_evidence(campaign, header, node, info):
 
 
 @contract_errors("candidate")
-def validate_candidate(campaign, header, node, info, ref, *, fixtures=False):
+@native_verification
+def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rerun=True):
     require(ref["path"] == str(node_directory(campaign, header, node) / "candidate.json"), "candidate path changed")
     evidence = json_ref(ref, "frozen candidate")
     expected = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "execution_kind",
@@ -479,7 +514,7 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False):
     require(evidence["output_tree"] == manifest and evidence["output_files"] == outputs and evidence["report"] == report and report["bytes"] > 0,
             "candidate outputs/report changed")
     require(evidence["tests"]["path"] == str(node_directory(campaign, header, node) / "tests.json"), "tests path changed")
-    checks = verify_checks(campaign, header, node, info, evidence, rerun=True)
+    checks = verify_checks(campaign, header, node, info, evidence, rerun=rerun)
     require(set(evidence["candidate_native_end"]) == set(campaign["sessions"]), "candidate native lanes missing")
     readers = {k: NativeReader(s, fixtures=fixtures) for k, s in campaign["sessions"].items()}
     ends = {k: r.verify_pin(evidence["candidate_native_end"][k]) for k, r in readers.items()}
@@ -538,6 +573,7 @@ def validate_failure_candidate(campaign, header, node, info, value, *, fixtures=
 
 
 @contract_errors("failure settlement value")
+@native_verification
 def verify_failure_value(campaign, header, node, info, value, *, fixtures=False, terminal_failure=None, native_end=None):
     frozen = json_ref(file_ref(node_directory(campaign, header, node) / "failure-candidate.json"), "frozen failure candidate")
     require({k: v for k, v in value.items() if k not in ("failure_native", "native_end")} == frozen,
@@ -621,11 +657,12 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
 
 
 @contract_errors("node evidence")
+@native_verification
 def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun=True):
     require(type(evidence.get("version")) is int and evidence["version"] == campaign_version(campaign) and
             evidence.get("evidence_class") == evidence_class(campaign, "cli_node", fixtures),
             "node evidence execution class mismatch")
-    candidate = validate_candidate(campaign, header, node, info, info["candidate"], fixtures=fixtures)
+    candidate = validate_candidate(campaign, header, node, info, info["candidate"], fixtures=fixtures, rerun=False)
     require(set(evidence) == set(candidate) | {"acceptance_native", "native_end"}, "accepted evidence fields changed")
     require({k: v for k, v in evidence.items() if k not in ("acceptance_native", "native_end")} == candidate,
             "accepted evidence differs from the previously frozen candidate")

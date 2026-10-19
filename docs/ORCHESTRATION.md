@@ -25,7 +25,11 @@ handoffs. Native START, local business work, independent review/ACCEPT and FINIS
 remain the real supervisor's responsibility. An existing local action or native
 acceptance is collected or recovered, never repeated after a lost return.
 The defaults are one action and 45 seconds; limits are 32 actions and 600 seconds.
-Time is checked between synchronous actions, so it cannot cancel a preparation
+The action budget begins after the first complete fenced observation. Later
+observations count against it, and time is checked again before the next action.
+The result separately reports `initialization_seconds`, `action_elapsed_seconds`,
+`finalization_seconds` and total `elapsed_seconds`. The original run/watchdog
+deadlines never reset. This budget cannot cancel a synchronous preparation
 already running. This is an explicit foreground invocation, not an idle-model
 waker or a background scheduler. The experiment must establish whether fewer
 supervisor round trips shorten accepted-work time without lowering correctness.
@@ -88,6 +92,14 @@ requests, transport and evidence; it does not perform the agent's work or append
 synthetic native messages. The checker executes as a separate `python -I -B`
 process and independently recomputes the answer without importing the workload.
 Codex local-node review is labelled `solo_self_review`, not dual-agent consensus.
+New ACCEPT executes this checker once, then rechecks the original candidate and
+acceptance file pins before recording acceptance and releasing a lease. History
+replay, status and recovery validate its recorded results and source/input/output
+pins without spawning the checker again. One pure verification may share fully
+authenticated native-root authority within its active thread/task scope, with
+full entry/exit validation and fresh per-reader journal/fence checks. Every new
+action retains its independent live gate. A copied context cannot revive a scope
+after exit. These optimizations apply to both benchmark arms.
 
 `orchestration_coordinator.py` implements three policies over the same graph:
 

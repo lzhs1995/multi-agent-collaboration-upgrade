@@ -22,7 +22,7 @@ from orchestration_contracts import campaign_version, evidence_class
 from orchestration_evidence import (dispatch_journal, failure_marker, make_test_result, marker_for,
                                     node_directory, output_refs, task_identity, validate_candidate, validate_failure_candidate,
                                     verify_failure_value, verify_node)
-from orchestration_native import NativeReader, require
+from orchestration_native import NativeReader, native_verification, require
 from orchestration_transport import PendingOperation, Transport
 from orchestration_verify import finish_run, verify_campaign, verify_run
 
@@ -95,6 +95,7 @@ class Runner:
         return self._status_from_co(self.co(run_id))
 
     @staticmethod
+    @native_verification
     def _status_from_co(co):
         # A returned status is observational; later actions retain their fresh gates.
         from orchestration_observe import _observation_fence, _verify_observation_fence
@@ -184,7 +185,8 @@ class Runner:
                 value.update(protocol=protocol) if protocol is not None else value.update(review_kind="solo_self_review")
                 write_json(path, value, exclusive=True)
             ref = file_ref(path)
-            value = validate_candidate(self.campaign, co.header, node, info, ref, fixtures=self.fixtures)
+            value = validate_candidate(self.campaign, co.header, node, info, ref,
+                                       fixtures=self.fixtures, rerun=False)
             if states[key] in (State.LOCAL_RUNNING, State.DISPATCHED):
                 co.transition(key, State.EVIDENCE_READY, {"candidate": ref})
             else:
@@ -203,7 +205,8 @@ class Runner:
             states, data = co.state()
             info, node = data[key], co.nodes[key]
             require(states[key] in (State.EVIDENCE_READY, State.ACCEPTED), "node has no frozen candidate")
-            candidate = validate_candidate(self.campaign, co.header, node, info, info["candidate"], fixtures=self.fixtures)
+            candidate = validate_candidate(self.campaign, co.header, node, info, info["candidate"],
+                                           fixtures=self.fixtures, rerun=False)
             expected = marker_for(info, candidate)
             require(resume or marker == expected, "native acceptance marker differs from frozen report/tests")
             script = control_script(self.campaign, self.ref, "accept", run_id, node_id=key, marker=expected)
@@ -219,7 +222,8 @@ class Runner:
             require(value.get("acceptance_native") == native, "recovery must use the original native acceptance")
             if states[key] == State.ACCEPTED:
                 require(info["accepted_evidence"] == ref, "original accepted evidence pin changed")
-                return verify_node(self.campaign, co.header, node, info, value, fixtures=self.fixtures)
+                return verify_node(self.campaign, co.header, node, info, value,
+                                   fixtures=self.fixtures, rerun=False)
             return co.accept(key, ref)
 
     def block(self, run_id, key, reason):
@@ -379,7 +383,8 @@ def main(argv=None):
             sub.add_argument("--timeout-seconds", type=int, default=45)
         if action == "advance":
             sub.add_argument("--max-steps", type=int, default=1)
-            sub.add_argument("--max-seconds", type=float, default=45)
+            sub.add_argument("--max-seconds", type=float, default=45,
+                help="action-phase budget after initial observation; checked between synchronous actions, not a total timeout")
     args = parser.parse_args(argv)
     try:
         ref = anchored_ref(args.campaign, args.campaign_sha256)

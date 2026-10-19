@@ -15,7 +15,7 @@ from pathlib import Path
 
 from orchestration_common import (ContractError, checked_path, contract_errors, count, digest, file_ref, finite, json_ref,
                                   parse_time, read_ref, verify_tree, within)
-from orchestration_native import NativeReader, native_text, require
+from orchestration_native import NativeReader, native_text, native_verification, require
 from orchestration_planner import ID_RE, executor_providers, validate_plan
 from orchestration_contracts import campaign_version, evidence_class, validate_private_campaign
 
@@ -127,6 +127,7 @@ def node_output(root, node):
 
 
 @contract_errors("campaign")
+@native_verification
 def validate_campaign(ref, *, fixtures=False, check_runtime=True):
     campaign = json_ref(ref, "trusted campaign")
     version = campaign_version(campaign)

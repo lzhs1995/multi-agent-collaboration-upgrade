@@ -52,8 +52,20 @@ lanes to run concurrently and use active callbacks and independent acceptance.
 The B supervisor calls `advance --run RUN --max-steps 12 --max-seconds 45` with
 the exact frozen runner/campaign arguments, then handles its native control and
 review handoffs. It never duplicates actions already performed by advance.
-Its time budget is checked between actions, not a timeout that cancels an
-in-flight preparation. Collect the same original process after a yielded call.
+Its action budget starts after the first complete fenced observation. Later
+observations count against it; the next action checks it again. Record all four
+returned timing fields: initialization, action, finalization and total elapsed
+time. The original run/watchdog deadlines remain fixed. This budget is checked
+between actions, not a timeout that cancels an in-flight preparation. Collect
+the same original process after a yielded call.
+
+New ACCEPT must run the independent checker exactly once. Historical accepted
+state/status/recovery must run it zero times while revalidating original evidence
+and source/input/output pins. Exercise changes to candidate and acceptance files
+during the checker: no ACCEPTED event or lease release may be published. Native
+authority reuse is confined to one pure verification; full exit validation,
+session/journal fences, thread/task isolation and copied-context invalidation
+are required. Do not cache an action gate or keep a scope over dispatch/append.
 
 At most two Claude executors do business work at once. Only one global permit
 is active. A later permit requires the previous original run's verified closure,

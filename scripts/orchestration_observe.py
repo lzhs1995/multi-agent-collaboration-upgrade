@@ -1,7 +1,7 @@
 """Advisory scheduling from recorded evidence, without checks, input or writes.
 
-This view never calls Coordinator.state/ready: replaying those methods runs the
-trusted business checker. Recorded acceptance is explicitly unrevalidated here;
+This view reads the recorded lifecycle without running the business checker.
+Recorded acceptance is explicitly unrevalidated here;
 all commands that act on it retain their existing full acceptance/identity gates.
 Drafts have no dispatch nonce, reservation or accepted dependency output binding.
 """
@@ -16,7 +16,7 @@ from orchestration_common import (checked_path, contract_errors, file_ref, json_
 from orchestration_coordinator import ACTIVE, TRANSITIONS, State, select_ready, topological_nodes
 from orchestration_continuation import observe_continuation
 from orchestration_evidence import task_identity
-from orchestration_native import NativeReader, require
+from orchestration_native import NativeReader, native_verification, require
 from orchestration_planner import validate_plan
 from orchestration_timeline import node_timeline
 
@@ -274,6 +274,7 @@ def _advice(co, key, state, info, operations, files, lease):
 
 
 @contract_errors("next-action observation")
+@native_verification
 def next_action(runner, run_id):
     root = checked_path(Path(runner.campaign["root"]) / "runs" / run_id)
     co = runner.co(run_id) if (root / "run.json").exists() else None
@@ -281,6 +282,7 @@ def next_action(runner, run_id):
 
 
 @contract_errors("next-action observation")
+@native_verification
 def _next_action_from_co(runner, run_id, co):
     """Only reuse a fresh coordinator within one uninterrupted observation."""
     spec = runner.spec(run_id)

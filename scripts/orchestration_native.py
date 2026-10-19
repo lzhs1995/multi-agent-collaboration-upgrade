@@ -12,11 +12,28 @@ import os
 import re
 import stat
 import uuid
+from functools import wraps
 from pathlib import Path
 
 from orchestration_common import ContractError, checked_path, contract_errors, count, digest, finite, json_ref, parse_time, strict_json
 
 MAX_RECORD = 16 * 1024 * 1024
+
+
+def native_verification(function):
+    """Share authority checks only inside one non-publishing verification.
+
+    Native records, metadata and fences are still read on every use. The private
+    authority is fully checked again before this call may return successfully;
+    neither a sending operation nor a state mutation may use this decorator.
+    """
+    @wraps(function)
+    def verified(*args, **kwargs):
+        # Lazy import avoids the runtime/startup/native-reader import cycle.
+        from upgrade_live_runtime import native_authority_observation
+        with native_authority_observation():
+            return function(*args, **kwargs)
+    return verified
 
 
 def task_work(arguments, output_root):

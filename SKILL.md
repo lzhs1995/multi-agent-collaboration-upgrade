@@ -24,7 +24,11 @@ For new B/v3 campaigns, use the pinned runner's `advance --run RUN --max-steps 1
 gated actions across independent lanes; it does not perform native START,
 local business, independent ACCEPT or FINISH. Handle its supervisor/recovery
 handoffs, collecting existing original actions rather than repeating them.
-Time is checked between actions, not during an in-flight synchronous operation.
+The first complete fenced observation has its own initialization phase; the
+45-second action budget starts after it. Subsequent observations count against
+that action budget. Report initialization, action, finalization and total elapsed
+time separately. The original run and watchdog deadlines remain absolute. Time
+is checked between actions, not during an in-flight synchronous operation.
 A1 uses the manual baseline and can run both independent Claude lanes in parallel.
 This explicit foreground batching does not wake an idle model or prove speedup.
 For provider capacity, usage-service success and HTTP 200 response headers alone
@@ -413,13 +417,29 @@ docs/VALIDATION-20261019-R31.md).
 
 A private campaign may reuse the runtime it fully validated earlier in the same
 validation invocation for its immediate adoption check and pure session binding
-comparisons. Still authenticate the adoption proof afresh. Public live gates and
-each NativeReader retain independent complete runtime/adoption validation; no
-cross-action cache, caller-provided bypass or input gate is removed. Removing
+comparisons. Still authenticate the adoption proof afresh. Public live gates
+retain independent complete runtime/adoption validation. Within one pure
+verification or observation, NativeReaders can share native-root authority after
+full entry validation and before full exit revalidation. Each reader still
+checks its own session, original journal and EOF fence. Bind the scope to its
+thread/task and active lifetime; invalidate copied contexts on exit, including
+exceptions. Never extend it across sending, appending events, changing leases
+or a later command. No caller-provided bypass or input gate is removed. Removing
 the redundant intermediate scan removes one transient-change observation point,
 so do not claim equivalence for every concurrent mutation interleaving. The
 measured four-pair local helper improvement is not end-to-end collaboration
 evidence; see the r22 report for method, failures and limits.
+
+Historical EVIDENCE_READY/ACCEPTED replay validates the recorded checker result
+and every original input, source, test and output pin without launching another
+checker or allocating scratch. New ACCEPT runs the independent checker exactly
+once before its terminal event. Recheck the original candidate and acceptance
+file pins after that subprocess returns, before append and lease release. A
+changed file, failed checker or mismatched result refuses acceptance. Read-only
+status and original acceptance recovery never repeat business verification.
+These controls apply equally to both comparison arms. Their local regression is
+not live collaboration or an efficiency result; record the new experiment's
+actual handshake, callback, acceptance and timing evidence separately.
 
 Preserve structured exception chains and traceback frame locations in runner
 CLI refusals, without local variables or source lines. An unexplained filesystem

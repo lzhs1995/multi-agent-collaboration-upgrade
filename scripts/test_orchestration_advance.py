@@ -65,6 +65,9 @@ class AdvanceTests(unittest.TestCase):
         self.assertTrue(script.endswith("\n"))
         self.assertFalse((self.f.root / "runs" / self.run).exists())
         self.assertEqual(before, self.native_bytes())
+        self.assertGreaterEqual(result["initialization_seconds"], 0)
+        self.assertEqual(result["action_elapsed_seconds"], 0)
+        self.assertEqual(result["initialization_seconds"], result["elapsed_seconds"])
 
     def test_original_start_without_directory_never_issues_second_start(self):
         self.f.control("start", self.run)
@@ -80,6 +83,8 @@ class AdvanceTests(unittest.TestCase):
         self.assertEqual(result["stop_reason"], "INCOMPLETE_START")
         self.assertFalse(result["actions"])
         self.assertEqual((root / "original.txt").read_text(), "partial")
+        self.assertEqual(result["action_elapsed_seconds"], 0)
+        self.assertEqual(result["initialization_seconds"], result["elapsed_seconds"])
 
     def test_default_one_action_claims_but_never_executes_local_work(self):
         co = self.start()
@@ -161,15 +166,25 @@ class AdvanceTests(unittest.TestCase):
         self.assertIsNone(self.co.leases.read()[info["task_id"]]["released_at"])
 
     def test_fair_progress_survives_new_runner_for_every_single_step(self):
+        from orchestration_observe import _next_action_from_co
         self.narrow("review", "parallel")
         self.start()
-        with self.fixture_transport():
+        clock = [0]
+        def slow_observation(*args):
+            value = _next_action_from_co(*args)
+            clock[0] += 90
+            return value
+        with self.fixture_transport(), \
+             patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+             patch("orchestration_observe._next_action_from_co", side_effect=slow_observation):
             results = [Runner(self.f.ref, fixtures=True).advance(self.run, max_steps=1) for _ in range(6)]
         self.assertEqual([(r["actions"][0]["node_id"], r["actions"][0]["action"]) for r in results], [
             ("review", "claim"), ("parallel", "claim"),
             ("review", "prepare"), ("parallel", "prepare"),
             ("review", "dispatch"), ("parallel", "dispatch")])
         self.assertEqual(results[-1]["states"], {"review": "DISPATCHED", "parallel": "DISPATCHED"})
+        self.assertEqual([r["initialization_seconds"] for r in results], [90] * 6)
+        self.assertTrue(all(len(r["actions"]) == 1 and r["stop_reason"] == "step_budget" for r in results))
 
     def test_ineligible_pending_node_does_not_hold_back_prepared_lane(self):
         self.narrow("review", "followup")
@@ -476,11 +491,125 @@ class AdvanceTests(unittest.TestCase):
         self.assertEqual(result["supervisor_actions"][0]["action"], "finish-and-verify")
 
     def test_time_budget_stops_between_actions_without_replaying(self):
+        from orchestration_advance import _execute
         self.start()
-        with patch("orchestration_advance.monotonic", side_effect=[0, 0, 2, 2]):
+        clock = [0]
+        def slow_action(*args):
+            value = _execute(*args)
+            clock[0] += 2
+            return value
+        with patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+             patch("orchestration_advance._execute", side_effect=slow_action):
             result = self.r.advance(self.run, max_steps=12, max_seconds=1)
         self.assertEqual(len(result["actions"]), 1)
         self.assertEqual(result["stop_reason"], "time_budget_between_actions")
+        self.assertEqual(result["initialization_seconds"], 0)
+        self.assertEqual(result["action_elapsed_seconds"], 2)
+        self.assertEqual(result["elapsed_seconds"], 2)
+
+    def test_slow_initialization_and_first_observation_do_not_starve_first_action(self):
+        from orchestration_observe import _next_action_from_co
+        self.start()
+        clock = [0]
+        status = self.r._status_from_co
+        def slow_status(*args):
+            value = status(*args)
+            clock[0] += 60
+            return value
+        def slow_observation(*args):
+            value = _next_action_from_co(*args)
+            clock[0] += 70
+            return value
+        with patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+             patch.object(self.r, "_status_from_co", side_effect=slow_status), \
+             patch("orchestration_observe._next_action_from_co", side_effect=slow_observation):
+            result = self.r.advance(self.run, max_steps=1, max_seconds=45)
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [("local", "claim")])
+        self.assertEqual(result["states"]["local"], "LOCAL_RUNNING")
+        self.assertEqual(result["initialization_seconds"], 130)
+        self.assertEqual(result["action_elapsed_seconds"], 0)
+        self.assertEqual(result["elapsed_seconds"], 130)
+
+    def test_slow_later_observation_cannot_start_action_after_phase_deadline(self):
+        self.start()
+        clock = [0]
+        next_action = self.r.next_action
+        def slow_observation(*args):
+            value = next_action(*args)
+            clock[0] += 2
+            return value
+        with patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+             patch.object(self.r, "next_action", side_effect=slow_observation):
+            result = self.r.advance(self.run, max_steps=12, max_seconds=1)
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [("local", "claim")])
+        self.assertEqual(result["stop_reason"], "time_budget_between_actions")
+        self.assertEqual(result["states"]["review"], "PENDING")
+        self.assertEqual(result["action_elapsed_seconds"], 2)
+
+    def test_slow_first_observation_refusal_reports_time_without_action(self):
+        self.start()
+        clock = [0]
+        def refused(*args):
+            clock[0] += 90
+            raise ContractError("original observation changed")
+        with patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+             patch("orchestration_observe._next_action_from_co", side_effect=refused):
+            result = self.r.advance(self.run)
+        self.assertEqual(result["stop_reason"], "observation_refused")
+        self.assertEqual(result["actions"], [])
+        self.assertEqual(self.co.events(), [])
+        self.assertEqual(result["initialization_seconds"], 90)
+        self.assertEqual(result["action_elapsed_seconds"], 0)
+        self.assertEqual(result["elapsed_seconds"], 90)
+
+    def test_slow_initial_observation_never_resets_absolute_deadline_or_stop(self):
+        from orchestration_lock import new_work_guard
+        from orchestration_observe import _next_action_from_co
+        from orchestration_permit import elapsed
+        from test_orchestration_coordinator_contention import registered_policy
+        for boundary in ("deadline", "STOP", "schedule/halt.json"):
+            with self.subTest(boundary=boundary):
+                root = Path(self.temp.name) / boundary.replace("/", "-")
+                root.mkdir()
+                self.f = CampaignFixture(root, version=3)
+                self.narrow("local")
+                self.start()
+                original_header = (self.co.root / "run.json").read_bytes()
+                before = self.native_bytes()
+                policy = registered_policy(root / "policy", self.co.header)
+                limit = json_ref(policy.campaign["registration"])["contract"]["run_timeout_seconds"]
+                clock, observed = [0], []
+                def measured(header):
+                    value = elapsed(header)
+                    if observed and boundary == "deadline":
+                        value["seconds"] = limit + 1
+                    return value
+                def slow_observation(*args):
+                    value = _next_action_from_co(*args)
+                    clock[0] += 90
+                    observed.append(True)
+                    if boundary != "deadline":
+                        stop = policy.root / boundary
+                        stop.parent.mkdir(parents=True, exist_ok=True)
+                        stop.write_text("external stop during initial observation")
+                    return value
+                with patch("orchestration_permit.elapsed", side_effect=measured):
+                    guard = new_work_guard(policy)
+                    with patch("orchestration_advance.monotonic", side_effect=lambda: clock[0]), \
+                         patch("orchestration_observe._next_action_from_co", side_effect=slow_observation), \
+                         patch("orchestration_lock.new_work_guard", return_value=guard), \
+                         patch.object(Coordinator, "_work_budget", side_effect=guard):
+                        result = self.r.advance(self.run, max_steps=1, max_seconds=45)
+                self.assertEqual(result["actions"][0]["status"], "PENDING_OR_BLOCKED")
+                self.assertIn("time cap reached" if boundary == "deadline" else "stopped or closed",
+                              result["actions"][0]["error"])
+                self.assertEqual(result["states"], {"local": "PENDING"})
+                self.assertEqual(result["initialization_seconds"], 90)
+                self.assertEqual(self.co.events(), [])
+                self.assertEqual(self.co.leases.read(), {})
+                self.assertFalse((self.co.root / "claims/local.json").exists())
+                self.assertEqual((self.co.root / "run.json").read_bytes(), original_header)
+                self.assertEqual(before, self.native_bytes())
 
     def test_limits_and_arm_refuse_without_mutation(self):
         for kwargs in ({"max_steps": 0}, {"max_steps": 33}, {"max_steps": True},

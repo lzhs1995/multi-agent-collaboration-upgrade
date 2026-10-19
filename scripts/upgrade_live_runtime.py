@@ -6,11 +6,15 @@ after the pinned, read-only inspector observes all three actual clients.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import os
+import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
-from orchestration_common import (checked_path, contract_errors, json_ref, read_ref,
+from orchestration_common import (canonical, checked_path, contract_errors, json_ref, read_ref,
                                   require, verify_tree, within)
 from upgrade_client_isolation import LANES, private_native_roots
 from upgrade_experiment import NAME, arm_paths, validate_context, validate_sessions
@@ -22,6 +26,70 @@ RUNTIME_FIELDS = {"version", "skill", "context", "arm", "execution_mode", "sourc
 SESSION_FIELDS = ("provider", "session_id", "workspace_uuid", "surface_uuid", "pane_uuid",
                   "tty", "process", "native_config_root", "model", "model_record")
 TRANSCRIPT_FIELDS = ("path", "device", "inode")
+
+# This is an invocation-local verification batch, not a process-wide cache.
+# Input gates never use it: validate_live_runtime/live_gate_v2 remain fresh.
+_native_authorities = ContextVar("upgrade_native_authority_observation", default=None)
+
+
+def _native_observation_state():
+    state = _native_authorities.get()
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    owner = (threading.get_ident(), task)
+    return owner, (state["observed"] if state is not None
+                   and state["active"] and state["owner"] == owner else None)
+
+
+def _read_native_authority(authority):
+    context, runtime = validate_live_runtime(authority["runtime"])
+    proof = validate_adoption(authority["runtime"], authority["adoption"],
+                             runtime=runtime, allow_stopped=True)
+    return context, runtime, proof
+
+
+@contextmanager
+def native_authority_observation():
+    """Bound repeated native-root authentication to a single proof operation.
+
+    Only authenticated_native_root shares these results. Every native reader
+    still checks its enrolled identity and original journal. On successful exit,
+    reread the complete runtime/adoption authority, including source and startup
+    pins. Discard everything even on an exception. Never wrap send, append, lease
+    or permission-gate operations in this scope.
+    """
+    owner, active = _native_observation_state()
+    if active is not None:
+        yield
+        return
+    observed = {}
+    state = dict(owner=owner, observed=observed, active=True)
+    token = _native_authorities.set(state)
+    try:
+        yield
+        for authority, original in observed.values():
+            require(_read_native_authority(authority) == original,
+                    "PRIVATE_NATIVE_AUTHORITY_CHANGED_DURING_VERIFICATION")
+    finally:
+        # copy_context() retains the same value after reset in this context.
+        # Invalidate that shared lifetime before it can be entered again.
+        state["active"] = False
+        observed.clear()
+        _native_authorities.reset(token)
+
+
+def _observed_native_authority(authority):
+    _, observed = _native_observation_state()
+    if observed is None:
+        return _read_native_authority(authority)
+    key = canonical(authority)
+    if key not in observed:
+        original = _read_native_authority(authority)
+        observed[key] = (copy.deepcopy(authority), copy.deepcopy(original))
+    # The immutable comparison snapshot is never exposed to a caller.
+    return copy.deepcopy(observed[key][1])
 
 
 @contract_errors("live runtime")
@@ -161,10 +229,9 @@ def authenticated_native_root(session):
     authority = session.get("private_native")
     require(isinstance(authority, dict) and set(authority) == {"runtime", "adoption"},
             "copied/non-native transcript cannot prove a CLI run; private adoption required")
-    context, runtime = validate_live_runtime(authority["runtime"])
     # Read-only evidence remains inspectable after stop. Every new business input
     # separately checks the stop marker in the original MAC input gate.
-    proof = validate_adoption(authority["runtime"], authority["adoption"], runtime=runtime, allow_stopped=True)
+    context, runtime, proof = _observed_native_authority(authority)
     matches = [lane for lane, enrolled in proof["sessions"].items() if identity_matches(session, enrolled)]
     require(len(matches) == 1, "PRIVATE_NATIVE_SESSION_NOT_ENROLLED")
     lane = matches[0]

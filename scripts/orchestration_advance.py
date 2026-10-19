@@ -107,6 +107,17 @@ def _execute(runner, run_id, key, expected, action):
     return value
 
 
+def _timings(began, action_began, finalization_began=None):
+    ended = monotonic()
+    initialized = action_began if action_began is not None else finalization_began
+    initialized = ended if initialized is None else initialized
+    actions_ended = ended if finalization_began is None else finalization_began
+    return dict(initialization_seconds=initialized - began,
+                action_elapsed_seconds=0 if action_began is None else actions_ended - action_began,
+                finalization_seconds=0 if finalization_began is None else ended - finalization_began,
+                elapsed_seconds=ended - began)
+
+
 def advance(runner, run_id, *, max_steps=1, max_seconds=45):
     require(runner.campaign.get("version") == 3 and runner.campaign.get("arm") == "B",
             "advance requires the B arm of a v3 campaign")
@@ -115,10 +126,12 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             "max-seconds must be positive and at most 600")
     runner.spec(run_id)
     began = monotonic()
+    action_began = None
     result = dict(schema="orchestration-advance-v1", run_id=run_id, status="YIELDED",
                   max_steps=max_steps, max_seconds=max_seconds, actions=[], supervisor_actions=[],
                   input_retry_authorized=False, native_control_executed=False,
-                  budget_kind="between_original_synchronous_actions", stop_reason="step_budget")
+                  budget_kind="post_initial_observation_between_original_synchronous_actions",
+                  stop_reason="step_budget")
     from orchestration_observe import (_next_action_from_co, _observation_fence,
                                        _verify_observation_fence)
     root = checked_path(Path(runner.campaign["root"]) / "runs" / run_id)
@@ -134,11 +147,12 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             else:
                 result["supervisor_actions"].append(dict(action="start", exec_script=script))
         result["states"] = status["states"]
+        result.update(_timings(began, action_began))
         return result
     attempted, counts, handoffs, reviews = set(), {}, {}, {}
     waiting = []
     for _ in range(max_steps):
-        if monotonic() - began >= max_seconds:
+        if action_began is not None and monotonic() - action_began >= max_seconds:
             result["stop_reason"] = "time_budget_between_actions"
             break
         try:
@@ -154,6 +168,17 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             from orchestration_run import exception_trace
             result.update(status="PENDING_OR_BLOCKED", stop_reason="observation_refused",
                           observation_error=dict(error=str(exc), exception_trace=exception_trace(exc)))
+            break
+        if action_began is None:
+            # Authentication and the first complete fenced observation have
+            # their own measured phase. They cannot consume every invocation's
+            # action budget before even its first fresh authoritative gate.
+            # Original run/driver deadlines are not reset by this local clock.
+            action_began = monotonic()
+        elif monotonic() - action_began >= max_seconds:
+            # Later observations are part of the action phase. A slow read
+            # cannot authorize another action after this phase has expired.
+            result["stop_reason"] = "time_budget_between_actions"
             break
         result["states"] = view["recorded_states"]
         if view["status"] != "OBSERVED":
@@ -202,6 +227,7 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             # A refusal on one original lane cannot authorize a retry, nor should
             # it prevent independently eligible lanes from reaching their gates.
             handoffs[key] = dict(node_id=key, action="review-original-failure", error=str(exc), input_retry_authorized=False)
+    finalization_began = monotonic()
     # Refresh before returning handoffs/closeout. This also rejects evidence
     # tampering rather than treating the last advisory snapshot as authority.
     try:
@@ -210,8 +236,8 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
         from orchestration_run import exception_trace
         result.update(status="PENDING_OR_BLOCKED", stop_reason="final_state_refused",
-                      final_state_error=dict(error=str(exc), exception_trace=exception_trace(exc)),
-                      elapsed_seconds=monotonic() - began)
+                      final_state_error=dict(error=str(exc), exception_trace=exception_trace(exc)))
+        result.update(_timings(began, action_began, finalization_began))
         return result
     result["states"] = {k: s.value for k, s in states.items()}
     for key, handoff in tuple(handoffs.items()):
@@ -248,7 +274,7 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
              or (co.root / "nodes" / k / "disarm.json").is_file()) for k in states):
         result["supervisor_actions"].append(dict(action="finish-and-verify",
             exec_script=_script(runner, run_id, "finish"), verify_exec_script=_script(runner, run_id, "verify")))
-    result["elapsed_seconds"] = monotonic() - began
+    result.update(_timings(began, action_began, finalization_began))
     if any(row["status"] == "PENDING_OR_BLOCKED" or row.get("result", {}).get("status") == "UNCERTAIN"
            for row in result["actions"]):
         result["status"] = "PENDING_OR_BLOCKED"
