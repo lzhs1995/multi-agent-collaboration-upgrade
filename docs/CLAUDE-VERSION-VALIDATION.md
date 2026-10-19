@@ -41,7 +41,7 @@ R29 第一组于 09:40:21Z 创建。两名 Claude 的原生版本记录与实际
 
 该快照时 Codex probe/自动 hook 已观察，双 Claude 仍未 ready，pilot 0/3。303 的响应观察目录只有 `LOADED`，没有请求记录；原生日志却有请求，因此不能用观察文件缺失推断“未请求”，也不能照抄 R28 的 HTTP 200 结论。新版退避行为有原生证据，成功执行协作尚无证据。
 
-R29 保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普通通信矩阵。实际配置截止 13:17:23Z，早于原固定上限 13:18:14Z；900 秒 startup 窗口不延长。两个版本按顺序运行，身份、路径、服务状态与剩余时限不同，不能当作严格的单变量版本因果实验。
+R29 原次保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普通通信矩阵。实际配置截止 13:17:23Z，早于原固定上限 13:18:14Z；900 秒 startup 窗口不延长。两个版本按顺序运行，身份、路径、服务状态与剩余时限不同，不能当作严格的单变量版本因果实验。
 
 ## 纳入 upgrade 的经验
 
@@ -51,3 +51,14 @@ R29 保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普通通�
 4. 持续无法生成有效 assistant 输出时停止当前有界实验，交付失败层与证据，不能靠扩大重试轮数证明稳定。
 
 当前结论：**升级完成且新进程已采用；协作稳定性、完整压力结果和 ≥15% 提效尚未通过。**
+
+
+## R29 最终状态补记
+
+原次于 2026-10-19T09:55:46.520524Z 结束，driver/watchdog 均 exit 2：TIMEOUT / INSUFFICIENT_EVIDENCE。pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、可比较配对 0/15；192 个唯一普通通信 ID 的可验证闭环为 0/192，不表示 192 次均已发送。仅第一组启动，剩余六组为准备状态。原控制器为 b0ac022 的 v24，后续 9a09f32 打包修复未迁移到该原次。
+
+终态快照中两路各记录 6 条主请求，均无 assistant。A 的 client.log 第347、562行有 `429 group requests-per-minute limit exceeded`；第526–527行另有无 message_start、无 SSE 事件而转 non-streaming 的记录。429 对应主请求还是 Goal hook、空流 HTTP 状态均未确定。B 底层原因 UNKNOWN；两路 settings rename EPERM 的因果未证明。
+
+两路 Stop prompt hook 曾报 `No assistant message found`；B 于09:48:50.124Z、A于09:49:21.077Z由客户端自身在 Goal 检查超时后暂停。主管没有暂停或再次唤醒它们。7组停止输入标记全部核验，客户端保留，远端取消和 Goal 结束仍未证明。总 wrapper 耗时929.762秒，launch至halt925.091秒；900秒是离散检查预算，超额时间无法全部精确归因。
+
+[终态原生快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-final.json) 与 [独立终态审查](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-delivery-review/terminal-review.md) 支持以上结论。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。本轮不再重开实验；升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。

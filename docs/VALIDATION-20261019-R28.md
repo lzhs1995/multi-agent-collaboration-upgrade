@@ -29,7 +29,7 @@ R28 已于 2026-10-19 09:33:19 UTC 终态 TIMEOUT / INSUFFICIENT_EVIDENCE，耗�
 
 完整回归原次于 09:00:39.846094Z 开始，09:14:58.148720Z 结束，858.286 秒；2168 项、0 failures、0 errors，源码前后哈希一致。CI 39227019973 的 Ubuntu/Python 3.10 失败，其余三组被 fail-fast 取消；不得据本地 3.14 结果声明跨平台通过。缺 tomllib 与 pathlib 崩溃注入差异的兼容补丁正在独审，后续修订不改变已运行 v24 控制器。
 
-后续兼容补丁 c40b9ce 的四格 CI 39230455689 均通过，但本地完整回归出现 13 failures：生成的私有控制器缺少 `upgrade_toml` 依赖。CI 跳过了依赖本机原生二进制的路径，绿色状态不能证明交付包完整。现已补齐真实 materializer 的两项私有模块、许可和来源说明；原 13 个失败案例所在的 12 个测试方法全部通过，并新增不依赖原生客户端安装的隔离解释器打包回归，删除任一私有依赖都会失败。root 独审已接受，修复后的完整回归和 CI 尚待完成。修复不改变 R28/R29 的固定 v24。
+后续兼容补丁 c40b9ce 的四格 CI 39230455689 均通过，但本地完整回归出现 13 failures：生成的私有控制器缺少 `upgrade_toml` 依赖。CI 跳过了依赖本机原生二进制的路径，绿色状态不能证明交付包完整。现已补齐真实 materializer 的两项私有模块、许可和来源说明；原 13 个失败案例所在的 12 个测试方法全部通过，并新增不依赖原生客户端安装的隔离解释器打包回归，删除任一私有依赖都会失败。root 独审已接受，修复后的完整回归和 CI 已完成，见下方最终补记。修复不改变 R28/R29 的固定 v24。
 
 R28 driver/watchdog 均 exit 2，无存活 driver 子进程；`clients_terminated=false`，原生 Goal 结束仍 UNVERIFIED。两路响应观察器确有 LOADED；首请求 HTTP 200、message_start/delta/stop/EOF，但 output_tokens=0、无 content_block。A 后续 ping 后 READ_ERROR，B 后续 output_tokens=1 仍无 content_block。请求分类 UNKNOWN，另有独立 Stop prompt hook 的 `No assistant message found`；这些不证明认证错误或版本单因果。
 
@@ -50,3 +50,12 @@ surface40 继续独占共享 MAC 与论文精炼助手。本轮询问已发布�
 - [wrapper 时钟反例](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-implementation/wrapper-deadline-validation.json)
 - [准备与启动独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/script-review.md)
 - [脚本固定清单](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r28-script-manifest.json)
+
+
+## 最终补记：9a09f32 回归与 R29 终态
+
+本机 Python 3.14 完整回归原次于 2026-10-19T10:09:34.828919+00:00 结束：**2171 项，0 failures、0 errors、0 skipped，1226.361 秒**；被监测脚本前后 SHA256 一致，零模型请求。
+
+受测代码9a09f32296f160b32bd3fb7d74ee93ad37715747的[CI 39232997253](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39232997253)四格均success，各2171项、0 failures/errors；Ubuntu每格跳过106，macOS每格跳过96。此前失败保留，不把跳过项算通过。
+
+R29 已于09:55:46Z终结：pilot0/3、业务0/33（1 TIMEOUT＋32 MISSING）、有效配对0/15、192个计划通信ID中0个可验证闭环。双Claude已实际采用303，但无assistant输出；不能继续称原生全量压力实验正在运行。原次、旧会话和分母保留，不重开或补样。完整结论、故障归因和剩余边界见[R29最终报告](VALIDATION-20261019-R29.md)。本轮交付目标收紧为台北18:10前出具明确结果，早于上述历史最长上限。

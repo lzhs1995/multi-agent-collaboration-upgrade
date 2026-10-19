@@ -116,7 +116,16 @@ native receipt fences, before starting clients.
 See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
+For new private campaigns, pin the actual Claude executable/version and requested
+model; installation alone does not establish adoption by an existing process.
+The 2.1.303 retry verified adoption but did not produce assistant output or a
+successful native comparison. Preserve rate limits, empty streams and Goal
+check failures separately; do not treat Goal pause as proven termination or as
+permission to re-input. Goal checks do not validate independent long-running loop.
+See [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
 Current measured results and open live-validation gaps are recorded in the
+[r29 final delivery](docs/VALIDATION-20261019-R29.md),
+[r28 implementation and regression](docs/VALIDATION-20261019-R28.md),
 [r27 recovery retry](docs/VALIDATION-20261019-R27.md),
 [r26 native Goal experiment](docs/VALIDATION-20261019-R26.md),
 [r25 native run checkpoint](docs/VALIDATION-20261019-R25.md),

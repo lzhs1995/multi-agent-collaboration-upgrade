@@ -69,3 +69,10 @@
 - [仓库refs与tree](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/community-sources/repos.json)。
 - [复用平台引用](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/community-selected-existing-citations.json)：11条哈希复核均一致。
 - [结构及引用核验](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/issue-ledger/documentation-validation.json)：只检查文档/路径/哈希，不是功能或压力测试。
+
+
+## 本轮终态与测试边界
+
+最终实现验证见[R29交付报告](VALIDATION-20261019-R29.md)：9a09f32本机2171项完整回归与四格CI成功，CI跳过数另列。原生R29仍为业务0/33、配对0/15，不能将上文采用决定写成实测提效或所有社区工具已实跑。
+
+社区9机制对照已有35方法/7文件：5个仅离线限定、2个部分覆盖、2个精确场景未测，详见[逐项测试映射](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-ci-portability/community-test-mapping.md)。缺失推文正文、视频字幕、原服务长时成本和surface40本轮回复继续保留为缺口。
