@@ -46,6 +46,7 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
+[r26 native Goal experiment](docs/VALIDATION-20261019-R26.md),
 [r25 native run checkpoint](docs/VALIDATION-20261019-R25.md),
 [r23 preparation and provider observations](docs/VALIDATION-20261019-R23.md),
 [r22 timeout and candidate improvements](docs/VALIDATION-20261019-R22.md) and
