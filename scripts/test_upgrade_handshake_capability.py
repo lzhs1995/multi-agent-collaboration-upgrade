@@ -21,11 +21,17 @@ from unittest.mock import Mock, patch
 
 from orchestration_common import ContractError
 import upgrade_handshake_capability as cap
-from upgrade_live_patch import readonly_handshake, transform_live
+from upgrade_live_patch import handshake_contract_settlement, readonly_handshake, transform_live
 from test_upgrade_bridge_probe_evidence import SOURCE, definition, parser_namespace, screen
 from test_upgrade_identity import fixture, uid, uuid_selector_fixture
 
 TEXT = "MESSAGE_REFERENCE_V2 original-pinned-challenge"
+
+
+class TaskPackContractError(RuntimeError):
+    def __init__(self, text, *, details=None):
+        super().__init__(text)
+        self.details = details
 
 
 @unittest.skipUnless(SOURCE.is_dir(), "requires fixed local MAC source")
@@ -35,7 +41,7 @@ class CapabilityTests(unittest.TestCase):
         root = Path("/offline/capability")
         cls.paths = {n: root / n for n in ("state", "controllers", "tmp", "config", "bin")}
         cls.original = (SOURCE / "scripts/mac_harness.py").read_text()
-        cls.generated, _ = transform_live("mac_harness.py", cls.original, cls.paths,
+        cls.generated, cls.changes = transform_live("mac_harness.py", cls.original, cls.paths,
                                           root / "controller", compatibility=True)
         bridge, _ = transform_live("cmux_bridge.py", (SOURCE / "scripts/cmux_bridge.py").read_text(),
                                    cls.paths, root / "controller", compatibility=True)
@@ -343,7 +349,8 @@ class CapabilityTests(unittest.TestCase):
             def __init__(self, text, *, state):
                 super().__init__(text)
                 self.state = state
-        bridge = Mock(DispatchUnconfirmed=Unconfirmed, SUPERVISOR_DID_NOT_SUBMIT="refused",
+        bridge = Mock(DispatchUnconfirmed=Unconfirmed, TaskPackContractError=TaskPackContractError,
+                      SUPERVISOR_DID_NOT_SUBMIT="refused",
                       DELIVERY_QUEUED_AT_RECEIVER="queued", DELIVERY_UNVERIFIED_BY_DETECTOR="unknown")
         bridge.read_screen.side_effect = lambda *a, **kw: "⏺ " + json.loads(
             (root / "handshake-receipt.json").read_text())["ack_line_expected"]
@@ -365,7 +372,8 @@ class CapabilityTests(unittest.TestCase):
             persist=Mock(), digest=lambda text: hashlib.sha256(text.encode()).hexdigest())
         observer = Mock(return_value={"schema": cap.SCHEMA, "input_operations": 0})
         modules = {"cmux_prompt_reference": prompt,
-                   "mac_upgrade_handshake_capability": types.SimpleNamespace(observe=observer),
+                   "mac_upgrade_handshake_capability": types.SimpleNamespace(
+                       observe=observer, record_dispatch_failure=cap.record_dispatch_failure),
                    "cmux_native_delivery": self.native}
         args = types.SimpleNamespace(task_id="original", lines=200, bridge_clear_recovery=None)
         return namespace, bridge, observer, modules, args
@@ -518,26 +526,253 @@ class CapabilityTests(unittest.TestCase):
                 finally:
                     os.close(fd)
 
+    def assert_contract_rejected(self, receipt, message):
+        self.assertEqual(receipt["status"], "FAIL")
+        self.assertEqual(receipt["lifecycle"], "REJECTED")
+        self.assertEqual(receipt["detector_side"], "supervisor")
+        self.assertIs(receipt["attributable_to_executor"], False)
+        self.assertIs(receipt["executor_ack"], False)
+        self.assertIsNone(receipt["ack_line"])
+        self.assertIsNone(receipt["ack_observed_at"])
+        self.assertIsNone(receipt["dispatch_submitted_at"])
+        self.assertEqual(receipt["dispatch_error_type"], "TaskPackContractError")
+        self.assertEqual(receipt["dispatch_error"], message)
+        for key in ("dispatch_error_at", "terminal_error_at", "updated_at"):
+            self.assertEqual(receipt[key], "2026-10-19T00:00:00Z")
+        self.assertIsNot(receipt.get("input_retry_authorized"), True)
+        self.assertNotIn("late_ack_recovery_attempted", receipt)
+        self.assertNotEqual(receipt.get("submission_state"), "NO_INPUT")
+
+    def test_generated_contract_refusal_before_send_is_terminal_without_ack_or_retry(self):
+        for stage in ("plan", "submit"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                namespace, bridge, observer, modules, args = self.generated_cycle(root)
+                failure = TaskPackContractError("original pre-input refusal")
+                target = modules["cmux_prompt_reference"].plan if stage == "plan" else bridge.submit_text
+                target.side_effect = failure
+                with patch.dict(sys.modules, modules):
+                    with self.assertRaises(SystemExit) as caught:
+                        namespace["cmd_handshake"](args)
+                    self.assertEqual(caught.exception.code, 1)
+                    raw = (root / "handshake-receipt.json").read_bytes()
+                    receipt = json.loads(raw)
+                    self.assert_contract_rejected(receipt, str(failure))
+                    self.assertEqual(receipt["dispatch_evidence_status"], "UNAVAILABLE")
+                    self.assertIsNone(receipt["dispatch_error_details"])
+                    self.assertNotIn("dispatch_attempt", receipt)
+                    with self.assertRaises(SystemExit):
+                        namespace["cmd_handshake"](args)
+                    self.assertEqual((root / "handshake-receipt.json").read_bytes(), raw)
+                self.assertEqual(bridge.submit_text.call_count, int(stage == "submit"))
+                self.assertEqual(observer.call_count, int(stage == "submit"))
+                bridge.wait_for_ack.assert_not_called()
+                bridge.read_screen.assert_not_called()
+                bridge.send_text.assert_not_called()
+                bridge.send_key.assert_not_called()
+                namespace["secrets"].token_hex.assert_called_once()
+
+    def test_generated_contract_paste_intent_pins_original_without_mutating_or_resending(self):
+        import cmux_evidence_io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            attempt = root / "original-attempt.json"
+            original = b'{ "state": "PASTE_INTENT", "input_operations": 1, "payload": "original" }\n'
+            attempt.write_bytes(original)
+            pinned = cmux_evidence_io.snapshot(attempt)
+            details = {"attempt": str(attempt), "state": "PASTE_INTENT", "nested": {"original": [1, 2]}}
+            namespace, bridge, _, modules, args = self.generated_cycle(root)
+            bridge.submit_text.side_effect = TaskPackContractError("changed after paste intent", details=details)
+            recorder = Mock(wraps=cap.record_dispatch_failure)
+            modules["mac_upgrade_handshake_capability"].record_dispatch_failure = recorder
+            with patch.dict(sys.modules, modules), patch.object(Path, "glob", side_effect=AssertionError("no scan")), \
+                    patch.object(Path, "rglob", side_effect=AssertionError("no scan")):
+                with self.assertRaises(SystemExit):
+                    namespace["cmd_handshake"](args)
+            receipt = json.loads((root / "handshake-receipt.json").read_bytes())
+            self.assert_contract_rejected(receipt, "changed after paste intent")
+            self.assertEqual(receipt["dispatch_error_details"], details)
+            self.assertEqual(receipt["dispatch_evidence_status"], "ORIGINAL_ATTEMPT_PINNED")
+            self.assertEqual(receipt["dispatch_controller_evidence_status"], "UNVERIFIED")
+            self.assertEqual(receipt["dispatch_attempt"], dict(path=str(attempt),
+                sha256=hashlib.sha256(original).hexdigest(), bytes=len(original), identity=list(pinned[1])))
+            self.assertEqual(cmux_evidence_io.snapshot(attempt), pinned)
+            recorder.assert_called_once()
+            details["nested"]["original"].append(3)
+            self.assertEqual(recorder.call_args.args[0]["dispatch_error_details"]["nested"]["original"], [1, 2])
+            bridge.submit_text.assert_called_once()
+            bridge.wait_for_ack.assert_not_called()
+            bridge.read_screen.assert_not_called()
+            bridge.send_text.assert_not_called()
+            bridge.send_key.assert_not_called()
+
+    def test_generated_contract_missing_or_unreadable_details_remain_unknown(self):
+        import cmux_evidence_io
+        for case in ("absent", "none", "empty", "relative", "missing", "unreadable", "unstable"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                attempt = root / "attempt.json"
+                attempt.write_text('{"state": "PASTE_INTENT"}')
+                details = {"attempt": str(attempt), "sender_note": {"state": "unknown"}}
+                if case in ("absent", "none"):
+                    details = None
+                elif case == "empty":
+                    details = {}
+                elif case == "relative":
+                    details["attempt"] = "attempt.json"
+                elif case == "missing":
+                    details["attempt"] = str(root / "missing.json")
+                failure = TaskPackContractError("original evidence unavailable", details=details)
+                if case == "absent":
+                    del failure.details
+                namespace, bridge, _, modules, args = self.generated_cycle(root)
+                bridge.submit_text.side_effect = failure
+                original = attempt.read_bytes()
+                snapshot = cmux_evidence_io.snapshot
+                with patch.dict(sys.modules, modules), patch.object(cmux_evidence_io, "snapshot", wraps=snapshot) as read, \
+                        patch.object(Path, "glob", side_effect=AssertionError("no scan")):
+                    if case == "unreadable":
+                        read.side_effect = PermissionError("cannot read original attempt")
+                    elif case == "unstable":
+                        raw, identity = snapshot(attempt)
+                        read.side_effect = [(raw, identity), (raw + b" ", identity)]
+                    with self.assertRaises(SystemExit):
+                        namespace["cmd_handshake"](args)
+                receipt = json.loads((root / "handshake-receipt.json").read_bytes())
+                self.assert_contract_rejected(receipt, str(failure))
+                self.assertEqual(receipt["dispatch_error_details"], details)
+                self.assertEqual(receipt["dispatch_evidence_status"], "UNAVAILABLE")
+                self.assertNotIn("dispatch_attempt", receipt)
+                self.assertNotIn("dispatch_controller_evidence_status", receipt)
+                self.assertTrue(receipt["dispatch_evidence_unavailable_reason"])
+                self.assertIsNone(receipt["submission_state"])
+                self.assertNotIn("NO_INPUT", json.dumps(receipt))
+                self.assertEqual(attempt.read_bytes(), original)
+                bridge.submit_text.assert_called_once()
+                bridge.wait_for_ack.assert_not_called()
+                bridge.read_screen.assert_not_called()
+
+    def test_generated_second_peer_contract_failure_downgrades_panel_and_stops_third(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self.members[0]
+            self.members.extend([dict(first, ordinal=2, surface_ref="surface:102"),
+                                 dict(first, ordinal=3, surface_ref="surface:103")])
+            namespace, bridge, observer, modules, args = self.generated_cycle(root)
+            bridge.submit_text.side_effect = [None, TaskPackContractError("second peer refused")]
+            with patch.dict(sys.modules, modules), self.assertRaises(SystemExit):
+                namespace["cmd_handshake"](args)
+            receipt = json.loads((root / "handshake-receipt.json").read_bytes())
+            self.assertEqual(receipt["status"], "FAIL")
+            self.assertEqual(receipt["lifecycle"], "REJECTED")
+            self.assertIs(receipt["executor_ack"], False)
+            self.assertIs(receipt["all_executors_acked"], False)
+            self.assertEqual(receipt["executor_count"], 2)
+            self.assertEqual(receipt["unproven_executors"], ["surface:102"])
+            self.assertEqual(receipt["executors"][0]["status"], "PASS")
+            self.assertIs(receipt["executors"][0]["executor_ack"], True)
+            self.assert_contract_rejected(receipt["executors"][1], "second peer refused")
+            self.assertEqual([call.args[0] for call in bridge.submit_text.call_args_list],
+                             [first["surface_ref"], "surface:102"])
+            self.assertEqual(observer.call_count, 2)
+            self.assertEqual(namespace["secrets"].token_hex.call_count, 2)
+            bridge.wait_for_ack.assert_called_once()
+            bridge.send_text.assert_not_called()
+            bridge.send_key.assert_not_called()
+
+    def test_generated_contract_terminal_receipt_write_failure_propagates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            namespace, bridge, _, modules, args = self.generated_cycle(root)
+            bridge.submit_text.side_effect = TaskPackContractError("original refusal")
+            original_write = namespace["_write"]
+            writes = []
+            failure = OSError("terminal receipt unavailable")
+            def write(path, value):
+                writes.append(copy.deepcopy(value))
+                if value["status"] == "FAIL":
+                    raise failure
+                return original_write(path, value)
+            namespace["_write"] = write
+            with patch.dict(sys.modules, modules), self.assertRaises(OSError) as caught:
+                namespace["cmd_handshake"](args)
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(sum(row["status"] == "FAIL" for row in writes), 1)
+            self.assertEqual(json.loads((root / "handshake-receipt.json").read_bytes())["lifecycle"], "PENDING")
+            bridge.submit_text.assert_called_once()
+            bridge.wait_for_ack.assert_not_called()
+            namespace["_fail"].assert_not_called()
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+
+    def test_generated_contract_root_change_blocks_terminal_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            old = root.with_name("original-root")
+            namespace, bridge, _, modules, args = self.generated_cycle(root)
+            saved = []
+            def refuse_after_root_change(*a, **kw):
+                saved.append((root / "handshake-receipt.json").read_bytes())
+                root.rename(old)
+                root.mkdir()
+                raise TaskPackContractError("root changed during original dispatch")
+            bridge.submit_text.side_effect = refuse_after_root_change
+            with patch.dict(sys.modules, modules), self.assertRaisesRegex(ValueError, "ROOT_CHANGED"):
+                namespace["cmd_handshake"](args)
+            self.assertFalse((root / "handshake-receipt.json").exists())
+            self.assertEqual((old / "handshake-receipt.json").read_bytes(), saved[0])
+            bridge.submit_text.assert_called_once()
+            bridge.wait_for_ack.assert_not_called()
+            namespace["_fail"].assert_not_called()
+
+    def test_generated_settlement_rejects_source_drift_and_preserves_uncertain_handler(self):
+        locked = readonly_handshake("mac_harness.py", self.original)
+        settled = handshake_contract_settlement(locked)
+        duplicate = ast.get_source_segment(locked, definition(locked, "_handshake_one"))
+        variants = (self.original, settled, locked + "\n\n" + duplicate,
+                    locked.replace("def _handshake_one(", "def missing_handshake("),
+                    locked.replace("except cmux.DispatchUnconfirmed as e:", "except RuntimeError as e:"),
+                    locked.replace('    _info(f"Polling for PREFLIGHT_ACK (timeout={handshake_timeout}s, poll=3s)...")', ""))
+        for variant in variants:
+            with self.subTest(length=len(variant)), self.assertRaises((ContractError, ValueError)):
+                handshake_contract_settlement(variant)
+        def uncertain_handler(source):
+            node = definition(source, "_handshake_one")
+            return next(handler for block in ast.walk(node) if isinstance(block, ast.Try)
+                        for handler in block.handlers if isinstance(handler.type, ast.Attribute)
+                        and handler.type.attr == "DispatchUnconfirmed")
+        self.assertEqual(ast.dump(uncertain_handler(locked)), ast.dump(uncertain_handler(settled)))
+        self.assertIn("original_handshake_contract_failure_settlement", self.changes)
+
     def test_generated_uncertain_timeout_and_exception_keep_attempt_and_release_lock(self):
-        for outcome in ("queued", "timeout", "exception"):
+        for outcome in ("queued", "unknown", "timeout", "exception"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 namespace, bridge, _, modules, args = self.generated_cycle(root)
-                if outcome == "queued":
-                    bridge.submit_text.side_effect = bridge.DispatchUnconfirmed("queued", state="queued")
+                if outcome in ("queued", "unknown"):
+                    bridge.submit_text.side_effect = bridge.DispatchUnconfirmed(outcome, state=outcome)
                 elif outcome == "timeout":
                     bridge.wait_for_ack.side_effect = TimeoutError("original timeout")
                 else:
                     bridge.submit_text.side_effect = RuntimeError("original transport exception")
                 with patch.dict(sys.modules, modules):
-                    if outcome == "queued":
+                    if outcome in ("queued", "unknown"):
                         namespace["cmd_handshake"](args)
                     else:
                         with self.assertRaises(SystemExit if outcome == "timeout" else RuntimeError):
                             namespace["cmd_handshake"](args)
                     raw = (root / "handshake-receipt.json").read_bytes()
-                    if outcome == "queued":
-                        self.assertEqual(json.loads(raw)["submission_state"], "queued")
+                    if outcome in ("queued", "unknown"):
+                        receipt = json.loads(raw)
+                        self.assertEqual(receipt["submission_state"], outcome)
+                        self.assertEqual(receipt["status"], "PASS")
+                        self.assertIs(receipt["late_ack_recovered"], True)
+                        self.assertIsNone(receipt["dispatch_submitted_at"])
+                        self.assertNotIn("dispatch_evidence_status", receipt)
                     with self.assertRaises(SystemExit):
                         namespace["cmd_handshake"](args)
                     self.assertEqual((root / "handshake-receipt.json").read_bytes(), raw)
@@ -557,7 +792,8 @@ class CapabilityTests(unittest.TestCase):
                 self.state = state
         for state in (None, "queued", "refused", "capability-refused"):
             receipts = []
-            bridge = Mock(DispatchUnconfirmed=Unconfirmed, SUPERVISOR_DID_NOT_SUBMIT="refused",
+            bridge = Mock(DispatchUnconfirmed=Unconfirmed, TaskPackContractError=TaskPackContractError,
+                      SUPERVISOR_DID_NOT_SUBMIT="refused",
                           DELIVERY_QUEUED_AT_RECEIVER="queued", DELIVERY_UNVERIFIED_BY_DETECTOR="unknown")
             if state in ("queued", "refused"):
                 bridge.submit_text.side_effect = Unconfirmed(state, state=state)
@@ -574,7 +810,8 @@ class CapabilityTests(unittest.TestCase):
                 _gate_executors=lambda gate: self.members)
             exec(compile(ast.Module(body=[node], type_ignores=[]), "generated-cycle", "exec"), namespace)
             with self.subTest(state=state), patch.dict(sys.modules, {"cmux_prompt_reference": prompt,
-                    "mac_upgrade_handshake_capability": types.SimpleNamespace(observe=observer),
+                    "mac_upgrade_handshake_capability": types.SimpleNamespace(
+                       observe=observer, record_dispatch_failure=cap.record_dispatch_failure),
                     "cmux_native_delivery": self.native}):
                 ok = namespace["_handshake_one"](types.SimpleNamespace(task_id="original", lines=200),
                             Path("/offline"), self.gate, self.members[0], receipts, root_recheck=lambda: None)

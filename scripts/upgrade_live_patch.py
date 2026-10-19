@@ -363,6 +363,41 @@ def readonly_handshake(name, text):
     return edit_nodes(text, [(node, source)])
 
 
+def handshake_contract_settlement(text):
+    """Settle a new supervisor refusal without changing the original sender."""
+    from orchestration_common import ContractError
+    nodes = [n for n in ast.parse(text).body
+             if isinstance(n, ast.FunctionDef) and n.name == "_handshake_one"]
+    if len(nodes) != 1 or "root_recheck" not in {a.arg for a in nodes[0].args.kwonlyargs}:
+        raise ContractError("handshake settlement requires the original locked challenge")
+    node = nodes[0]
+    source = ast.get_source_segment(text, node)
+    if (source.count("except cmux.DispatchUnconfirmed as e:") != 1
+            or "except cmux.TaskPackContractError" in source):
+        raise ContractError("handshake contract settlement source shape changed")
+    anchor = '    _info(f"Polling for PREFLIGHT_ACK (timeout={handshake_timeout}s, poll=3s)...")'
+    handler = '''    except cmux.TaskPackContractError as e:
+        # A contract error can occur before a journal or after actual input.
+        # Preserve only original sender evidence; no NO_INPUT inference or retry.
+        from upgrade_handshake_capability import record_dispatch_failure
+        record_dispatch_failure(receipt, getattr(e, "details", None))
+        failed_at = _now()
+        receipt.update(
+            status="FAIL", lifecycle="REJECTED", detector_side="supervisor",
+            attributable_to_executor=False, dispatch_error_type=type(e).__name__,
+            dispatch_error=str(e), error=str(e), dispatch_error_at=failed_at,
+            terminal_error_at=failed_at, updated_at=failed_at,
+        )
+        root_recheck()
+        _write_handshake_receipt(root, per_executor)
+        _fail(f"SUPERVISOR_DISPATCH_CONTRACT_ERROR — {e}")
+        return False
+
+'''
+    source = replace_once(source, anchor, handler + anchor)
+    return edit_nodes(text, [(node, source)])
+
+
 def callback_pane_wait(text):
     """Wait before a first input only; never replay a journal or reopen a lock."""
     text = replace_once(text, "def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):", r'''CALLBACK_PANE_WAIT_SECONDS = 15.0
@@ -445,7 +480,7 @@ def live_gates(name, text):
     elif name == "cmux_callback_journal.py":
         text = callback_pane_wait(text)
     elif name == "mac_harness.py":
-        text = readonly_handshake(name, bridge_probe_evidence(text))
+        text = handshake_contract_settlement(readonly_handshake(name, bridge_probe_evidence(text)))
     elif name == "reconcile_handshake_ack.py":
         text = readonly_handshake(name, text)
     elif name == "cmux_codex_input.py":
@@ -495,6 +530,7 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("structured_experiment_startup_double_gate")
         changes.append("exact_bridge_probe_screen_evidence")
         changes.append("readonly_initial_handshake_capability")
+        changes.append("original_handshake_contract_failure_settlement")
     if name == "reconcile_handshake_ack.py":
         changes.append("original_readonly_handshake_capability_reconciliation")
     if name == "cmux_bridge.py":

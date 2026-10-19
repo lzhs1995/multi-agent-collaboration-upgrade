@@ -9,12 +9,44 @@ import hashlib
 import json
 import time
 from copy import deepcopy
+from pathlib import Path
 
 from upgrade_handshake_identity import bound_rows
 from upgrade_input_gate import check_input
 
 SCHEMA = "upgrade-readonly-handshake-v1"
 REFUSAL_SCHEMA = "upgrade-readonly-handshake-refusal-v1"
+
+
+def record_dispatch_failure(receipt, details):
+    """Preserve returned evidence only; never discover or modify an attempt.
+
+    This is a diagnostic pin, not native receipt, controller authentication or
+    proof that no input occurred. Missing sender details stay unavailable.
+    """
+    from cmux_evidence_io import snapshot
+
+    receipt["dispatch_error_details"] = deepcopy(details)
+    receipt["dispatch_evidence_status"] = "UNAVAILABLE"
+    try:
+        if not isinstance(details, dict) or not isinstance(details.get("attempt"), str):
+            raise ValueError("sender did not return an original attempt path")
+        path = Path(details["attempt"])
+        if not path.is_absolute() or path.resolve(strict=True) != path:
+            raise ValueError("sender attempt must be an absolute original path")
+        raw, identity = snapshot(path)
+        if not isinstance(json.loads(raw), dict):
+            raise ValueError("original sender attempt must be an object")
+        if snapshot(path) != (raw, identity):
+            raise ValueError("original attempt changed while saving its pin")
+        receipt.update(
+            dispatch_attempt=dict(path=str(path), sha256=hashlib.sha256(raw).hexdigest(),
+                                  bytes=len(raw), identity=list(identity)),
+            dispatch_evidence_status="ORIGINAL_ATTEMPT_PINNED",
+            dispatch_controller_evidence_status="UNVERIFIED",
+        )
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+        receipt["dispatch_evidence_unavailable_reason"] = str(exc)
 
 
 class CapabilityRefused(ValueError):

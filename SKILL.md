@@ -200,6 +200,14 @@ concurrent or previously started handshakes are observe-only. Preserve root inod
 native process/session and original transcript-prefix checks. Legacy receipts
 retain their original clear-proof requirement. Local regression and simulated
 transport pressure passed; live continuous-goal handshake remains unverified.
+New private controllers settle `TaskPackContractError` under that original root
+lock as supervisor-attributed FAIL/REJECTED after rechecking the root. Preserve
+only the sender-supplied original attempt and its stable diagnostic pin; missing
+details remain UNAVAILABLE. A pin is not controller authentication, native
+receipt, NO_INPUT evidence or retry permission. Do not poll for ACK after this
+failure. Root changes and receipt-write failures propagate; a failed write does
+not establish persisted terminal state. Frozen controllers and old attempts are
+unchanged. See [handshake settlement validation](docs/HANDSHAKE-SETTLEMENT-VALIDATION.md).
 New v3 nonpilot campaigns register 192 independent ordinary-message slots across
 six groups and four warm rounds per group: two arms of 96, four directions of 48.
 The bound native clients use their exact private helper once at each specified

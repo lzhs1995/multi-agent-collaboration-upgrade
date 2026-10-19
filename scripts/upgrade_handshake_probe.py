@@ -6,13 +6,108 @@ file pins, receipt parser and the materialized capability code are real.
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
 import time
+import types
 import uuid
 from unittest.mock import Mock, patch
+
+
+def run_settlement(controller, native_root):
+    """Import the complete generated harness and keep its real locked writer.
+
+    External capability/transport and the heartbeat's live workspace identity
+    are fixtures. The original writer, heartbeat scan and root lock are real.
+    These journals do not prove a native model request or actual paste.
+    """
+    import cmux_bridge as bridge
+    import cmux_prompt_reference as prompt
+    import mac_harness as harness
+    import mac_upgrade_handshake_capability as cap
+
+    for module in (bridge, prompt, harness, cap):
+        assert Path(module.__file__).parent == Path(controller), module.__file__
+    checks = []
+    for kind in ('before_input', 'paste_intent', 'missing_details'):
+        root = Path(native_root) / 'projects' / ('offline-settlement-' + str(uuid.uuid4()))
+        root.mkdir(parents=True)
+        member = dict(surface_ref='surface:45', provider='claude', ordinal=1)
+        gate = dict(status='PASS', task_id='offline-settlement', supervisor='surface:42',
+                    workspace_ref='workspace:8', executors=[member])
+        (root / 'identity-gate.json').write_text(json.dumps(gate))
+        args = types.SimpleNamespace(task_id=gate['task_id'], lines=200)
+        attempt = root / 'original-attempt.json'
+        raw = json.dumps(dict(phase='PASTE_INTENT', events=[dict(phase='PASTE_INTENT',
+                             native_paste_fence=dict(offset=12))])).encode()
+
+        def refused(*a, **kw):
+            error = bridge.TaskPackContractError('offline original contract failure')
+            if kind != 'before_input':
+                attempt.write_bytes(raw)
+            if kind == 'paste_intent':
+                error.details = dict(attempt=str(attempt), phase='PASTE_INTENT')
+            raise error
+
+        with patch.object(harness, '_artifact_root', return_value=root), \
+                patch.object(harness, '_recheck_workspace_gate'), \
+                patch.object(harness, '_workspace_key', return_value='offline-settlement') as workspace, \
+                patch.object(harness, '_info'), patch.object(harness, '_fail'), \
+                patch.object(cap, 'observe', return_value=dict(schema=cap.SCHEMA, input_operations=0)), \
+                patch.object(prompt, 'plan', return_value=dict(text='STATUS: offline-original', reference=None)), \
+                patch.object(prompt, 'persist'), \
+                patch.object(bridge, 'submit_text', side_effect=refused) as submit, \
+                patch.object(bridge, 'wait_for_ack') as ack, \
+                patch.object(bridge, 'send_text') as paste, patch.object(bridge, 'send_key') as key:
+            for invocation in range(2):
+                published = io.StringIO()
+                try:
+                    with redirect_stdout(published):
+                        harness.cmd_handshake(args)
+                except SystemExit as exc:
+                    assert exc.code == 1
+                else:
+                    raise AssertionError('failed original handshake was accepted')
+                saved = (root / 'handshake-receipt.json').read_bytes()
+                if invocation == 0:
+                    original_receipt = saved
+                    assert 'wrote →' in published.getvalue()
+                else:
+                    assert saved == original_receipt
+                    assert published.getvalue() == ''
+            row = json.loads(original_receipt)
+            assert (row['status'], row['lifecycle']) == ('FAIL', 'REJECTED')
+            assert row['detector_side'] == 'supervisor' and row['attributable_to_executor'] is False
+            assert row['dispatch_error_type'] == 'TaskPackContractError'
+            assert row['submission_state'] is None and row['dispatch_submitted_at'] is None
+            assert row['executor_ack'] is False and row['terminal_error_at']
+            if kind == 'paste_intent':
+                assert row['dispatch_evidence_status'] == 'ORIGINAL_ATTEMPT_PINNED'
+                assert row['dispatch_attempt']['sha256'] == hashlib.sha256(raw).hexdigest()
+                assert row['dispatch_attempt']['bytes'] == len(raw)
+            else:
+                assert row['dispatch_evidence_status'] == 'UNAVAILABLE'
+                assert 'dispatch_attempt' not in row
+            if kind == 'before_input':
+                assert not attempt.exists()
+            else:
+                assert attempt.read_bytes() == raw
+            submit.assert_called_once()
+            ack.assert_not_called()
+            paste.assert_not_called()
+            key.assert_not_called()
+            assert workspace.call_count > 0
+        checks.append(kind)
+        for path in root.iterdir():
+            path.unlink()
+        root.rmdir()
+    return dict(checks=checks, model_requests=0, native_inputs=0,
+                heartbeat_workspace_is_fixture=True,
+                native_receipt_records_are_fixtures=True)
 
 
 def run(controller, native_root, iterations=1):

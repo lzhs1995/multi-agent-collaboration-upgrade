@@ -6,7 +6,7 @@
 
 机器显式引用索引含 4,323 条字段级引用；初版分类证据固定 79 个来源。09:15Z 补审对其余 966 文件完成全字节扫描（11,907,579 字节，读错和 SHA 漂移均为 0），其中 43 份报告正文完成审读，923 份仍未全文审读。初版分类清单不覆盖这些补审；两批证据分别保存，不能把机器扫描或被聚合件引用当作全部处理完毕。重复增量、勘误和回件合并，原件保留；来源中的附件和二级回件仍需独立核验。
 
-共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护。两名审计员仅核查源码/报告；root 另行执行 upgrade 私有实现和实验。11:21 UTC 已收取并全文读取[本轮两件询问的匹配答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-owner-reply.md)及[详细经验答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/standalone-caller-v1/EXPERIENCE-REPLY.md)。原普通helper输入被拒绝且零输入；文件回件声明已全文读取，并列原请求SHA。经验交流已取得答复，原生投递、全部负例复现、41项穷尽审核及共享发布仍分开验收。
+共享 `multi-agent-collaboration` 和论文精炼助手仍归 surface40（`A93448E1-E329-493D-9B45-568D5FC0DAD0`）维护。前述经验盘点由两名审计员核查源码/报告；root 负责 upgrade 私有实现和实验，后续专项测试另留执行记录。11:21 UTC 已收取并全文读取[本轮两件询问的匹配答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-owner-reply.md)及[详细经验答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/standalone-caller-v1/EXPERIENCE-REPLY.md)，原件与所列原请求 SHA 已独立核验。原普通 helper 输入被拒绝且零输入；owner 回件对询问已读的声明，与本轮全文读取答复的证据分列。经验交流已取得答复，原生投递、全部负例复现、41 项穷尽审核及共享发布仍分开验收。
 
 ## surface40 本轮答复的采用与待验边界
 
@@ -15,13 +15,15 @@
 | 忙碌或Goal续轮不能挡住就绪消息；真实草稿/UNKNOWN是不同状态 | 继续即时交错通信及原次证据规则；不为握手暂停Goal，不清稿重贴 | 当前R30未进入业务，不能声称忙态往返压测通过 |
 | 0.4.51当前维护进程自动Pre/PostToolUse已观察，旧进程热更新未知 | 版本、启动入口和实际自动hook分列；不按磁盘配置追认旧进程 | owner原件是其现场结果，不证明本root已加载0.4.51 |
 | 原Claude同session改由303进程承载后，旧episode consume报告ProcessExited | 保留旧attempt/episode，按原证据结算失败；新注册不继承旧consume成功 | 同session不等于同PID/出生时间；新303完整往返仍需实跑 |
-| 新可执行文件名识别及稳定草稿DRAFT_NOT_READY | 已核[共享MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55)源码及CI：审计时OPEN、非Draft，head `b461edc5`；版本目录executable身份识别及sender contract failure结算修复未移植进R30。详见[独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/owner-update-audit/REPORT.md) | parser识别通过不等于原生收到或业务接受；保留原paste intent和真实草稿，不追认旧进程采用 |
+| 新可执行文件名识别及稳定草稿 DRAFT_NOT_READY | [共享 MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55)现已 MERGED；R30 私有 executable pins 已覆盖版本目录名 `2.1.303`，无需移植共享 regex。新私有 TaskPackContractError 结算补丁尚未发布，验证状态见 C35。[早期独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/owner-update-audit/REPORT.md)的 OPEN 仅为历史快照；当前范围见[补充审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/identity-audit/SCOPE-CLARIFICATION.md) | 不宣称完整移植 PR55 或原生通过；argv0/权限语义是独立加固，未证为本次握手失败根因，不列为重试前置。保留原 paste intent、真实草稿和旧进程证据 |
 | 首次预留期file_posts 63→109，约2878秒，无原主管回件证据 | 46次询问不计吞吐；发布→曝光→全文→reply→consume→rearm→release分别计时 | owner完整预留往返仍0/2 |
 | CCC发送锁失败跨度、81MB state | 只接受配对acquire/release与save/RPC分段计时；不清锁、不把wait=True直接改成False | 死锁、每次全量写81MB及其因果均未证明 |
 | caller身份、PID复用、同pane其他thread、child借root、缺daemon | 沿原UUID/TTY/进程出生/原生日志绑定；参考同版embedded身份用例 | 逐项真实负例未全部执行；不能用fixture冒充原生 |
 | 真实草稿、折叠/残缺composer、RPC后超时、旧marker/缺fence | 拒绝在不确定原次重发；历史fence不回填 | 取消忙态门禁不放开真实草稿与UNKNOWN |
 | ANSWERED未consume、STOP/撤销、consume中进程退出、flush失败 | 持久callback/占用/接受分层；有界推进并保留失败 | 文件回件不是派包，consume不是RELEASE；手动hook不是自动采用 |
 | 论文任务与共享应用 | 独立来源核验、草拟与证据裁决可并行；Word/Zotero等资源按租约单写 | 通信回执不证明科研结论；不为通信维护增加科研审轮 |
+
+PR55 当前合并状态已独立核验：`MERGED`，合并时间 `2026-10-19T11:23:09Z`，merge `ed8f7447bd7242901ec1bb76d3871ab36bbf45eb`，head `b461edc5171b8d018338fe45655bb750c94cc3a6`，见[当前 PR55 审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/identity-audit/REPORT.md)。共享合并、私有实现及原生采用分别记账，不回写冻结 R30 控制器。
 
 答复未重新逐项审计全部41类，也未审验upgrade的2400/2400、pilot或配对结果。以上采用不扩大既有验证结论；共享改动仍由surface40合并，私有冻结实验和失败分母不迁移。
 
@@ -405,15 +407,15 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 **待实测/落实：**记录冻结/发现/阅读/callback/accept/下一包各独立端点。
 **来源：**[S060](#s060), [S061](#s061), [S062](#s062), [S063](#s063), [S064](#s064), [S065](#s065), [S066](#s066), [S067](#s067), [S068](#s068), [S069](#s069), [S070](#s070)。
 
-### C35 握手发布PENDING后异常未结算
+### C35 握手发布 PENDING 后异常未结算
 
-**事实：**TaskPackContractError在PENDING发布后逃逸；ROOT私有15行补丁按原sender证据结FAIL/REJECTED。
-**原因边界：**工作流异常收尾缺口；与锁持有根因分开。
-**状态：**ROOT报告5新+22旧测试的冻结结果；本轮未复跑，共享owner集成待回件。
-**效率影响：**陈旧PENDING遮住下一步并留资源占用。 本轮没有新增压力/速度样本。
-**upgrade 采用与归属：**纳入本次改进台账和验收要求；共享修复与live落实不由文档存在推定。 surface40/原CCC owner负责共享层；upgrade只修改其私有实现。 落点：[scripts/orchestration_refusal.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/orchestration_refusal.py)。
-**待实测/落实：**核逐executor归属、聚合CLI失败、原证据；缺journal保留UNKNOWN。
-**来源：**[S071](#s071), [S072](#s072)。
+**事实：**原 TaskPackContractError 在 PENDING 发布后逃逸。S071/S072 的 ROOT 私有 15 行补丁及“5 新＋22 旧”结果是历史冻结记录；本轮另实现生成私有 harness 的异常结算，按 supervisor 归属写 FAIL/REJECTED，保留 sender 原 details；仅稳定可读的原 attempt 可固定路径、SHA、字节数及身份，证据缺失保持 UNAVAILABLE，不推断 NO_INPUT。
+**原因边界：**工作流异常收尾缺口，与锁持有、模型响应及 executable discovery 分开；R30 私有 pins 已支持版本目录名，无需共享 regex 移植。
+**状态：**共享 PR55 已于 `2026-10-19T11:23:09Z` 合并，owner 原答复已全文读取并独立核验。私有结算补丁 29/29 专项测试通过，11.081 秒、exit 0；首次 42 项集成为 41 通过、1 超时错误、0 跳过。栈诊断定位到离线 probe 的 heartbeat 外部 workspace identity 查询；补齐该 fixture 后，两项真实 materialized harness 检查于 11:59:17Z 通过，10.043 秒、F0/E0/skip0，原 20 秒上限未延长。三次执行分别记账，原失败保留；不表示完整移植 PR55、完整回归或原生通过。发布和新提交 CI 见[独立结算验证](HANDSHAKE-SETTLEMENT-VALIDATION.md)。
+**效率影响：**陈旧 PENDING 会遮住真实失败并延长等待；本轮没有新增压力或速度样本，不能据离线结算测试宣称协作提效。
+**upgrade 采用与归属：**surface40/原 CCC owner 负责共享层；upgrade 只修改私有实现，不改冻结 R30。当前落点：[scripts/upgrade_live_patch.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/upgrade_live_patch.py)、[scripts/upgrade_handshake_capability.py](/Users/lzhs/projects/multi-agent-collaboration-upgrade/scripts/upgrade_handshake_capability.py)。
+**待实测/落实：**已专项验证逐 executor 归属、首 peer 成功后次 peer 失败的整组降级、原证据不改写、不 ACK/重发/继续派发、终态写失败传播及 root 变化拒写；DispatchUnconfirmed 原分支保持不变。真实生成控制器的 writer、heartbeat scan 和 root 锁检查已通过；传输、能力及外部 workspace 查询仍为 fixture。原生采用和业务验收未证明，不把共享身份加固列为重试前置，也不以该离线 fixture 超时解释 R30 启动失败。
+**来源：**历史 [S071](#s071)、[S072](#s072)；本轮 [29 项专项执行记录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/handshake-auditor-result.json)、[42 项集成结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/targeted-integration.json)。
 
 ### C36 CCC 锁忙与全局保存持锁时间
 
