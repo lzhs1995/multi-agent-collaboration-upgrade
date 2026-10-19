@@ -1,6 +1,13 @@
 # Evidence review and integration decision
 
-Updated 2026-10-15 using the original Claude's accepted 2026-10-14 research.
+Historical research snapshot: 2026-10-15, using the original Claude's accepted
+2026-10-14 research. The nine-run matrix, 1,404-test count and original executor
+state below describe that checkpoint, not current progress. As of 2026-10-19,
+the prior full suite has 2,138 passing tests and R27 ended in TIMEOUT with no
+accepted business runs. R28 adds a bounded B-only advance entrypoint and retains
+the current 33-slot / 15-pair / 192-message registration; its full regression and
+live results must be reported separately. See [current runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md)
+and [collaboration issue ledger](docs/COLLABORATION-ISSUE-LEDGER.md).
 The evidence corpus preserves 82 fetch records and 48 independently verified Git
 blobs. Failed downloads, including a zero-byte SDK fetch, remain in the manifest;
 an unsuccessful fetch is not source evidence. The private report was accepted
@@ -67,8 +74,8 @@ metric, after all nine correctness and contract checks pass.
 
 The old seven-node 790→600 second estimate (24.051%) and the new four-node policy
 probe (170 / 105 / 125 seconds) are both offline calculations. No artificial
-delays are used to make live outcomes reproduce them. The latest completed full
-suite is 1,404 offline tests. The nine-run real campaign and shared deployment
+delays are used to make live outcomes reproduce them. At that historical checkpoint
+the completed full suite was 1,404 offline tests. The nine-run real campaign and shared deployment
 remain separate validation stages; see
 [ORCHESTRATION-VALIDATION.md](verification/ORCHESTRATION-VALIDATION.md).
 

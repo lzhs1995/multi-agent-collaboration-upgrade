@@ -119,6 +119,10 @@ class Runner:
         from orchestration_observe import next_action
         return next_action(self, run_id)
 
+    def advance(self, run_id, *, max_steps=1, max_seconds=45):
+        from orchestration_advance import advance
+        return advance(self, run_id, max_steps=max_steps, max_seconds=max_seconds)
+
     def publish_continuation(self, run_id, key):
         self._upgrade_features()
         from orchestration_continuation import publish_continuation_locked
@@ -350,7 +354,7 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "wait-permit", "next-action", "drafts", "publish-drafts", "publish-continuation", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
     node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "accept", "resume-accept",
@@ -369,6 +373,9 @@ def main(argv=None):
             sub.add_argument("--boundary", required=True, choices=("local_boundary", "callback_boundary", "no_business_input", "preparation_exited"))
         if action == "wait-permit":
             sub.add_argument("--timeout-seconds", type=int, default=45)
+        if action == "advance":
+            sub.add_argument("--max-steps", type=int, default=1)
+            sub.add_argument("--max-seconds", type=float, default=45)
     args = parser.parse_args(argv)
     try:
         ref = anchored_ref(args.campaign, args.campaign_sha256)
@@ -388,6 +395,8 @@ def main(argv=None):
             result = dict(repaired=runner.co(args.run).repair_releases())
         elif action == "wait-permit":
             result = runner.wait_permit(args.run, args.timeout_seconds)
+        elif action == "advance":
+            result = runner.advance(args.run, max_steps=args.max_steps, max_seconds=args.max_seconds)
         elif action in ("accept", "settle"):
             result = getattr(runner, action)(args.run, args.node, args.marker)
         elif action.startswith("resume-"):
@@ -401,7 +410,7 @@ def main(argv=None):
         else:
             result = getattr(runner, action.replace("-", "_"))(args.run)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
-        return 3 if isinstance(result, dict) and result.get("status") == "UNCERTAIN" else 0
+        return 3 if isinstance(result, dict) and result.get("status") in ("UNCERTAIN", "PENDING_OR_BLOCKED") else 0
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
         result = dict(status="PENDING_OR_BLOCKED" if isinstance(exc, PendingOperation) else "REJECTED",
                       error=str(exc), input_retry_authorized=False, exception_trace=exception_trace(exc))

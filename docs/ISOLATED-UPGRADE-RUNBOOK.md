@@ -47,7 +47,13 @@ The three workloads are lexical source indexing with an early successor, fan-in,
 and overlapping write scopes. Each class/arm has a fixed original group.
 The warm order is AB, BA, BA, AB. Cold order alternates by class. A1 uses native
 supervisor scheduling (`mac_native`); B uses dependency advice/drafts/continuation
-(`omo`). Both use active callbacks and independent business acceptance.
+and the bounded `advance` entrypoint (`omo`). Both allow two independent Claude
+lanes to run concurrently and use active callbacks and independent acceptance.
+The B supervisor calls `advance --run RUN --max-steps 12 --max-seconds 45` with
+the exact frozen runner/campaign arguments, then handles its native control and
+review handoffs. It never duplicates actions already performed by advance.
+Its time budget is checked between actions, not a timeout that cancels an
+in-flight preparation. Collect the same original process after a yielded call.
 
 At most two Claude executors do business work at once. Only one global permit
 is active. A later permit requires the previous original run's verified closure,

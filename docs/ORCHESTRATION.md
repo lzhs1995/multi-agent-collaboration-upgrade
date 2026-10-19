@@ -5,6 +5,31 @@ and a verifier around the existing Codex and Claude Code sessions. It does not
 install a shared service or replace the collaboration transport. The current
 implementation is experimental; offline correctness is not a measured speedup.
 
+## Current v3 execution (2026-10-19)
+
+The current experiment compares a parallel-capable native A1 supervisor with
+B dependency scheduling over 33 business slots, 15 pairs and 192 separately
+registered ordinary messages. The nine-run v2 matrix below is historical and
+does not replace this registration. See the [isolated runbook](ISOLATED-UPGRADE-RUNBOOK.md).
+
+B uses `advance --run RUN --max-steps 12 --max-seconds 45` on the pinned
+`orchestration_run.py` runner, with the original campaign path and SHA arguments.
+It batches eligible claim, prepare, dispatch, original-attempt reconciliation,
+callback import, candidate creation, release repair and disarm. Each action
+reloads authoritative state and enters its original gate. Independent lanes
+progress fairly; UNKNOWN grants no resend. A1 retains its manual entrypoints
+and can dispatch both independent Claude lanes concurrently.
+
+The returned `supervisor_actions` and waiting recovery commands are executable
+handoffs. Native START, local business work, independent review/ACCEPT and FINISH
+remain the real supervisor's responsibility. An existing local action or native
+acceptance is collected or recovered, never repeated after a lost return.
+The defaults are one action and 45 seconds; limits are 32 actions and 600 seconds.
+Time is checked between synchronous actions, so it cannot cancel a preparation
+already running. This is an explicit foreground invocation, not an idle-model
+waker or a background scheduler. The experiment must establish whether fewer
+supervisor round trips shorten accepted-work time without lowering correctness.
+
 ## Decision mechanism
 
 `scripts/decision_provider.py` defines `DecisionProvider.decide(context)`. Each
@@ -207,7 +232,7 @@ verified as published or installed; the observed shared release is 0.4.34.
 Neither explicit local packaging nor offline validation proves active-client
 hook adoption or measured efficiency.
 
-## Workload and measured promotion
+## Historical v2 workload and promotion contract
 
 The v2 corpus workload has four nodes: Claude `inventory`, Codex
 `dependent_local` consuming that inventory, independent Codex blob verification,
@@ -219,7 +244,7 @@ These numbers only demonstrate that the graph distinguishes the policies; no
 delays are inserted into real work. The older seven-node 790→600 second fixture
 and its 24.051% reduction also remain offline estimates.
 
-Real promotion requires all nine runs in this fixed counterbalanced order:
+The historical v2 promotion contract requires all nine runs in this fixed order:
 
 ```text
 serial → omo → codeg
@@ -236,6 +261,7 @@ results and retain the three-observations-per-policy and session-carryover limit
 
 The v1 `validate_replay_evidence.py` is **HISTORICAL_ONLY** (exit 3), including for
 previously passing v1 fixtures. It cannot promote results. The v2 runner's
-`verify-campaign` performs current validation. See the
+`verify-campaign` validates that historical format. Current v3 qualification uses
+the registered paired benchmark in the isolated runbook. See the
 [live runbook](LIVE-REPLAY-RUNBOOK.md) and
 [verification record](../verification/ORCHESTRATION-VALIDATION.md).

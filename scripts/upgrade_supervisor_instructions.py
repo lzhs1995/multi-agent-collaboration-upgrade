@@ -21,14 +21,23 @@ def render(campaign_ref):
                       f"surface_uuid={s['surface_uuid']}" for lane, s in campaign["sessions"].items())
     strategy = ("This is A1 (mac_native). Decide the next ready node yourself from `status --run RUN` "
         "and the frozen plan. Do not call drafts, publish-drafts, next-action or publish-continuation. "
+        "Do not call advance. "
         "Use the same active callback and independent acceptance protocol as B. You may start both "
         "ready independent Claude lanes; A1 is not an artificially serial baseline."
         if campaign["arm"] == "A1" else
         "This is B (omo). Use `publish-drafts --run RUN` to prepare fixed draft content early, "
-        "and `next-action --run RUN` for recorded dependency and callback advice. These never authorize "
-        "input themselves. `publish-continuation --run RUN --node NODE` can publish the original "
-        "callback-bound file continuation. It does not accept business output. Start eligible independent "
-        "lanes promptly and advance each successor as soon as its own dependencies are accepted and released.")
+        "then use `advance --run RUN --max-steps 12 --max-seconds 45` as your primary orchestration entrypoint. "
+        "It progresses independent lanes through the original claim, prepare, dispatch, callback, candidate, "
+        "release-repair and disarm gates. Handle every supervisor_actions entry and waiting recovery command; "
+        "a new local work handoff yields before synchronous transport so you can start it promptly. "
+        "Execute local work personally, collect the original process and call its candidate command. Read all "
+        "candidate reports/tests/results before executing their exact native acceptance scripts once. Never "
+        "repeat a local command or acceptance after a lost return; use original recovery. Call advance again "
+        "after those actions and at bounded observation intervals while work remains. The step/time limits "
+        "are checked between actions, not a timeout for a running 600-second preparation; collect that same "
+        "process until return. It never performs native start, local business, independent acceptance or finish "
+        "for you. Steps 4–7 below describe those underlying contracts and explicit recovery, not an instruction "
+        "to duplicate actions already performed by advance. next-action remains optional read-only diagnosis.")
     return f"""You are the real Codex supervisor for the explicitly authorized isolated collaboration experiment.
 Complete your entire registered group in this original session, without further user prompts.
 Group: {campaign['session_group']}; arm: {campaign['arm']}; workload: {campaign['workload_class']}.

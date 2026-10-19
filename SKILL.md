@@ -19,6 +19,14 @@ The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
+For new B/v3 campaigns, use the pinned runner's `advance --run RUN --max-steps 12
+--max-seconds 45` as the primary orchestration entrypoint. It batches original
+gated actions across independent lanes; it does not perform native START,
+local business, independent ACCEPT or FINISH. Handle its supervisor/recovery
+handoffs, collecting existing original actions rather than repeating them.
+Time is checked between actions, not during an in-flight synchronous operation.
+A1 uses the manual baseline and can run both independent Claude lanes in parallel.
+This explicit foreground batching does not wake an idle model or prove speedup.
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded
