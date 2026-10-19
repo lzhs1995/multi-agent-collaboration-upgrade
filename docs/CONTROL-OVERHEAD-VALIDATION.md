@@ -18,7 +18,7 @@
 
 - 初始 status/advice 在同一次无动作观察中共享一个新 Coordinator，状态只重放一次。前后验证 run header、控制文件、事件与租约；原生 snapshot 与已接受输出继续校验。
 - 每个 action 的执行、实际 gate 和最终状态刷新仍新建 Coordinator；公开 status/next-action 各自新建。不跨动作复用摘要、文件 stat 或身份权限。
-- 同 priority=1 的可执行候选依次按 PENDING、PREPARING、PREPARED 排序，确保新的单步 Runner 也能交错推进独立通道。保留收尾、review、reconcile 优先级，依赖与写域仍由原选择器及新 action gate 决定。
+- R31 后首版将同 priority=1 的可执行候选按 PENDING、PREPARING、PREPARED 排序，使单步 Runner 交错领取独立通道。该顺序现仅描述历史实现；R33 已改为 PENDING、PREPARED、PREPARING，让准备好的通道先派发，再等待另一通道握手。收尾、review、reconcile 优先级及每次新 action gate 保留，见 [R33 验证](VALIDATION-20261019-R33.md)。
 
 ## 已执行验证
 
@@ -34,7 +34,7 @@
 
 fixture 仪器化实测新 status 调用 state 一次；单步 local claim 创建三个独立 Coordinator，实际 gate 属于 action 的 Coordinator；四次公开观察创建四个独立 Coordinator。旧版两次 state／四次 Coordinator 仅来自源码分析，没有旧版同计数仪器化数据。
 
-新的单步 Runner 序列为 A claim→B claim→A prepare→B prepare→A dispatch→B dispatch。不可领取的 pending 依赖不会阻塞已有 prepared 通道。并发变更测试要求原观察拒绝动作；实际动作仍需新 gate，这些离散前后检查不是原子锁。
+该历史版本的单步 Runner 序列为 A claim→B claim→A prepare→B prepare→A dispatch→B dispatch。R33 新序列先 A dispatch，再 B prepare；已有有效核收操作也在下一次同步传输前返回。不可领取的 pending 依赖不会阻塞已有 prepared 通道。并发变更测试要求原观察拒绝动作；实际动作仍需新 gate，这些离散前后检查不是原子锁。
 
 ## 未完成验证
 
