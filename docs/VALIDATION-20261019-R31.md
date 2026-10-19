@@ -80,6 +80,8 @@ R31 已于 **2026-10-19 13:04:49 UTC（台北21:04:49）超时停止**，原次�
 
 [控制开销独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-audit/REPORT.md)已确认：每次私有NativeReader初始化都会重新完整校验29个startup pins，合计1,066,091,209字节；每次Coordinator构造静态至少包含7次这样的校验。此数字为逻辑校验字节量，不是实测磁盘吞吐；两秒进程采样显示多个worker线程执行SHA256，不是主线程比例。原preflight 157.354秒之外，进入前校验及后续准备/证明另有89.471秒，尚无更细的独占耗时归因。
 
+后续有界测量直接调用同一原完整pin函数，29个文件连续三次全部通过，墙钟分别0.518210、0.472688、0.516498秒，没有清空系统缓存。这是当前条件的组件结果，不是原R31控制链复现；不足以解释原129秒advance，更不能把全部延迟归于哈希。详见[控制开销验证](CONTROL-OVERHEAD-VALIDATION.md)。
+
 另已确认每次advance重新初始化公平计数。每次只容得下一步时，固定顺序先推进A的claim、prepare、dispatch，再轮到B的claim；这不等于A必须完成全部业务链后B才能启动。下一版改按已记录的生命周期阶段，在同优先级下让独立就绪lane依次claim、prepare、dispatch，保留收尾优先级和每步新门禁。
 
 修复仅在同一次无动作的只读观察中复用协调器与已验证状态，保留动作前的新校验、原生快照验证和最终刷新。两项源码修复已完成root复核，并以 `ae2c3c645dabfa97be736fefff9609dadf4f715b` 推送至upgrade仓库；R31始终使用原冻结实现。定向执行分别为106项、修正后39项、最后加强8项通过，覆盖重叠且106项与后续编辑重叠，不能合计或称为一次冻结全套。原31项中的首次失败保留。详见[控制开销修复验证](CONTROL-OVERHEAD-VALIDATION.md)。完整实际字节校验保留，不引入跨动作digest/stat缓存，修复后原生速度和15%提效尚未证明。
@@ -102,7 +104,7 @@ A原业务命令返回的report.md为167字节，SHA256 `cf1831e44c6312f83cb8dc2
 
 受测提交的[四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39249352530)已经完成，不重复执行。每格发现2184项：macOS/Python3.10及3.14各通过2080、跳过104；Ubuntu两格各通过2070、跳过114，全部零失败/错误。本地29项专项和修复后2项检查分别记账，见[握手结算验证](HANDSHAKE-SETTLEMENT-VALIDATION.md)。这些结果不替代原生协作或速度验证。
 
-修复提交 `ae2c3c6` 的[独立四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39257614544)已完成：Python3.14两格通过；Python3.10两格因新增测试直接解析末尾Z时间而各报1个ValueError。每格Ran2194项，原失败完整保留。单行兼容修复 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 已推送，定向8项通过；该精确提交的[新四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39259307066)于13:20:24–13:20:27Z只触发一次，当前待收。完整分格计数见[控制开销验证](CONTROL-OVERHEAD-VALIDATION.md)，旧提交CI不移算。
+修复提交 `ae2c3c6` 的[独立四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39257614544)已完成：Python3.14两格通过；Python3.10两格因新增测试直接解析末尾Z时间而各报1个ValueError。每格Ran2194项，原失败完整保留。单行兼容修复 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 已推送，定向8项通过；该精确提交的[新四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39259307066)于13:20:24–13:20:27Z只触发一次，13:30:23Z完成，四格全部SUCCESS、零失败/错误。每格Ran2194项：Ubuntu两格各通过2080、跳过114；macOS两格各通过2090、跳过104。通过数按Ran减跳过推导，discovered未独立输出。四份原日志均已收取，完整分格计数见[控制开销验证](CONTROL-OVERHEAD-VALIDATION.md)。后续仅为文档提交；旧提交CI不移算，也不把修复版CI通过当作R31或新版本原生协作通过。
 
 继续保留cmux作为原生会话/终端载体，MAC负责绑定和可靠投递，upgrade负责依赖就绪、两路执行、下一任务草稿、持久回报、核收后接续和等待归因。Jev/TypeSafe仅为本地rules/offline mock，没有引入在线JEV依赖。能否提高效率由正确性成立后的配对结果判定；目前没有达到≥15%改善的原生证据，也不能断言其他平台一定更慢。
 
