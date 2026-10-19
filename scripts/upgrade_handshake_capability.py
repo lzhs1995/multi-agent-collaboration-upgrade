@@ -8,11 +8,25 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from copy import deepcopy
 
 from upgrade_handshake_identity import bound_rows
 from upgrade_input_gate import check_input
 
 SCHEMA = "upgrade-readonly-handshake-v1"
+REFUSAL_SCHEMA = "upgrade-readonly-handshake-refusal-v1"
+
+
+class CapabilityRefused(ValueError):
+    """An observation refusal, never a successful capability or input proof."""
+
+    def __init__(self, error, diagnostic):
+        super().__init__(str(error))
+        self.diagnostic = diagnostic
+
+
+def _error_info(error):
+    return dict(type=type(error).__name__, message=str(error))
 
 
 def digest(value):
@@ -33,13 +47,30 @@ def observe(bridge, native, gate, members, item, text, *, lines=200):
     Codex uses metadata only. Claude permits activity with a complete empty
     composer stable across two reads. Actual input rechecks all of this again.
     """
+    diagnostic = dict(schema=REFUSAL_SCHEMA, executor=item.get("surface_ref"),
+                      ordinal=item.get("ordinal"), provider=None, lines=lines,
+                      input_operations=0, stage="bind_target", read_index=None,
+                      observations=[])
+    try:
+        return _observe(bridge, native, gate, members, item, text, lines, diagnostic)
+    except Exception as error:
+        diagnostic["error"] = _error_info(error)
+        raise CapabilityRefused(error, diagnostic) from error
+
+
+def _observe(bridge, native, gate, members, item, text, lines, diagnostic):
     surface = item["surface_ref"]
     binding = native.bind_target(bridge, surface, text)
+    diagnostic["provider"] = binding.get("provider")
+    diagnostic["stage"] = "bound_rows"
     _, row = bound_rows(panel_rows(gate, members), members, gate, binding)
+    diagnostic["stage"] = "executor_check"
     if row["executor"] != surface or row["ordinal"] != item["ordinal"]:
         raise ValueError("HANDSHAKE_CAPABILITY_EXECUTOR_CHANGED")
+    diagnostic["stage"] = "initial_input_check"
     check_input(binding["identity"], native_binding=binding)
     if binding["provider"] == "codex":
+        diagnostic["stage"] = "codex_metadata"
         from cmux_codex_input import DaemonRPC, prepare, validate_request
         with DaemonRPC(timeout=8) as client:
             request = prepare(client, binding, text)
@@ -47,22 +78,45 @@ def observe(bridge, native, gate, members, item, text, *, lines=200):
         capability = dict(route="codex-native-metadata", request=request)
     elif binding["provider"] == "claude":
         screens, structures = [], []
-        for _ in range(2):
-            screen = bridge.read_screen(surface, lines=lines)
-            block = bridge._claude_bordered_compose(screen)
+        for read_index in (1, 2):
+            diagnostic.update(stage="claude_read_screen", read_index=read_index)
+            observation = dict(read_index=read_index, read_status="STARTED", screen=None,
+                               screen_sha256=None, parser_status="NOT_RUN", parser_block=None)
+            diagnostic["observations"].append(observation)
+            try:
+                screen = bridge.read_screen(surface, lines=lines)
+            except Exception as error:
+                observation.update(read_status="ERROR", error=_error_info(error))
+                raise
+            observation.update(read_status="READ", screen=screen,
+                               screen_sha256=hashlib.sha256(screen.encode()).hexdigest())
+            diagnostic["stage"] = "claude_parse_composer"
+            try:
+                block = bridge._claude_bordered_compose(screen)
+            except Exception as error:
+                observation.update(parser_status="ERROR", error=_error_info(error))
+                raise
+            observation.update(parser_status="PARSED" if block else "MISSING",
+                               parser_block=deepcopy(block))
+            diagnostic["stage"] = "claude_check_composer"
             if not block or block["body"].strip():
                 raise ValueError("HANDSHAKE_CAPABILITY_DRAFT_OR_UNKNOWN_COMPOSER")
             structures.append({k: block[k] for k in ("body", "footer")})
+            diagnostic["stage"] = "claude_activity"
             screens.append(dict(screen=screen,
                                 screen_sha256=hashlib.sha256(screen.encode()).hexdigest(),
                                 active_or_queued=bridge._queued_or_active_input(screen)))
+        diagnostic["stage"] = "claude_stability"
         if structures[0] != structures[1]:
             raise ValueError("HANDSHAKE_CAPABILITY_COMPOSER_CHANGED")
         capability = dict(route="claude-guarded-composer", observations=screens,
                           structure=structures[0])
     else:
+        diagnostic["stage"] = "provider_check"
         raise ValueError("HANDSHAKE_CAPABILITY_PROVIDER_UNSUPPORTED")
+    diagnostic.update(stage="final_binding_check", read_index=None)
     native.require_bound(bridge, surface, binding, text)
+    diagnostic["stage"] = "final_input_check"
     check_input(binding["identity"], native_binding=binding)
     return dict(schema=SCHEMA, task_id=gate["task_id"], gate_sha256=digest(gate),
                 executor=surface, ordinal=item["ordinal"], payload_sha256=binding["payload_sha256"],

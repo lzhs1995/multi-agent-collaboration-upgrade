@@ -108,6 +108,131 @@ class CapabilityTests(unittest.TestCase):
                     cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
                 self.assert_zero_input()
 
+    def test_refusal_preserves_exact_draft_or_missing_parser_without_extra_reads(self):
+        for content in (screen("用户草稿  \t原文"), "truncated ❯\n  unknown footer\n"):
+            with self.subTest(content=content), patch.object(cap, "check_input") as check:
+                self.bridge.read_screen.reset_mock(side_effect=True)
+                self.bridge.read_screen.return_value = content
+                parser = Mock(wraps=self.parsers["_claude_bordered_compose"])
+                activity = Mock(wraps=self.parsers["_queued_or_active_input"])
+                self.bridge._claude_bordered_compose = parser
+                self.bridge._queued_or_active_input = activity
+                with self.assertRaises(cap.CapabilityRefused) as caught:
+                    cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
+                error = caught.exception
+                diagnostic = error.diagnostic
+                self.assertEqual(str(error), "HANDSHAKE_CAPABILITY_DRAFT_OR_UNKNOWN_COMPOSER")
+                self.assertIsInstance(error.__cause__, ValueError)
+                self.assertEqual(diagnostic["schema"], cap.REFUSAL_SCHEMA)
+                self.assertEqual(diagnostic["stage"], "claude_check_composer")
+                self.assertEqual(diagnostic["read_index"], 1)
+                self.assertEqual(diagnostic["executor"], self.members[0]["surface_ref"])
+                self.assertEqual(diagnostic["input_operations"], 0)
+                self.assertEqual(len(diagnostic["observations"]), 1)
+                observed = diagnostic["observations"][0]
+                expected_block = self.parsers["_claude_bordered_compose"](content)
+                self.assertEqual(observed["screen"], content)
+                self.assertEqual(observed["screen_sha256"], hashlib.sha256(content.encode()).hexdigest())
+                self.assertEqual(observed["parser_block"], expected_block)
+                self.assertEqual(observed["parser_status"], "PARSED" if expected_block else "MISSING")
+                self.assertEqual(json.loads(json.dumps(diagnostic, ensure_ascii=False)), diagnostic)
+                self.bridge.read_screen.assert_called_once_with(self.members[0]["surface_ref"], lines=200)
+                parser.assert_called_once_with(content)
+                activity.assert_not_called()
+                self.assertEqual(check.call_count, 1)
+                self.native.require_bound.assert_not_called()
+                self.assert_zero_input()
+
+    def test_second_read_changes_preserve_both_original_observations(self):
+        for second, reason in ((screen("new draft"), "DRAFT_OR_UNKNOWN_COMPOSER"),
+                               ("partial ❯", "DRAFT_OR_UNKNOWN_COMPOSER"),
+                               (screen(" "), "COMPOSER_CHANGED")):
+            with self.subTest(second=second), patch.object(cap, "check_input") as check:
+                self.bridge.read_screen.reset_mock()
+                contents = [screen(), second]
+                self.bridge.read_screen.side_effect = contents
+                with self.assertRaisesRegex(cap.CapabilityRefused, reason) as caught:
+                    cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
+                diagnostic = caught.exception.diagnostic
+                self.assertEqual(diagnostic["read_index"], 2)
+                self.assertEqual([o["read_index"] for o in diagnostic["observations"]], [1, 2])
+                self.assertEqual([o["screen"] for o in diagnostic["observations"]], contents)
+                for content, observation in zip(contents, diagnostic["observations"]):
+                    self.assertEqual(observation["screen_sha256"], hashlib.sha256(content.encode()).hexdigest())
+                    self.assertEqual(observation["parser_block"], self.parsers["_claude_bordered_compose"](content))
+                self.assertEqual(self.bridge.read_screen.call_count, 2)
+                self.assertEqual(check.call_count, 1)
+                self.native.require_bound.assert_not_called()
+                self.assert_zero_input()
+
+    def test_read_errors_do_not_invent_screen_or_retry_and_preserve_prior_read(self):
+        for read_index in (1, 2):
+            with self.subTest(read_index=read_index), patch.object(cap, "check_input") as check:
+                failure = OSError("original read unavailable")
+                self.bridge.read_screen.reset_mock()
+                self.bridge.read_screen.side_effect = [screen()] * (read_index - 1) + [failure]
+                with self.assertRaisesRegex(cap.CapabilityRefused, "original read unavailable") as caught:
+                    cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
+                self.assertIs(caught.exception.__cause__, failure)
+                diagnostic = caught.exception.diagnostic
+                self.assertEqual(diagnostic["stage"], "claude_read_screen")
+                self.assertEqual(diagnostic["read_index"], read_index)
+                self.assertEqual(diagnostic["error"], {"type": "OSError", "message": str(failure)})
+                self.assertEqual(len(diagnostic["observations"]), read_index)
+                failed = diagnostic["observations"][-1]
+                self.assertEqual(failed["read_status"], "ERROR")
+                self.assertEqual(failed["parser_status"], "NOT_RUN")
+                self.assertIsNone(failed["screen"])
+                self.assertIsNone(failed["screen_sha256"])
+                self.assertIsNone(failed["parser_block"])
+                if read_index == 2:
+                    self.assertEqual(diagnostic["observations"][0]["screen"], screen())
+                    self.assertEqual(diagnostic["observations"][0]["parser_status"], "PARSED")
+                self.assertEqual(self.bridge.read_screen.call_count, read_index)
+                self.assertEqual(check.call_count, 1)
+                self.native.require_bound.assert_not_called()
+                self.assert_zero_input()
+
+    def test_parser_error_preserves_screen_and_final_recheck_keeps_both_reads(self):
+        failure = RuntimeError("parser failed")
+        with patch.object(self.bridge, "_claude_bordered_compose", side_effect=failure), patch.object(cap, "check_input"):
+            with self.assertRaises(cap.CapabilityRefused) as caught:
+                cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
+        diagnostic = caught.exception.diagnostic
+        self.assertIs(caught.exception.__cause__, failure)
+        self.assertEqual(diagnostic["stage"], "claude_parse_composer")
+        self.assertEqual(diagnostic["observations"][0]["screen"], screen())
+        self.assertEqual(diagnostic["observations"][0]["parser_status"], "ERROR")
+        self.bridge.read_screen.reset_mock()
+        failure = ValueError("binding changed after observation")
+        self.native.require_bound.side_effect = failure
+        with patch.object(cap, "check_input") as check, self.assertRaises(cap.CapabilityRefused) as caught:
+            cap.observe(self.bridge, self.native, self.gate, self.members, self.members[0], TEXT)
+        diagnostic = caught.exception.diagnostic
+        self.assertIs(caught.exception.__cause__, failure)
+        self.assertEqual(diagnostic["stage"], "final_binding_check")
+        self.assertIsNone(diagnostic["read_index"])
+        self.assertEqual(len(diagnostic["observations"]), 2)
+        self.assertEqual(self.bridge.read_screen.call_count, 2)
+        self.assertEqual(check.call_count, 1)
+        self.assert_zero_input()
+
+    def test_success_proof_shape_and_call_counts_remain_original(self):
+        proof = self.observe()
+        self.assertEqual(set(proof), {"schema", "task_id", "gate_sha256", "executor", "ordinal",
+                                     "payload_sha256", "native_binding", "capability",
+                                     "input_operations", "observed_at_epoch"})
+        self.assertEqual(set(proof["capability"]), {"route", "observations", "structure"})
+        for observation in proof["capability"]["observations"]:
+            self.assertEqual(set(observation), {"screen", "screen_sha256", "active_or_queued"})
+        self.bridge.read_screen.assert_has_calls([
+            unittest.mock.call(self.members[0]["surface_ref"], lines=200),
+            unittest.mock.call(self.members[0]["surface_ref"], lines=200)])
+        self.assertEqual(self.bridge.read_screen.call_count, 2)
+        self.native.bind_target.assert_called_once()
+        self.native.require_bound.assert_called_once()
+        self.assert_zero_input()
+
     def test_wrong_panel_identity_and_stop_refuse_before_screen_or_input(self):
         self.binding["session_id"] = uid(99)
         with self.assertRaisesRegex(ValueError, "SESSION_CHANGED"):
@@ -244,6 +369,52 @@ class CapabilityTests(unittest.TestCase):
                    "cmux_native_delivery": self.native}
         args = types.SimpleNamespace(task_id="original", lines=200, bridge_clear_recovery=None)
         return namespace, bridge, observer, modules, args
+
+    def test_generated_refusal_receipt_keeps_original_observations_and_zero_input(self):
+        cases = ([screen("user draft")], [screen(), "truncated ❯"],
+                 [screen(), OSError("original second read failed")])
+        for screens in cases:
+            with self.subTest(screens=screens), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                namespace, bridge, observer, modules, args = self.generated_cycle(root)
+                bridge._claude_bordered_compose = self.parsers["_claude_bordered_compose"]
+                bridge._queued_or_active_input = self.parsers["_queued_or_active_input"]
+                bridge.read_screen.side_effect = screens
+                observer.side_effect = cap.observe
+                with patch.dict(sys.modules, modules), patch.object(cap, "check_input"):
+                    with self.assertRaises(SystemExit):
+                        namespace["cmd_handshake"](args)
+                    raw = (root / "handshake-receipt.json").read_bytes()
+                    receipt = json.loads(raw)
+                    diagnostic = receipt["handshake_capability_refusal"]
+                    self.assertEqual(diagnostic["schema"], cap.REFUSAL_SCHEMA)
+                    self.assertEqual(diagnostic["input_operations"], 0)
+                    self.assertEqual(len(diagnostic["observations"]), len(screens))
+                    for original, observation in zip(screens, diagnostic["observations"]):
+                        if isinstance(original, Exception):
+                            self.assertIsNone(observation["screen"])
+                            self.assertIsNone(observation["screen_sha256"])
+                            self.assertEqual(observation["read_status"], "ERROR")
+                            self.assertEqual(observation["error"]["message"], str(original))
+                        else:
+                            self.assertEqual(observation["screen"], original)
+                            self.assertEqual(observation["screen_sha256"],
+                                             hashlib.sha256(original.encode()).hexdigest())
+                    self.assertIsNone(receipt["handshake_precondition"])
+                    self.assertIsNone(receipt["dispatch_submitted_at"])
+                    self.assertFalse(receipt["executor_ack"])
+                    self.assertIsNot(receipt.get("input_retry_authorized"), True)
+                    self.assertEqual(receipt["submission_state"], "refused")
+                    with self.assertRaises(SystemExit):
+                        namespace["cmd_handshake"](args)
+                    self.assertEqual((root / "handshake-receipt.json").read_bytes(), raw)
+                bridge.submit_text.assert_not_called()
+                bridge.send_text.assert_not_called()
+                bridge.send_key.assert_not_called()
+                bridge.wait_for_ack.assert_not_called()
+                observer.assert_called_once()
+                self.assertEqual(bridge.read_screen.call_count, len(screens))
+                namespace["secrets"].token_hex.assert_called_once()
 
     def test_actual_generated_concurrent_calls_have_one_nonce_send_and_original_ack(self):
         with tempfile.TemporaryDirectory() as tmp:

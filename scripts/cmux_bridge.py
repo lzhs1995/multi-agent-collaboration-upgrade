@@ -723,9 +723,12 @@ def _claude_bordered_compose(screen):
     # custom statusline, the complete footer is just this permissions row.
     # Accept only that whole row after matching borders; never filter body
     # text or allow an unknown/truncated suffix to authorize input.
-    if len(footer) == 1 and footer[0] in (
+    if len(footer) == 1 and (footer[0] in (
             "⏵⏵ bypass permissions on (shift+tab to cycle)",
-            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"):
+            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents")
+            or re.fullmatch(
+                r"⏵⏵ bypass permissions on \(shift\+tab to cycle\) · esc to interrupt"
+                rf" +◎ /goal active \({_CLAUDE_DURATION}\)", footer[0])):
         first = re.sub(r"^\s*❯[ \u00a0]?", "", rows[start], count=1)
         return {"body": "\n".join([first, *rows[start + 1:end]]),
                 "footer": footer, "before": rows[:start - 1], "start": start, "end": end}

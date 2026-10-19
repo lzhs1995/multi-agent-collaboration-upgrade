@@ -37,6 +37,15 @@ compose and idle turn remain separate checks; preserve drafts and reject unknown
 or truncated footer structure. Complete Claude `⎿ Tip:` and goal chrome before
 the composer cannot hide a live spinner, including measured timerless activity.
 Skip only those hint rows; never skip arbitrary prose or composer content.
+The measured default permissions footer may include `· esc to interrupt` and
+the complete `◎ /goal active (duration)` annotation after the lower border.
+Match the whole observed row; unknown suffixes and truncated annotations remain
+unknown. This layout says nothing by itself about native Goal renewal or capacity.
+On initial capability refusal, preserve the exact original screens, hashes,
+parser results, read sequence, failure stage and error in the original receipt.
+Failed reads retain a missing screen; do not reread to manufacture diagnostics.
+A later successful parse cannot establish the cause of an earlier uncaptured
+refusal. Diagnostic evidence grants no input, retry or successful capability.
 The live materializer applies the same two measured parser changes to its pinned
 base controller with exact source-shape checks. Preserve the base's native Codex
 delivery and other status layouts; copying an older whole bridge is not a repair.

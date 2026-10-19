@@ -166,9 +166,12 @@ def claude_measured_chrome(text):
         "_claude_bordered_compose": (
             '    if not footer:\n        return None\n',
             '    if not footer:\n        return None\n' + r'''    # Exact measured default chrome, strictly outside both complete borders.
-    if len(footer) == 1 and footer[0] in (
+    if len(footer) == 1 and (footer[0] in (
             "⏵⏵ bypass permissions on (shift+tab to cycle)",
-            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"):
+            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents")
+            or re.fullmatch(
+                r"⏵⏵ bypass permissions on \(shift\+tab to cycle\) · esc to interrupt"
+                rf" +◎ /goal active \({_CLAUDE_DURATION}\)", footer[0])):
         first = re.sub(r"^\s*❯[ \u00a0]?", "", rows[start], count=1)
         return {"body": "\n".join([first, *rows[start + 1:end]]),
                 "footer": footer, "before": rows[:start - 1], "start": start, "end": end}
@@ -343,6 +346,9 @@ def readonly_handshake(name, text):
         "                cmux, capability_native, gate, _gate_executors(gate), item,\n"
         "                prepared['text'], lines=args.lines)\n"
         "        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:\n"
+        "            diagnostic = getattr(exc, 'diagnostic', None)\n"
+        "            if isinstance(diagnostic, dict):\n"
+        "                receipt['handshake_capability_refusal'] = diagnostic\n"
         "            raise cmux.DispatchUnconfirmed(\n"
         "                'READONLY_HANDSHAKE_CAPABILITY_REFUSED: ' + str(exc),\n"
         "                state=cmux.SUPERVISOR_DID_NOT_SUBMIT) from exc\n")
