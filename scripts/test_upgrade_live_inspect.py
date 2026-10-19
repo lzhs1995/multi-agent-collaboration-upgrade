@@ -18,7 +18,8 @@ from orchestration_common import ContractError, file_ref, write_json
 from upgrade_client_isolation import LANES
 import upgrade_live_entry as entry
 import upgrade_live_inspect as subject
-from upgrade_startup_contract import readiness_command, readiness_prompt
+from upgrade_startup_contract import (GOAL_SCHEMA, native_goal_condition, pressure_startup_prompt,
+                                     readiness_command, readiness_prompt)
 
 
 class ReadinessTests(unittest.TestCase):
@@ -103,6 +104,105 @@ class ReadinessTests(unittest.TestCase):
                 self.assertEqual(result["call_id"], call["id"])
                 self.assertEqual(result["model"], "frozen-model")
                 self.assertEqual(len(result["hooks"]["PreToolUse"]), 1)
+
+    def goal_fixture(self, lane="claude_a"):
+        fixture = self.fixture(lane)
+        self.spec.update(schema=GOAL_SCHEMA,
+            lane_instructions={key: {"path": str(self.root / (key + "-instructions.md"))} for key in LANES},
+            goal_startup={key: native_goal_condition("Complete the frozen campaign", self.root / (key + "-instructions.md"))
+                          for key in ("claude_a", "claude_b")})
+        session, rows, _, _, _, _ = fixture
+        if lane == "codex":
+            rows[1][1]["payload"]["content"][0]["text"] = pressure_startup_prompt(
+                lane, self.spec["lane_instructions"], self.spec["goal_startup"])
+        else:
+            rows[0][1].clear()
+            rows[0][1].update(type="attachment", uuid=str(uuid.uuid4()), sessionId=session["session_id"],
+                timestamp="2026-10-19T05:00:00Z", attachment=dict(type="goal_status", met=False,
+                sentinel=True, condition=self.spec["goal_startup"][lane]))
+            rows[1][1]["timestamp"] = "2026-10-19T05:00:01Z"
+        return fixture
+
+    def check_goal(self, fixture, lane="claude_a"):
+        session, rows, _, _, launches, _ = fixture
+        with patch.object(subject, "native_records", return_value=iter(rows)):
+            return subject.readiness_evidence(None, session, lane, self.spec,
+                                              self.startup, self.binding, launches)
+
+    def test_v3_native_goal_set_and_pinned_codex_prompt_keep_original_probe_hooks(self):
+        for lane in LANES:
+            with self.subTest(lane=lane):
+                fixture = self.goal_fixture(lane)
+                result = self.check_goal(fixture, lane)
+                self.assertEqual(result["call_id"], "readiness-call")
+                self.assertEqual(result["startup_kind"],
+                    "pinned_lane_prompt" if lane == "codex" else "native_goal_set")
+                self.assertEqual(len(result["hooks"]["PostToolUse"]), 1)
+
+    def test_v3_codex_old_prompt_is_not_goal_contract_startup(self):
+        fixture = self.goal_fixture("codex")
+        fixture[1][1][1]["payload"]["content"][0]["text"] = readiness_prompt(
+            self.controller, "/pinned/python", "/pinned/rtk", "codex")
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_STARTUP_PROMPT"):
+            self.check_goal(fixture, "codex")
+
+    def test_v3_only_native_set_not_clear_status_sidechain_or_quoted_command(self):
+        mutations = {
+            "clear": lambda r: r[0][1]["attachment"].update(met=True),
+            "failed": lambda r: r[0][1]["attachment"].update(failed=True),
+            "missing_sentinel": lambda r: r[0][1]["attachment"].pop("sentinel"),
+            "numeric_sentinel": lambda r: r[0][1]["attachment"].update(sentinel=1),
+            "wrong_condition": lambda r: r[0][1]["attachment"].update(condition="Other Goal"),
+            "sidechain": lambda r: r[0][1].update(isSidechain=True),
+            "wrong_type": lambda r: r[0][1].update(type="active_goal"),
+            "missing_uuid": lambda r: r[0][1].pop("uuid"),
+            "invalid_uuid": lambda r: r[0][1].update(uuid="invented"),
+            "missing_timestamp": lambda r: r[0][1].pop("timestamp"),
+            "invalid_timestamp": lambda r: r[0][1].update(timestamp="invented"),
+            "timestamp_after_probe": lambda r: r[0][1].update(timestamp="2026-10-19T05:00:02Z"),
+            "offset_after_probe": lambda r: r[0][0].update(offset=150),
+            "duplicate_set": lambda r: r.append(copy.deepcopy(r[0])),
+            "missing_set": lambda r: r.pop(0),
+            "sidechain_probe": lambda r: r[1][1].update(isSidechain=True),
+            "sidechain_result": lambda r: r[2][1].update(isSidechain=True),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                fixture = self.goal_fixture()
+                mutate(fixture[1])
+                with self.assertRaises((ContractError, ValueError, TypeError)):
+                    self.check_goal(fixture)
+        fixture = self.goal_fixture()
+        row = fixture[1][0][1]
+        row.clear()
+        row.update(type="user", message={"role": "user", "content": "/goal " + self.spec["goal_startup"]["claude_a"]})
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_STARTUP_PROMPT"):
+            self.check_goal(fixture)
+
+    def test_v3_clear_or_other_goal_before_probe_completion_is_rejected(self):
+        for body in (dict(type="goal_status", met=True, sentinel=True),
+                     dict(type="goal_status", met=False, sentinel=True, condition="Other")):
+            with self.subTest(body=body):
+                fixture = self.goal_fixture()
+                fixture[1].insert(2, (dict(fixture[1][0][0], offset=150),
+                    dict(type="attachment", uuid=str(uuid.uuid4()),
+                         timestamp="2026-10-19T05:00:01Z", attachment=body)))
+                with self.assertRaisesRegex(ContractError, "GOAL_CHANGED_BEFORE_READINESS"):
+                    self.check_goal(fixture)
+
+    def test_v3_unmet_check_before_probe_does_not_replace_original_set(self):
+        fixture = self.goal_fixture()
+        fixture[1].insert(1, (dict(fixture[1][0][0], offset=50),
+            dict(type="attachment", uuid=str(uuid.uuid4()), timestamp="2026-10-19T05:00:00Z",
+                attachment=dict(type="goal_status", met=False, reason="Not completed yet",
+                                condition=self.spec["goal_startup"]["claude_a"]))))
+        self.assertEqual(self.check_goal(fixture)["prompt"], fixture[1][0][0])
+
+    def test_v3_native_set_does_not_replace_required_automatic_hooks(self):
+        fixture = self.goal_fixture()
+        fixture[3][1][0].unlink()
+        with self.assertRaisesRegex(ContractError, "AUTOMATIC_PRE_POST_HOOKS"):
+            self.check_goal(fixture)
 
     def test_prose_comment_failure_or_pending_result_is_not_success(self):
         session, rows, call, hooks, launches, probe = self.fixture("codex")

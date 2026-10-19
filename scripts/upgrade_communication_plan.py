@@ -5,13 +5,23 @@ may run its own pinned helper command. Business acceptance remains independent.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shlex
 import uuid
 from pathlib import Path
 
 from orchestration_common import json_ref, object_sha, read_ref, require
-from render_cmux_agent import verify_route
+
+# The adapter and private controller both contain render_cmux_agent.py. Loading
+# the adapter's pure verifier under that public name poisons the later live
+# controller import, even for a pilot task whose communication list is empty.
+# Keep the fixed sibling in the verified adapter dependency closure, without
+# registering or replacing any controller module in sys.modules.
+_renderer_spec = importlib.util.spec_from_file_location(
+    "_upgrade_communication_renderer", Path(__file__).with_name("render_cmux_agent.py"))
+_renderer = importlib.util.module_from_spec(_renderer_spec)
+_renderer_spec.loader.exec_module(_renderer)
 
 WARM_RUNS = tuple(f"warm-{n:02d}" for n in range(1, 5))
 NODES = {
@@ -85,7 +95,7 @@ def campaign_plan(campaign):
     raw = read_ref(helper, "communication helper")
     require(Path(helper["path"]).is_absolute() and os.access(helper["path"], os.X_OK),
             "communication helper must be an absolute executable")
-    route = verify_route(raw, Path(campaign["controller"]["path"]))
+    route = _renderer.verify_route(raw, Path(campaign["controller"]["path"]))
     require(Path(route["python"]).resolve() == Path(campaign["python"]["path"]).resolve(),
             "communication helper Python changed")
     identities = {}

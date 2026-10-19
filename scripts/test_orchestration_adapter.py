@@ -19,6 +19,7 @@ class CurrentAdapterTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         modules = validate_adapter(tree_manifest(root), purpose="campaign")
         self.assertIn("scripts/upgrade_experiment.py", modules)
+        self.assertIn("scripts/render_cmux_agent.py", modules)
 
 
 class AdapterTests(unittest.TestCase):

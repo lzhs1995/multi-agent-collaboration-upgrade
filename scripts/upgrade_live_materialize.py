@@ -19,7 +19,9 @@ from upgrade_experiment import NAME, arm_paths, protected_paths, validate_contex
 from upgrade_live_integrity import artifact_ref
 from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_materialize import hook_config, rendered_helper
-from upgrade_startup_contract import client_environment, readiness_prompt, validate_startup
+from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
+    client_environment, native_goal_condition, pressure_lane_document,
+    pressure_startup_prompt, readiness_prompt, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 
@@ -39,7 +41,8 @@ def immutable_bytes(path, raw, *, executable=False, secret=False):
 
 
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
-                     provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY):
+                     provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
+                     goal_startup=None, lane_instructions=None):
     context = validate_context(context_ref)
     require(arm in ("A1", "B"), "A0 is a retained historical control, not a new live lane")
     paths = arm_paths(context, arm)
@@ -65,6 +68,28 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     socket_boundary = (boundary_plan(socket, executable_pins["codex"])
                        if native_policy == SOCKET_POLICY else None)
     read_ref(context["python"], "startup Python")
+    require((goal_startup is None) == (lane_instructions is None), "STARTUP_GOAL_INSTRUCTIONS_REQUIRED")
+    goal_contract, instruction_buffers = None, {}
+    if goal_startup is not None:
+        require(isinstance(goal_startup, dict) and set(goal_startup) == GOAL_LANES,
+                "STARTUP_GOAL_LANES_CHANGED")
+        require(isinstance(lane_instructions, dict) and set(lane_instructions) == set(LANES),
+                "STARTUP_INSTRUCTION_LANES_CHANGED")
+        refs, conditions = {}, {}
+        for lane in LANES:
+            incoming = lane_instructions[lane]
+            require(isinstance(incoming, dict) and type(incoming.get("bytes")) is int
+                    and 0 < incoming["bytes"] <= MAX_INSTRUCTION_BYTES,
+                    "STARTUP_INSTRUCTIONS_INVALID")
+            raw = read_ref(incoming, "pressure lane instructions").decode("utf-8")
+            document = pressure_lane_document(controller, context["python"]["path"],
+                executable_pins["rtk"]["path"], lane, raw).encode()
+            path = paths["config"] / (lane + "-instructions.md")
+            instruction_buffers[lane] = document
+            refs[lane] = dict(path=str(path), bytes=len(document), sha256=digest(document), mode=0o444)
+            if lane in GOAL_LANES:
+                conditions[lane] = native_goal_condition(goal_startup[lane], path)
+        goal_contract = dict(schema=GOAL_SCHEMA, goal_startup=conditions, lane_instructions=refs)
     codex_original, claude_original = (read_provider_configuration()
         if provider_configuration is None else provider_configuration)
     credential_files = {} if credential_files is None else credential_files
@@ -139,6 +164,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                    isolation=isolation)
     if socket_boundary is not None:
         binding["socket_boundary"] = socket_boundary
+    if goal_contract is not None:
+        binding["startup_contract"] = goal_contract
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -155,6 +182,11 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
+    if goal_contract is not None:
+        for lane, raw in instruction_buffers.items():
+            ref = immutable_bytes(Path(goal_contract["lane_instructions"][lane]["path"]), raw)
+            require(ref == goal_contract["lane_instructions"][lane], "STARTUP_INSTRUCTION_WRITE_CHANGED")
+            pins[lane + "_instructions"] = ref
     (paths["bin"] / "claude-tools").mkdir(mode=0o700)
     pins["claude_ps"] = immutable_bytes(paths["bin"] / "claude-tools/ps",
         claude_ps_wrapper(controller, context["python"]["path"]), executable=True)
@@ -219,7 +251,10 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         argv = client_argv(provider, paths["bin"] / ("cmux-" + provider + "-wrapper"), work, root,
                            session_id=session, remote_socket=socket if provider == "codex" else None,
                            socket_boundary=socket_boundary if provider == "codex" else None)
-        argv.append(readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
+        argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
+                                           goal_contract["goal_startup"])
+                    if goal_contract is not None else
+                    readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
         env = client_environment(roots, paths, lane, binaries["rtk"])
         clients[lane] = dict(provider=provider, native_root=str(root), session_id=session,
                              argv=argv, environment=env)
@@ -249,6 +284,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                        "production_adoption": False})
     if socket_boundary is not None:
         startup["socket_boundary"] = socket_boundary
+    if goal_contract is not None:
+        startup.update(goal_contract)
     startup_ref = write_json(paths["config"] / "startup-v2.json", startup, exclusive=True)
     Path(startup_ref["path"]).chmod(0o444)
     validate_startup(startup_ref, controller=controller)

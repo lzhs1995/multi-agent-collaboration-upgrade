@@ -19,11 +19,88 @@ from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary, extend_prof
 FIELDS = {"schema", "context", "arm", "controller", "native_policy", "pins", "clients",
           "rpc", "work_root", "workspace_name", "protected_surface_uuids", "stop_path",
           "adoption_path", "authorization"}
+GOAL_SCHEMA = "upgrade-startup-v3"
+GOAL_LANES = {"claude_a", "claude_b"}
+GOAL_FIELDS = {"goal_startup", "lane_instructions"}
+MAX_INSTRUCTION_BYTES = 256 * 1024
+
+
+def require_goal_condition(condition):
+    require(isinstance(condition, str) and condition == condition.strip() and bool(condition),
+            "STARTUP_GOAL_CONDITION_REQUIRED")
+    require(not any(ord(c) < 32 or ord(c) == 127 for c in condition), "STARTUP_GOAL_CONTROL_CHARACTER")
+    require(condition.lower() not in {"clear", "stop", "off", "reset", "none", "cancel"},
+            "STARTUP_GOAL_CLEAR_ALIAS")
+    try:
+        units = len(condition.encode("utf-16-le")) // 2
+    except UnicodeError as exc:
+        raise ValueError("STARTUP_GOAL_INVALID_UNICODE") from exc
+    require(units <= 4000, "STARTUP_GOAL_TOO_LONG")
+    return condition
+
+
+def native_goal_condition(condition, instructions_path):
+    require_goal_condition(condition)
+    return require_goal_condition("Read and follow " + str(instructions_path)
+                                  + ". Complete this registered goal: " + condition)
+
+
+def pressure_lane_document(controller, python, rtk, lane, responsibilities):
+    require(lane in LANES, "STARTUP_INSTRUCTION_LANE_UNKNOWN")
+    require(isinstance(responsibilities, str) and bool(responsibilities.strip())
+            and "\x00" not in responsibilities
+            and len(responsibilities.encode()) <= MAX_INSTRUCTION_BYTES,
+            "STARTUP_INSTRUCTIONS_INVALID")
+    command = readiness_command(controller, python, rtk, lane)
+    invocation = command
+    if lane == "codex":
+        invocation = ("使用 functions.exec，完整 JavaScript 为：\ntext(await tools.exec_command(" +
+            json.dumps(dict(cmd=command, login=False, max_output_tokens=1200),
+                       ensure_ascii=False, separators=(",", ":")) + "));\n")
+    return ("# Pinned Goal startup responsibilities: " + lane + "\n\n"
+            "Read " + str(Path(controller) / "SKILL.md") + ".\n"
+            "First execute exactly one normal tool call for the real startup probe below. "
+            "Do not manually run hooks, manufacture receipts, send messages, or claim adoption from the probe.\n"
+            + invocation + "\nAfter the probe, follow the registered adoption-wait instructions below. "
+            "Formal business and communication must wait for the external adoption gate. "
+            "Keep this original session. Do not create replacements, replay attempts, clear a Goal to "
+            "make input idle. Execute a bootstrap only when explicitly registered below. "
+            "A missing gate is not permission to start work.\n\n"
+            "## Registered lane responsibilities\n\n" + responsibilities + "\n")
+
+
+def pressure_startup_prompt(lane, instructions, goals):
+    path = instructions[lane]["path"]
+    if lane in GOAL_LANES:
+        condition = require_goal_condition(goals[lane])
+        prefix = "Read and follow " + path + ". Complete this registered goal: "
+        require(condition.startswith(prefix), "STARTUP_GOAL_INSTRUCTION_REFERENCE_CHANGED")
+        require_goal_condition(condition[len(prefix):])
+        return "/goal " + condition
+    require(lane == "codex", "STARTUP_INSTRUCTION_LANE_UNKNOWN")
+    return ("This is the authorized Goal startup experiment. Read and follow the complete pinned "
+            "lane instructions at " + path + ". Execute their one real startup probe, then their external "
+            "adoption wait and registered campaign plan in this same session. Execute any explicitly "
+            "registered bootstrap as instructed. Do not create replacement clients or send input before adoption.")
 
 
 def readiness_command(controller, python, rtk, lane):
     return shlex.join([str(rtk), "proxy", python, "-I", "-B",
                       str(Path(controller) / "scripts/mac_upgrade_client_probe.py"), "--lane", lane])
+
+
+def bootstrap_continuation(controller, python, rtk):
+    """Original bounded Codex continuation, reusable in pinned lane duties."""
+    bootstrap = shlex.join([str(rtk), "proxy", python, "-I", "-B",
+        str(Path(controller) / "scripts/mac_upgrade_bootstrap.py"), "--timeout-seconds", "900"])
+    return ("成功后继续在同一会话执行首次启动等待器，不要结束任务或等待用户催促。"
+        "它只等待外部核验者发布固定实验指令，不发送消息、不代你验收。使用 functions.exec：\n"
+        "text(await tools.exec_command(" + json.dumps(dict(cmd=bootstrap, login=False,
+            yield_time_ms=1000, max_output_tokens=5000), ensure_ascii=False, separators=(",", ":"))
+        + "));\n若返回 session_id，使用 write_stdin 收集结果，每次等待不超过 30 秒；"
+        "若 functions.exec 返回 cell ID，使用 functions.wait。"
+        "收到 BOOTSTRAP_READY 后读取其中固定的 campaign 和 instructions，立即执行至真实收口。"
+        "超时或 stop 时保留本会话和所有证据，报告真实状态。")
 
 
 def readiness_prompt(controller, python, rtk, lane):
@@ -35,16 +112,7 @@ def readiness_prompt(controller, python, rtk, lane):
                        ensure_ascii=False, separators=(",", ":")) + "));\n")
     continuation = "成功后回复 EXPERIMENT_READY 并正常结束本轮。"
     if lane == "codex":
-        bootstrap = shlex.join([str(rtk), "proxy", python, "-I", "-B",
-            str(Path(controller) / "scripts/mac_upgrade_bootstrap.py"), "--timeout-seconds", "900"])
-        continuation = ("成功后继续在同一会话执行首次启动等待器，不要结束任务或等待用户催促。"
-            "它只等待外部核验者发布固定实验指令，不发送消息、不代你验收。使用 functions.exec：\n"
-            "text(await tools.exec_command(" + json.dumps(dict(cmd=bootstrap, login=False,
-                yield_time_ms=1000, max_output_tokens=5000), ensure_ascii=False, separators=(",", ":"))
-            + "));\n若返回 session_id，使用 write_stdin 收集结果，每次等待不超过 30 秒；"
-            "若 functions.exec 返回 cell ID，使用 functions.wait。"
-            "收到 BOOTSTRAP_READY 后读取其中固定的 campaign 和 instructions，立即执行至真实收口。"
-            "超时或 stop 时保留本会话和所有证据，报告真实状态。")
+        continuation = bootstrap_continuation(controller, python, rtk)
     return ("这是用户已授权的独立多 agent 实验启动核验，你的角色是 " + lane + "。"
             "先读取 " + str(Path(controller) / "SKILL.md") + "。仅通过一个正常工具调用执行以下完整命令：\n"
             + invocation
@@ -66,13 +134,25 @@ def client_environment(roots, paths, lane, rtk):
 
 def validate_startup(ref, *, controller=None, verify_pins=True):
     spec = json_ref(ref, "startup")
+    goal_mode = spec.get("schema") == GOAL_SCHEMA
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
-    require(set(spec) == fields and spec["schema"] == "upgrade-startup-v2", "STARTUP_FIELDS_CHANGED")
+    if goal_mode:
+        fields |= GOAL_FIELDS
+    require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA),
+            "STARTUP_FIELDS_CHANGED")
     source = checked_path(spec["controller"])
     if controller is not None:
         require(source == Path(controller).resolve(), "STARTUP_CONTROLLER_CHANGED")
     import json
     binding = json.loads(read_regular(source / "upgrade-binding.json"))
+    if goal_mode:
+        require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
+                and isinstance(spec["lane_instructions"], dict)
+                and set(spec["lane_instructions"]) == set(LANES), "STARTUP_GOAL_LANES_CHANGED")
+        require(binding.get("startup_contract") == {key: spec[key] for key in ("schema", *GOAL_FIELDS)},
+                "STARTUP_GOAL_BINDING_CHANGED")
+    else:
+        require("startup_contract" not in binding, "STARTUP_GOAL_DOWNGRADE_REFUSED")
     require(binding.get("version") == 2 and binding.get("execution_mode") == "live-isolated-v2"
             and spec["context"] == binding["context"] and spec["arm"] == binding["arm"]
             and binding["controller_root"] == str(source), "STARTUP_SCOPE_CHANGED")
@@ -113,6 +193,15 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if goal_mode:
+        for lane in LANES:
+            key = lane + "_instructions"
+            required.add(key)
+            local[key] = paths["config"] / (lane + "-instructions.md")
+            require(pins.get(key) == spec["lane_instructions"][lane]
+                    and pins[key].get("mode") == 0o444, "STARTUP_INSTRUCTION_PIN_CHANGED")
+            # Also verifies that the exact condition references this lane's document.
+            pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
     for provider in ("codex", "claude"):
         local[provider + "_wrapper"] = paths["bin"] / ("cmux-" + provider + "-wrapper")
     for name in ("codex-hooks.json", "claude-settings.json", "claude-startup-state.json"):
@@ -176,7 +265,9 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
         argv = client_argv(provider, pins[provider + "_wrapper"]["path"], spec["work_root"], roots[lane],
                            session_id=client["session_id"], remote_socket=socket if provider == "codex" else None,
                            socket_boundary=boundary if provider == "codex" else None)
-        argv.append(readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
+        argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
+                    if goal_mode else
+                    readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"]), "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding

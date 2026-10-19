@@ -15,11 +15,12 @@ import subprocess
 import time
 import uuid
 
-from orchestration_common import (ContractError, digest, file_ref, json_ref, read_regular,
+from orchestration_common import (ContractError, digest, file_ref, json_ref, parse_time, read_regular,
                                   require, strict_json, utc_now)
 from upgrade_client_isolation import LANES, require_kernel_boundary
 from upgrade_native_roots import process_root
-from upgrade_startup_contract import readiness_command, readiness_prompt
+from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt,
+                                     readiness_command, readiness_prompt)
 from upgrade_socket_boundary import binding_boundary, verify_kernel
 
 
@@ -265,9 +266,12 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
 def readiness_evidence(native, session, lane, spec, startup_ref, binding, launches):
     command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
                                 spec["pins"]["rtk"]["path"], lane)
-    prompt = readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],
-                              spec["pins"]["rtk"]["path"], lane)
+    goal_mode = spec.get("schema") == GOAL_SCHEMA
+    prompt = (pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
+              if goal_mode else readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],
+                                                 spec["pins"]["rtk"]["path"], lane))
     calls, results, model_records, prompts, execution_records = {}, {}, [], [], []
+    goals = []
     call_count = 0
     for ref, record in native_records(native, session):
         if lane == "codex":
@@ -297,6 +301,24 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
             if payload.get("type") in ("function_call_output", "custom_tool_call_output"):
                 results.setdefault(payload.get("call_id"), []).append((ref, payload.get("output")))
         else:
+            if goal_mode and record.get("isSidechain") is True:
+                continue
+            attachment = record.get("attachment")
+            if (goal_mode and record.get("type") == "attachment"
+                    and isinstance(attachment, dict) and attachment.get("type") == "goal_status"):
+                goals.append((ref, record))
+                if (attachment.get("met") is False and attachment.get("sentinel") is True
+                        and attachment.get("failed") is not True
+                        and attachment.get("condition") == spec["goal_startup"][lane]):
+                    # Native /goal enters through local-jsx, so a quoted raw
+                    # command is not sufficient. Bind the persisted SET event.
+                    try:
+                        require(isinstance(record.get("uuid"), str), "STARTUP_GOAL_UUID_MISSING")
+                        uuid.UUID(record["uuid"])
+                        parse_time(record.get("timestamp"), "startup Goal timestamp")
+                    except (ValueError, TypeError, AttributeError) as exc:
+                        raise ContractError("STARTUP_GOAL_IDENTITY_INVALID") from exc
+                    prompts.append(ref)
             message = record.get("message", {})
             if (record.get("type") == "assistant" and message.get("model")
                     and record.get("isApiErrorMessage") is not True and message["model"] != "<synthetic>"):
@@ -304,7 +326,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
             content = message.get("content", [])
             text = content if isinstance(content, str) else "".join(
                 x.get("text", "") for x in content if isinstance(x, dict) and x.get("type") == "text")
-            if record.get("type") == "user" and text == prompt:
+            if not goal_mode and record.get("type") == "user" and text == prompt:
                 prompts.append(ref)
             for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict):
@@ -313,7 +335,8 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                         and block.get("name") == "Bash" and command_in_tool(block.get("input"), command)):
                     call_count += 1
                     calls[block["id"]] = dict(id=block["id"], name="Bash", arguments=block["input"],
-                                              record=ref, startup=startup_ref)
+                                              record=ref, startup=startup_ref,
+                                              timestamp=record.get("timestamp"))
                 if record.get("type") == "user" and block.get("type") == "tool_result":
                     if block.get("is_error") is not True:
                         results.setdefault(block.get("tool_use_id"), []).append((ref, block.get("content")))
@@ -325,6 +348,17 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                  and ref["offset"] > call["record"]["offset"]]
     require(len(completed) == len(results.get(call["id"], [])) == 1, "READINESS_TOOL_RESULT_NOT_OBSERVED")
     require(prompts[0]["offset"] < call["record"]["offset"], "READINESS_PRECEDES_STARTUP_INPUT")
+    if goal_mode and lane != "codex":
+        before_result = [(ref, row) for ref, row in goals
+                         if ref["offset"] <= completed[0][0]["offset"]]
+        require(before_result and all(row["attachment"].get("met") is False
+                and ("failed" not in row["attachment"] or row["attachment"]["failed"] is False)
+                and ("sentinel" not in row["attachment"] or type(row["attachment"]["sentinel"]) is bool)
+                and row["attachment"].get("condition") == spec["goal_startup"][lane]
+                for _, row in before_result), "STARTUP_GOAL_CHANGED_BEFORE_READINESS")
+        initial = next(row for ref, row in goals if ref == prompts[0])
+        require(parse_time(initial["timestamp"]) <= parse_time(call["timestamp"], "probe timestamp"),
+                "STARTUP_GOAL_TIME_AFTER_PROBE")
     models = [(ref, model) for ref, model in model_records if ref["offset"] <= completed[0][0]["offset"]]
     require(models and len({model for _, model in models}) == 1, "STARTUP_MODEL_UNCONFIRMED_OR_CHANGED")
     nested = (nested_readiness_command(execution_records, call, completed[0][0], session, command, spec)
@@ -347,6 +381,10 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                  call_id=call["id"], hooks=matched, model=models[-1][1], model_record=models[-1][0])
     if used_nested:
         proof["native_command"] = {key: nested[key] for key in ("id", "record", "turn_id")}
+    if goal_mode:
+        proof["startup_kind"] = "pinned_lane_prompt" if lane == "codex" else "native_goal_set"
+        if lane != "codex":
+            proof["goal_condition_sha256"] = digest(spec["goal_startup"][lane].encode())
     return proof
 
 

@@ -46,10 +46,18 @@ See the measured rules in
 [verified delivery](references/verified-compose-delivery.md).
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 Current measured results and open live-validation gaps are recorded in the
+[r25 native run checkpoint](docs/VALIDATION-20261019-R25.md),
 [r23 preparation and provider observations](docs/VALIDATION-20261019-R23.md),
 [r22 timeout and candidate improvements](docs/VALIDATION-20261019-R22.md) and
 [r21 terminal report and UUID repair](docs/VALIDATION-20261019-R21.md), with
 earlier batches in the [2026-10-18 validation report](docs/VALIDATION-20261018.md).
+
+For explicitly authorized new Goal clients, use startup-v3 with pinned duties
+for all three lanes and exact native `/goal` conditions for both Claude lanes.
+Require native SET, the actual probe and automatic hooks before adoption.
+Preserve legacy startup-v2 clients and attempts. A Goal prompt, configuration,
+SET record or later model activity alone does not prove continuous operation,
+message acceptance or efficiency; see [Goal evidence](docs/NATIVE-GOAL-OBSERVATION.md).
 
 Original handshake member selectors may be a numeric `surface:<N>` or a UUID.
 Canonicalize UUID aliases and allow repeated aliases only for the same member;
@@ -106,6 +114,16 @@ Truncated, yielded, duplicate, stale or unsupported tool records remain UNKNOWN;
 bounded scan coverage and original record offsets must be reported. Do not send
 extra messages or ACKs to improve the 192-sample denominator.
 See [active communication and its measured limits](docs/ASYNC-COMMUNICATION-VALIDATION.md).
+Continuous Goal requires explicit native activation and renewal evidence; r25
+did not register those steps. Use the separate read-only
+`scripts/upgrade_goal_observer.py` to inspect original Claude `goal_status`
+attachments, never prompt text or queue banners. A clear sentinel with `met:true`
+is not goal completion, and later model activity does not prove wake causation.
+Restoring a Goal can reset iteration/time/token baselines without a new SET
+record. Report discrete observations and UNKNOWN intervals; do not infer
+continuous operation, message acceptance or business correctness. The observer's
+local tests are not native pressure results. See
+[native Goal observation](docs/NATIVE-GOAL-OBSERVATION.md).
 These instructions update this experimental skill only. The designated
 surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns
 retain their original controllers; documentation does not hot-reload clients.
