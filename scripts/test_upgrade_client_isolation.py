@@ -8,7 +8,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-import tomllib
+import upgrade_toml as tomllib
 import unittest
 from unittest.mock import patch
 import uuid

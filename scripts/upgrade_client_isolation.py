@@ -16,7 +16,7 @@ import re
 import shlex
 import stat
 import sys
-import tomllib
+import upgrade_toml as tomllib
 
 from orchestration_common import ContractError, checked_path, read_regular, require
 

@@ -27,7 +27,7 @@ target, point, mode = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 payload = b"complete-new-evidence\n" * 8192
 original_open, original_fdopen = os.open, os.fdopen
 original_fsync, original_link = os.fsync, os.link
-original_replace, original_unlink = os.replace, os.unlink
+original_replace, original_unlink = os.replace, Path.unlink
 
 def crash(name):
     if point == name:
@@ -80,7 +80,8 @@ os.fdopen = lambda *args, **kwargs: Writer(original_fdopen(*args, **kwargs))
 os.fsync = synced
 os.link = lambda *args, **kwargs: published(original_link, *args, **kwargs)
 os.replace = lambda *args, **kwargs: published(original_replace, *args, **kwargs)
-os.unlink = unlinked
+# Patch the API actually called: Python 3.10 pathlib caches os.unlink.
+Path.unlink = unlinked
 _publish_bytes(target, payload, exclusive=mode == "exclusive")
 raise SystemExit("requested crash point was not reached")
 '''
