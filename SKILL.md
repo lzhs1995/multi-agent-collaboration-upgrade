@@ -394,6 +394,22 @@ later action retain fresh authentication; this is not permission to cache a
 digest, skip an input gate or reuse authority across commands. Apply the same
 control-overhead changes to both benchmark arms and keep their original clocks.
 
+An advance invocation may share its initial fresh Coordinator between status
+and advice only before any action. Fence the run header, control files, events
+and leases across that observation; retain native snapshot checks and accepted
+output revalidation. Status may select ready nodes from the state it just
+validated instead of replaying it twice. Every action and final refresh still
+constructs a fresh Coordinator. Do not cache runtime hashes across actions.
+For equal-priority new work, order eligible recorded phases PENDING, PREPARING,
+then PREPARED, so single-step invocations do not repeatedly favor the first
+executor. Preserve closeout/review/reconcile priority and all dependency, scope
+and original-attempt checks. The R31 field observation found costly repeated
+startup-pin validation and delayed second-lane preparation; fixture validation
+of this repair does not establish live throughput or 15% improvement. Frozen
+R31 clients retain their original code. See [control-overhead validation](
+docs/CONTROL-OVERHEAD-VALIDATION.md) and the [R31 native report](
+docs/VALIDATION-20261019-R31.md).
+
 A private campaign may reuse the runtime it fully validated earlier in the same
 validation invocation for its immediate adoption check and pure session binding
 comparisons. Still authenticate the adoption proof afresh. Public live gates and

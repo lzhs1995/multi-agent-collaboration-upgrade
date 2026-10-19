@@ -124,6 +124,7 @@ class AdvanceTests(unittest.TestCase):
         self.assertEqual(result["states"]["parallel"], "PREPARING")
 
     def test_ready_local_handoff_precedes_an_existing_prepared_lane_dispatch(self):
+        self.narrow("local", "review")
         co = self.start()
         co.claim("review")
         self.f.prepare(co, "review")
@@ -155,9 +156,30 @@ class AdvanceTests(unittest.TestCase):
         with self.fixture_transport():
             results = [self.r.advance(self.run) for _ in range(4)]
         self.assertEqual([(r["actions"][0]["node_id"], r["actions"][0]["action"]) for r in results],
-                         [("review", "claim"), ("review", "prepare"), ("review", "dispatch"), ("parallel", "claim")])
+                         [("review", "claim"), ("parallel", "claim"), ("review", "prepare"), ("parallel", "prepare")])
         self.assertEqual(results[-1]["states"]["local"], "EVIDENCE_READY")
         self.assertIsNone(self.co.leases.read()[info["task_id"]]["released_at"])
+
+    def test_fair_progress_survives_new_runner_for_every_single_step(self):
+        self.narrow("review", "parallel")
+        self.start()
+        with self.fixture_transport():
+            results = [Runner(self.f.ref, fixtures=True).advance(self.run, max_steps=1) for _ in range(6)]
+        self.assertEqual([(r["actions"][0]["node_id"], r["actions"][0]["action"]) for r in results], [
+            ("review", "claim"), ("parallel", "claim"),
+            ("review", "prepare"), ("parallel", "prepare"),
+            ("review", "dispatch"), ("parallel", "dispatch")])
+        self.assertEqual(results[-1]["states"], {"review": "DISPATCHED", "parallel": "DISPATCHED"})
+
+    def test_ineligible_pending_node_does_not_hold_back_prepared_lane(self):
+        self.narrow("review", "followup")
+        co = self.start()
+        co.claim("review")
+        self.f.prepare(co, "review")
+        with self.fixture_transport():
+            result = Runner(self.f.ref, fixtures=True).advance(self.run, max_steps=1)
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [("review", "dispatch")])
+        self.assertEqual(result["states"]["followup"], "PENDING")
 
     def test_unknown_native_submit_never_resends_across_advances(self):
         self.narrow("local", "review")
@@ -192,16 +214,18 @@ class AdvanceTests(unittest.TestCase):
 
     def test_stale_advice_cannot_claim_again_and_preserves_partial_results(self):
         self.start()
-        observe = self.r.next_action
         changed = False
-        def stale(run_id):
+        # Inject after the complete fenced observation, at the actual action
+        # boundary: it must still enter a freshly constructed coordinator.
+        import orchestration_advance
+        execute = orchestration_advance._execute
+        def stale_before_execute(runner, run_id, key, expected, action):
             nonlocal changed
-            view = observe(run_id)
             if not changed:
                 changed = True
                 self.r.co(run_id).claim("local")
-            return view
-        with patch.object(self.r, "next_action", side_effect=stale):
+            return execute(runner, run_id, key, expected, action)
+        with patch.object(orchestration_advance, "_execute", side_effect=stale_before_execute):
             result = self.r.advance(self.run, max_steps=2)
         self.assertEqual(result["actions"][0]["status"], "PENDING_OR_BLOCKED")
         self.assertIn("state changed", result["actions"][0]["error"])

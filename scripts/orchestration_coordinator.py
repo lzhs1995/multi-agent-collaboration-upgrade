@@ -534,6 +534,10 @@ class Coordinator:
 
     def ready(self):
         states, data = self.state()
+        return self._ready_from_state(states, data)
+
+    def _ready_from_state(self, states, data):
+        """Select from this observation's verified state; never an action gate."""
         if any(state in (State.BLOCKED, State.FAILED_PRESERVED) for state in states.values()):
             return []
         for key, state in states.items():

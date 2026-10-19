@@ -66,6 +66,18 @@ def _control_fence(co):
     return result
 
 
+def _observation_fence(co):
+    require(read_json(co.root / "run.json") == co.header, "run header changed during observation")
+    return _control_fence(co), co.events(), co.leases.read()
+
+
+def _verify_observation_fence(co, fence):
+    control, events, leases = fence
+    require(read_json(co.root / "run.json") == co.header, "run header changed during observation")
+    require(_control_fence(co) == control, "control evidence changed during observation; read again")
+    require(co.events() == events and co.leases.read() == leases, "run advanced during observation; read again")
+
+
 def package_drafts(campaign_ref, campaign, spec):
     plan = validate_plan(json_ref(campaign["plan"]))
     root = Path(campaign["root"]) / "runs" / spec["run_id"]
@@ -263,6 +275,14 @@ def _advice(co, key, state, info, operations, files, lease):
 
 @contract_errors("next-action observation")
 def next_action(runner, run_id):
+    root = checked_path(Path(runner.campaign["root"]) / "runs" / run_id)
+    co = runner.co(run_id) if (root / "run.json").exists() else None
+    return _next_action_from_co(runner, run_id, co)
+
+
+@contract_errors("next-action observation")
+def _next_action_from_co(runner, run_id, co):
+    """Only reuse a fresh coordinator within one uninterrupted observation."""
     spec = runner.spec(run_id)
     root = checked_path(Path(runner.campaign["root"]) / "runs" / run_id)
     drafts = runner.drafts(run_id)["drafts"]
@@ -276,11 +296,9 @@ def next_action(runner, run_id):
         result.update(status="INCOMPLETE_START" if root.exists() else "NOT_STARTED", recorded_states={}, nodes=[],
                       recorded_claim_candidates=[], next_action="review-original-start" if root.exists() else "start-script")
         return result
-    co = runner.co(run_id)
-    control_fence = _control_fence(co)
-    events = co.events()
+    require(co is not None, "run started during observation; read again")
+    control_fence, events, leases = _observation_fence(co)
     states, data = recorded_state(co, events)
-    leases = co.leases.read()
     snapshots = {lane: NativeReader(session, fixtures=co.fixtures).snapshot()
                  for lane, session in co.campaign["sessions"].items()}
     rows, incomplete = [], []
@@ -331,8 +349,7 @@ def next_action(runner, run_id):
             else:
                 candidates.append(node["id"])
                 row["recommendation"].update(action="claim-after-live-gates", reason="Recorded dependencies and lane permit a proposed claim; full gates must still pass.", gated_command="claim")
-    require(_control_fence(co) == control_fence, "control evidence changed during observation; read again")
-    require(co.events() == events and co.leases.read() == leases, "run advanced during observation; read again")
+    _verify_observation_fence(co, (control_fence, events, leases))
     for lane, pin in snapshots.items():
         NativeReader(co.campaign["sessions"][lane], fixtures=co.fixtures).verify_pin(pin)
     observed = {name for row in rows for name, point in row["timeline"]["boundaries"].items() if point is not None}

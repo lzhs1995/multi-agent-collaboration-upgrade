@@ -513,6 +513,14 @@ C01–C28 的状态时间来自 owner v136 的 2026-10-18 逐项回件。后续 
 
 ## 勘误和状态合并规则
 
+R31 新增实测与修复（保留 C01–C41 编号）：
+
+| 关联 | 原次事实 | 采用与剩余验证 |
+|---|---|---|
+| C09/C18/C36/C37 | 私有 NativeReader 每次完整校验 29 个 startup pins，合计 1,066,091,209 字节；一个 Coordinator 静态至少触发 7 次。原 callback advance 用时 248.0557 秒，不能直接归因于锁或纯哈希时间。 | 初始 status/advice 同一次观察共用新 Coordinator，status 状态只重放一次；前后检查 header/control/events/leases，动作及最终刷新仍新建。未使用跨动作 digest/stat 缓存，剩余 NativeReader 开销仍大。见[证据及限制](CONTROL-OVERHEAD-VALIDATION.md)。 |
+| C09/C31 | 每次 advance 重置公平计数，原 R31 的 A claim→prepare→dispatch 先于 B claim；B 已启动但正式握手迟迟未推进。 | 同优先级按持久阶段排序，新的单步 Runner 连续调用实测 A claim/B claim/A prepare/B prepare/A dispatch/B dispatch。收尾、依赖、写域和原次门禁不变；尚无新版本原生提效样本。 |
+| C10/C24/C34/C40 | A 原 callback 于 12:50:36.429Z 返回 exit75，17.024 秒后原 Codex 日志出现完整 DONE；12:53:23.781Z 原 reconcile-only 成功，bridge_retries=0。 | 原次迟到收件不能解释为 key 失效或确定未送达。观察原日志并只读结算，不重发；callback 与业务 ACCEPT 分别证明。见[R31](VALIDATION-20261019-R31.md)。 |
+
 1. v17 的原建议与 owner v136 不一致时，保留原建议作为历史，采用 owner 改写；用户后续明确要求优先。尤其 C14/C16/C21 不恢复 busy 禁令。
 2. profile addendum3 的“只重复执行两套入口”已由 `addendum3.erratum-1` 撤回；差异须沿 import 闭包核对。勘误本身也未证明旧文字已在实际回合出现。
 3. callback 144.9秒按 erratum 拆分24.9秒与120秒；3858.7秒预留静默为另一指标。

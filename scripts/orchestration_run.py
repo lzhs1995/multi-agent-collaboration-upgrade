@@ -97,12 +97,16 @@ class Runner:
     @staticmethod
     def _status_from_co(co):
         # A returned status is observational; later actions retain their fresh gates.
+        from orchestration_observe import _observation_fence, _verify_observation_fence
+        fence = _observation_fence(co)
         require(read_json(co.root / "run.json") == co.header, "run header changed during status")
-        states, _ = co.state()
+        states, data = co.state()
         closed = (co.root / "finish.json").exists()
-        return dict(run=co.spec, root=str(co.root), state="CLOSED" if closed else "STARTED",
-                    closed=closed, states={k: s.value for k, s in states.items()},
-                    ready=[] if closed else [n["id"] for n in co.ready()])
+        result = dict(run=co.spec, root=str(co.root), state="CLOSED" if closed else "STARTED",
+                      closed=closed, states={k: s.value for k, s in states.items()},
+                      ready=[] if closed else [n["id"] for n in co._ready_from_state(states, data)])
+        _verify_observation_fence(co, fence)
+        return result
 
     def drafts(self, run_id):
         self._upgrade_features()

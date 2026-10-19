@@ -24,7 +24,18 @@
 
 专项覆盖：输入前拒绝、PASTE_INTENT 后失败、无 details、缺失/不可读/变化证据、先成功 peer 后失败 peer、第三 peer 不再派发、原 attempt 不变、不 ACK/重发、receipt 写失败、root 替换、源码形状漂移及原不确定分支保留。独审结论为 `NO_SUBSTANTIVE_BLOCKER_IN_REVIEWED_FAILURE_SETTLEMENT`。
 
-本报告随实现提交。新提交的 Ubuntu/macOS × Python 3.10/3.14 CI 在提交后核收；发布前不称该提交已完整回归。此前绿色 [CI 39241757006](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39241757006) 属于 `d8a158509680de53f9c8bdc8c541408c3054f605`，每格发现 2176 项、macOS skip96/Ubuntu skip106，不能移算给本改动。
+实现提交 `7fa8e4ee158d7fff82536ec153072c48183ab036` 的 [CI 39249352530](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39249352530) 已于 12:13:16 UTC 完成，四组均为 success。12:15:43 UTC 已保存 run metadata、原始日志 ZIP、四份 job 日志及 SHA256，逐项核对如下：
+
+| 环境 | 发现用例（含跳过） | 通过 | 跳过 | failures / errors | 测试耗时 |
+|---|---:|---:|---:|---|---:|
+| macOS / Python 3.10 | 2184 | 2080 | 104 | 0 / 0 | 354.365 秒 |
+| macOS / Python 3.14 | 2184 | 2080 | 104 | 0 / 0 | 430.032 秒 |
+| Ubuntu / Python 3.10 | 2184 | 2070 | 114 | 0 / 0 | 405.276 秒 |
+| Ubuntu / Python 3.14 | 2184 | 2070 | 114 | 0 / 0 | 456.956 秒 |
+
+这是同一套 2184 个发现用例在四个环境执行，跳过不算通过。CI 缺少固定本机 MAC 与 cmux wrappers，相关生成控制器用例按条件跳过；上面的本地专项与 materialized 检查单独补充这一覆盖，不能将它们拼成一次零跳过全套或原生模型压力测试。首次 job 日志逐个下载失败后，改用本次 run 的原始日志 ZIP 收取成功，没有重跑 CI。
+
+此前绿色 [CI 39241757006](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39241757006) 属于 `d8a158509680de53f9c8bdc8c541408c3054f605`，不移算给本改动。此处受测实现精确指向 `7fa8e4e`；后续[控制开销与公平调度修改](CONTROL-OVERHEAD-VALIDATION.md)须另行验证，不能沿用本次 CI 作为新实现的通过证据。
 
 ## 原生验收保持开放
 
@@ -38,4 +49,5 @@ R30 的 pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、有效配对 0/15�
 - [首次 42 项集成](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/targeted-integration.json)
 - [超时栈诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/settlement-timeout-diagnostic.json)
 - [修复后 2 项集成](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/settlement-repaired-materialized.json)
+- [7fa8e4e 四组 CI 原始摘要与日志哈希](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/publication/ci-39249352530/result.json)
 - [原 R30 恢复观察](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/recovery-observation/REPORT.md)

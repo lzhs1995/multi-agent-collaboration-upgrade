@@ -10,7 +10,7 @@ from pathlib import Path
 from time import monotonic
 
 from orchestration_campaign import control_script, find_control
-from orchestration_common import ContractError, json_ref, require
+from orchestration_common import ContractError, checked_path, json_ref, require
 from orchestration_coordinator import State
 from orchestration_native import NativeReader
 
@@ -119,7 +119,12 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
                   max_steps=max_steps, max_seconds=max_seconds, actions=[], supervisor_actions=[],
                   input_retry_authorized=False, native_control_executed=False,
                   budget_kind="between_original_synchronous_actions", stop_reason="step_budget")
-    status = runner.status(run_id)
+    from orchestration_observe import (_next_action_from_co, _observation_fence,
+                                       _verify_observation_fence)
+    root = checked_path(Path(runner.campaign["root"]) / "runs" / run_id)
+    initial_co = runner.co(run_id) if (root / "run.json").exists() else None
+    initial_fence = _observation_fence(initial_co) if initial_co is not None else None
+    status = runner._status_from_co(initial_co) if initial_co is not None else runner.status(run_id)
     if status["state"] != "STARTED":
         result["stop_reason"] = status["state"]
         if status["state"] == "NOT_STARTED":
@@ -137,7 +142,13 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             result["stop_reason"] = "time_budget_between_actions"
             break
         try:
-            view = runner.next_action(run_id)
+            if initial_co is not None:
+                view = _next_action_from_co(runner, run_id, initial_co)
+                _verify_observation_fence(initial_co, initial_fence)
+                # No observed coordinator or state crosses an action boundary.
+                initial_co, initial_fence = None, None
+            else:
+                view = runner.next_action(run_id)
             options, waiting = _options(runner, run_id, view)
         except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
             from orchestration_run import exception_trace
@@ -149,8 +160,12 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
             result["stop_reason"] = view["status"]
             break
         options = [o for o in options if (o[1], o[3]) not in attempted]
-        # Advance all eligible lanes fairly before taking a second step on one.
-        options.sort(key=lambda o: (o[0], counts.get(o[1], 0)))
+        # Recorded lifecycle progress survives single-step invocations. Claim
+        # all eligible independent lanes before prepare, then prepare before
+        # dispatch. Keep closeout/review/reconcile priorities and fresh gates.
+        phases = {State.PENDING.value: 0, State.PREPARING.value: 1, State.PREPARED.value: 2}
+        options.sort(key=lambda o: (o[0], phases.get(o[2], 3) if o[0] == 1 else 0,
+                                    counts.get(o[1], 0)))
         if not options:
             result["stop_reason"] = "supervisor_or_original_evidence_required"
             break
