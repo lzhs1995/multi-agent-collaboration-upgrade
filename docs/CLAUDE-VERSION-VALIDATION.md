@@ -37,7 +37,7 @@ R29 第一组于 09:40:21Z 创建。两名 Claude 的原生版本记录与实际
 | Claude A | `0d4f6ec4-dc7d-4e71-afd9-3adf863680f2` | 45057 | 2.1.303 |
 | Claude B | `47912cd3-25b6-44af-9f36-42e3f83ed6c7` | 45097 | 2.1.303 |
 
-[原生启动快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-startup-checkpoint.json) 记录两路 Goal SET，以及 Goal 检查失败后的 1 分钟、5 分钟退避提示。两路 `api-request` 的 `querySource=repl_main_thread`、`params.model=claude-opus-5-5`，证明原生客户端所请求的型号；没有 assistant 响应，实际后端完成型号仍未证明。私有配置使用 `fable` 映射到 Opus 5.5；不能改成指向 Opus 5 的 `opus` 别名。
+[原生启动快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-startup-checkpoint.json) 记录两路 Goal SET，以及 Goal 检查失败后的 1 分钟、5 分钟退避提示。两路主 journal 的 `api-request` 为 `querySource=repl_main_thread`、`params.model=claude-opus-5-5`，证明原生客户端所请求的型号；主任务没有可见 assistant 输出，实际后端完成型号仍未证明。后续审计另发现 B 有成功的后台摘要，不能把主任务空输出扩展为所有请求均无输出。私有配置使用 `fable` 映射到 Opus 5.5；不能改成指向 Opus 5 的 `opus` 别名。
 
 该快照时 Codex probe/自动 hook 已观察，双 Claude 仍未 ready，pilot 0/3。303 的响应观察目录只有 `LOADED`，没有请求记录；原生日志却有请求，因此不能用观察文件缺失推断“未请求”，也不能照抄 R28 的 HTTP 200 结论。新版退避行为有原生证据，成功执行协作尚无证据。
 
@@ -57,8 +57,24 @@ R29 原次保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普�
 
 原次于 2026-10-19T09:55:46.520524Z 结束，driver/watchdog 均 exit 2：TIMEOUT / INSUFFICIENT_EVIDENCE。pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、可比较配对 0/15；192 个唯一普通通信 ID 的可验证闭环为 0/192，不表示 192 次均已发送。仅第一组启动，剩余六组为准备状态。原控制器为 b0ac022 的 v24，后续 9a09f32 打包修复未迁移到该原次。
 
-终态快照中两路各记录 6 条主请求，均无 assistant。A 的 client.log 第347、562行有 `429 group requests-per-minute limit exceeded`；第526–527行另有无 message_start、无 SSE 事件而转 non-streaming 的记录。429 对应主请求还是 Goal hook、空流 HTTP 状态均未确定。B 底层原因 UNKNOWN；两路 settings rename EPERM 的因果未证明。
+后续[原生诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/native-diagnosis/report.md)确认：两路主任务各有三次原生 `resultLen=0` 回合结束，并各有三条原生 continuation 提示，原文为 `[Your previous response had no visible output. Please continue and produce a user-visible response.]`。这证明主客户端可见输出为空，但不重建原始 HTTP 响应。B 的后台 `away_summary` 曾收到 assistant 并以 `output=43` 结束；后台摘要不算主任务或业务完成。
 
-两路 Stop prompt hook 曾报 `No assistant message found`；B 于09:48:50.124Z、A于09:49:21.077Z由客户端自身在 Goal 检查超时后暂停。主管没有暂停或再次唤醒它们。7组停止输入标记全部核验，客户端保留，远端取消和 Goal 结束仍未证明。总 wrapper 耗时929.762秒，launch至halt925.091秒；900秒是离散检查预算，超额时间无法全部精确归因。
+| debug 请求入口类别 | A | B | 请求型号呈现 |
+|---|---:|---:|---|
+| `repl_main_thread` | 7 | 6 | `claude-opus-5-5[1m]` |
+| Goal `hook_prompt` | 5 | 3 | `claude-opus-5-5` |
+| `away_summary` | 2 | 3 | `claude-opus-5-5[1m]` |
 
-[终态原生快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-final.json) 与 [独立终态审查](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-delivery-review/terminal-review.md) 支持以上结论。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。本轮不再重开实验；升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。
+这些是包含重试和 fallback 的 debug 入口计数，不是唯一服务 request ID。各主 journal 的六条 `api-request` 不等于全部 API 活动；请求字符串及 `[1m]` 不证明实际后端或有效上下文容量。A 的 client.log 第347、562行两次 `429 group requests-per-minute limit exceeded` 均位于 Goal-hook 时间区间内并随后出现 Goal 重试，时间顺序强烈支持 Goal-hook 归属；没有 request-ID 关联，不能称绝对 wire 归因。第525–529行还记录主请求等待30秒无初始chunk、无 message_start/事件及 non-streaming fallback，原始 HTTP 状态/正文仍未知。B 没有对应的明确429或空流诊断，底层原因 UNKNOWN；两路 settings rename EPERM 的因果未证明。
+
+两路前两次 Goal 检查均报 `No assistant message found`。该错误来自独立的 `hook_prompt` schema 请求：无工具、thinking disabled、默认30000毫秒超时，并非仅在主 journal 中查找 assistant。B 于09:48:50.124Z、A于09:49:21.077Z由客户端自身在 Goal 检查超时后暂停。主管没有暂停或再次唤醒它们。7组停止输入标记全部核验，客户端保留；暂停不等于结束，远端取消和 Goal 结束仍未证明。总 wrapper 耗时929.762秒，launch至halt925.091秒；900秒是离散检查预算，超额时间无法全部精确归因。
+
+[终态原生快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-final.json)、[独立终态审查](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-delivery-review/terminal-review.md)及后续原生诊断分别保存各阶段证据。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。此前“不再重开”指 R29 原次收口，不是对已授权后续独立实验的永久禁令；本次文档补记接收任务时 R30 尚未启动。升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。
+
+## 后续观察器修复：本地通过，实业务待验
+
+冻结观察器只包裹 `globalThis.fetch`；实际303源码的 `p5n` 在当前global等于捕获值 `wn` 时可选择缓存的 `Bun.FetchSession.fetch`，绕过该包裹。源码及本地复现确认兼容缺陷，但 R29 未留分支遥测，不能追认每次历史请求必经该分支。LOADED只证明preload执行；原代码在transport前写REQUEST，因此“响应未读”本身不足以解释没有REQUEST。
+
+[候选修复与验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)保留原生session，为新构造实例覆盖fetch观察路径，并区分构造器已安装、实例安装和实际拦截。候选 SHA256 为 `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。**47/47 Node通过；实际303内嵌Bun 1.4.4完成global/session × reader/iterator四轮各256条并发loopback流**，合计1024流、1048576个delta、216189952字节。每轮使用新观察上下文，不是单个512请求寿命内观察1024请求。另以独立Bun验证global路径；该Bun无FetchSession。
+
+这些均为本地验证，原生可执行文件只运行隔离的 `--version` 加loopback fixture；重建源码选择表达式，不执行原生业务 `p5n`。没有模型请求、业务样本或提效测量，旧2171项完整/CI也不含这次观察器验证。已存在的session/缓存构造器仍不覆盖，重复路径计数不是通用网络尝试计数；请求类别保持UNKNOWN，不从prompt猜测。未读、截断或预先消费的响应不能据text=false判空，观察开销未校准。新实验仍须独立证明实际加载及业务响应覆盖。

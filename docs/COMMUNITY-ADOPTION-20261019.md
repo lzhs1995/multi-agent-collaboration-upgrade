@@ -47,7 +47,7 @@
 | [Magpie会话投影](https://github.com/yetone/magpie/blob/ab7ec8c657da4653d2b55c91a1cdccd9ad92b4a4/internal/sessions/external.go) | native身份优先，配置/流量/会话视图分层 | gateway投影不证明当前原生resume、收件或客户端加载。 |
 | [firstmate #6753](https://github.com/kunchenguid/firstmate/pull/6753)、[#7517](https://github.com/kunchenguid/firstmate/pull/7517) | 无新事件也发现ready backlog、坏cursor隔离、公平轮转 | 作为针对性验证清单，不能据PR标题宣称已合并或upgrade已测。 |
 
-本次已实现的直接效率改动是B的有界advance：原状态推进批量化、独立lane公平选择、就绪local业务先交主管、末尾刷新并过滤已消费handoff。A1同样允许双Claude并行。社区新增的cursor断档、旧generation及同拍消息/结果场景须与现有测试逐项映射，未覆盖项继续标待测；不因发现第三方机制而在运行中更换冻结实验协议。
+本次已实现的直接效率改动是B的有界advance：原状态推进批量化、独立lane公平选择、就绪local业务先交主管、末尾刷新并过滤已消费handoff。A1同样允许双Claude并行。此前cursor断档、旧generation及同拍消息/结果尚待映射；后续已完成[五项实际API组合验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/community-gaps/RESULTS.md)，具体覆盖与字面场景限制见末节。不因发现第三方机制而在运行中更换冻结实验协议。
 
 ## 既有平台研究的纠偏与采用
 
@@ -59,7 +59,7 @@
 ## 本轮落实和仍需交付的证据
 
 采用组合为：Orca任务/尝试/收件箱边界＋Paseo式事件发现＋MAC原会话传输＋panel式独立复核＋HiRoute式具体执行配置归属；编排判断与独立业务checker分开。已有rules/offline_mock不宣称真实Jev/TypeSafe服务就绪。
-当前`advance`已完成独立增量审查，结论NO_SUBSTANTIVE_BLOCKER_IN_REVIEWED_INCREMENT；2168项完整本地回归通过。它按主管显式调用批量推进，不能唤醒空闲模型，尚无live提效结论。审查范围包括：持久计划输入、同run依赖/lease、原会话身份、每次至多一次输入、回件证据与业务accept分离、异常保留UNKNOWN、有截止的有用推进、显式原deadline；并核准备脚本未改原失败/原会话。
+该阶段`advance`已完成独立增量审查，结论NO_SUBSTANTIVE_BLOCKER_IN_REVIEWED_INCREMENT；当时2168项完整本地回归通过。它按主管显式调用批量推进，不能唤醒空闲模型，尚无live提效结论。审查范围包括：持久计划输入、同run依赖/lease、原会话身份、每次至多一次输入、回件证据与业务accept分离、异常保留UNKNOWN、有截止的有用推进、显式原deadline；并核准备脚本未改原失败/原会话。
 效率结论必须由冻结的同任务配对数据给出：成功接受率、端到端耗时、callback冻结→发现→全文读取→业务accept→下一包的分段及p50/p95、人工干预、重复工作、重试和完整费用/usage。长时间运行、HTTP200、离线测试数和宣传成本都不能替代这些指标。
 问题台账 [docs/COLLABORATION-ISSUE-LEDGER.md](/Users/lzhs/projects/multi-agent-collaboration-upgrade/docs/COLLABORATION-ISSUE-LEDGER.md) 重建41类，包含owner28项处置，旧29类清单未恢复。根任务已报告当前联系surface40被WORKSPACE_SCOPE_DENIED拒绝；该状态只依据根任务消息，未把文件询问称为对方已收到/已读/已回复。共享层仍由surface40维护。
 
@@ -73,6 +73,19 @@
 
 ## 本轮终态与测试边界
 
-最终实现验证见[R29交付报告](VALIDATION-20261019-R29.md)：9a09f32本机2171项完整回归与四格CI成功，CI跳过数另列。原生R29仍为业务0/33、配对0/15，不能将上文采用决定写成实测提效或所有社区工具已实跑。
+该阶段实现验证见[R29交付报告](VALIDATION-20261019-R29.md)：9a09f32本机2171项完整回归与四格CI成功，CI跳过数另列；**该计数不包含随后新增的五项社区组合测试，也不包含后续观察器验证**。原生R29仍为TIMEOUT / INSUFFICIENT_EVIDENCE、pilot0/3、业务0/33（1 TIMEOUT＋32 MISSING）、配对0/15、普通通信可验证闭环0/192（不表示全部已发送），不能将采用决定或本地通过写成实测提效。
 
-社区9机制对照已有35方法/7文件：5个仅离线限定、2个部分覆盖、2个精确场景未测，详见[逐项测试映射](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-ci-portability/community-test-mapping.md)。缺失推文正文、视频字幕、原服务长时成本和surface40本轮回复继续保留为缺口。
+较早社区9机制对照已有35方法/7文件：5个仅离线限定、2个部分覆盖、2个精确场景未测，原[逐项测试映射](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-ci-portability/community-test-mapping.md)保留为历史。后续在基准 `dbed873fc320649368631cb86005d7abfaaa2c0c` 新增 `scripts/test_orchestration_community_invariants.py`，**五项通过，12.909秒，零failure/error/skip**；未修改实现、未重跑完整回归/CI，零客户端或模型请求。四类原缺口按本项目实际API验证如下：
+
+| 原缺口 | 新增实际API证据 | 保留限制 |
+|---|---|---|
+| 空历史与事件断链 | 新run空历史为PENDING；两条事件缺第一条时拒绝，剩余事件/native journal/lease均不修改。 | 没有512项ring、cursor或淘汰机制，literal窗口溢出不适用；未证明检测整段尾部删除。 |
+| 旧owner/结果污染后继 | 两项测试：新owner占用后原release精确重试只读成功且字节/mtime不变，错投旧terminal或复用owner拒绝；后继路径注入旧candidate被transition与Runner.candidate拒绝，保持LOCAL_RUNNING及lease。 | 无generation watcher；精确原释放重试允许成功，不等于所有迟到操作报错。 |
+| 消息与本地结果同时ready | callback与local candidate持久就绪时，单步处理callback并保留local结果/事件链；重建Runner两者均可review-and-accept，无新增native输入/settlement，lease保留。 | 测的是持久积压共存与有限步让出，不是异步future/select的竞态顺序。 |
+| 无新事件发现backlog | 三次重建Runner均发现同一candidate/验收脚本，journal、事件、registry、candidate字节不变。 | 需要显式foreground调用，不会自动唤醒idle model。 |
+
+缺失推文正文、视频字幕、原服务长时成本和surface40本轮回复继续保留为缺口；如未来引入ring cursor、generation watcher或async select，须针对其真实实现新增测试，不能由上述结果提前宣布覆盖。
+
+后续[期限独立审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/deadline-audit/REPORT.md)也纠正了通知与接受的混淆：EXECUTOR_READY_161正文在回件deadline前42.974896秒完整展示，显式consumed回执晚29.344876秒，原控制器返回 `REPLY_CONSUMED=true`。这是reply-consume延迟/成功迟到ACK；TASK回件明确不是正式派包，不能算正式业务任务超时。正文展示不等于理解/接受；cron600秒配置已核，“唯一唤醒源/仅空闲触发”未独立证明，不将所有延迟归因cron/provider。
+
+[观察器后续修复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)另有47/47 Node及实际Claude303内嵌Bun的4×256并发loopback流通过，覆盖新建FetchSession路径；它是本地可观测性证据，没有live模型或效率样本，不与社区五测或旧2171计数合并。R29原次及旧会话保持不变；此前不启动R30的表述仅属于R29收口，本次文档补记接收任务时R30尚未启动。

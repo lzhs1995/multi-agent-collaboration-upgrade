@@ -45,6 +45,14 @@ response observer is a pinned controller artifact, scoped to the original root
 PID and its private 0700 directory. It observes only data the original consumer
 reads; it never clones, drains, retries or creates a request. Require an actual
 `LOADED` record with the matching source hash before treating it as active.
+Claude 2.1.303 can use native `Bun.FetchSession.fetch` instead of global fetch.
+Pin the constructor/instance observer and distinguish installation from an
+actually intercepted path in `LOADED.fetch_coverage`. Preexisting sessions and
+cached constructors remain uncovered. Exact-argument cross-path delegation is
+an observation assumption, not a universal network-attempt count. Responses
+already consumed before observation are `PRECONSUMED_UNOBSERVED`, never unread
+or complete. Do not infer an empty answer from a missing visible-text flag when
+coverage, consumption or parsing is incomplete.
 Use Bun's character escaping for `BUN_OPTIONS`, not shell quoting; configuration
 roundtrips and a successful `--version` alone do not prove preload activation.
 Reject unsupported literal backslashes before materialization. APFS path casing
@@ -118,8 +126,11 @@ See the measured rules in
 See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
 For new private campaigns, pin the actual Claude executable/version and requested
 model; installation alone does not establish adoption by an existing process.
-The 2.1.303 retry verified adoption but did not produce assistant output or a
-successful native comparison. Preserve rate limits, empty streams and Goal
+The 2.1.303 retry verified adoption but produced no main-task assistant output
+or successful native comparison; one executor did produce a background summary.
+Native Goal Stop checks are independent model requests. Preserve their failures
+separately from main-task and background requests; timing alone does not establish
+a request-ID binding. Preserve rate limits, empty streams and Goal
 check failures separately; do not treat Goal pause as proven termination or as
 permission to re-input. Goal checks do not validate independent long-running loop.
 See [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
