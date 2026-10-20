@@ -86,6 +86,15 @@ register the authorized continuing inquiry and read the complete reply before
 exact-SHA consumption. Retain the original Stop budget and verify actual native
 hook adoption and two real cycles separately from sandbox fixture results. See
 [private continuity validation](docs/PRIVATE-CONTINUITY-VALIDATION.md).
+For a new registered private continuity episode, the external
+`upgrade_continuity_native.py` adapter derives terminal outcomes from the
+original native journals and invokes the complete original evaluator under
+the private kernel boundary. It accepts no caller-authored health labels and
+sends no input. PENDING/partial scans cannot establish availability; later
+appends preserve a pinned complete interval. Its advisory result neither
+transfers roles or leases nor enforces the whole-task child budget. Keep actual
+hook adoption, two real inquiry cycles and benchmark acceptance separate. See
+[native continuity observation](docs/NATIVE-CONTINUITY-OBSERVATION.md).
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded
