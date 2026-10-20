@@ -22,8 +22,11 @@ Its terminal structured `error.codex_error_info.http_status_code` is an API
 error. String errors, unknown status and canonical aborts remain UNKNOWN.
 An internal error/retry notification is not another completed attempt.
 
-Claude uses its original session's user/assistant/tool-result/system parent
-chain. Complete enrolled-model text or tool-use messages count once per native
+Claude uses its original session's user/assistant/tool-result/system/attachment
+parent chain. Native hook/deferred-tool/queued-command attachments inherit the
+already authenticated parent; their contents never become API outcomes or user
+authorization. Unknown links, foreign sessions and sidechains are not adopted.
+Complete enrolled-model text or tool-use messages count once per native
 message ID, not once per thinking/tool chunk. A final synthetic API-error
 message uses its concrete `apiErrorStatus`; seven internal `system/api_error`
 records still do not count as seven attempts. Missing/string status is UNKNOWN.
@@ -34,6 +37,10 @@ Prior original records establish an in-flight turn or parent chain when
 registration happens during work. Only terminal records after the task fence
 are outcomes in the registered episode. There is no caller-supplied parser
 state, health label or copied transcript promoted to native evidence.
+An unclosed pre-fence Codex historical turn may be superseded by a fresh original
+start only before any post-fence activity of that turn has been observed. The
+old missing terminal is not an API failure. Post-fence overlapping turns remain
+refused, and a turn that really continues across the fence retains its state.
 
 ## Bounded and append-safe
 
@@ -95,3 +102,22 @@ and authorization refusal, and stopped read-only inspection. Their synthetic
 journals and adoption observations are not live automatic-hook adoption,
 real provider fault takeover, two real 60-second inquiry cycles or a benchmark.
 Those acceptance gates remain separate and unfinished.
+
+## R5 real-native finding and repair
+
+The independent 7426 review found attachment links in the original Claude
+transcript, which the fixtures had omitted: its 6000-record diagnostic window
+counted 0 successes, recovering 241 when attachments were relabeled as system.
+The repair adds attachment ancestry and pre-fence incomplete Codex handling,
+with separate failing-before/passing-after tests and negative boundaries.
+A subsequent read-only diagnostic used the same pinned 6000 original records
+for both parsers: old 0, candidate 267, original attachment-as-system control
+267, candidate attachment-excised control 0, with identical counted ID sets in
+each matched comparison. This is a new append-time window, not the reviewer's
+old window or a claim that all eligible outcomes were recovered. It emits no
+native text and grants no adoption/availability authority. Evidence is
+`maintenance/execution-20261021/continuity-r5-real-native-v1/result.json` under
+the task evidence root, with source, native device/inode/offsets and exact hashes.
+The frozen 7426 local full run still has one original 5-second Stop subprocess
+timeout among 2361 tests; its exact isolated rerun and all four CI jobs passed.
+Neither result removes R5's findings or substitutes for live acceptance.

@@ -170,6 +170,79 @@ class NativeContinuityTests(unittest.TestCase):
         self.assertEqual([event["native_record"] for event in value["observations"]], [first_ref, final_ref])
         self.assertEqual(len({event["attempt_id"] for event in value["observations"]}), 2)
 
+    def test_native_attachments_bridge_parent_chain_without_becoming_health_outcomes(self):
+        expected = {}
+        for lane in LANES[1:]:
+            journal = self.journals[lane]
+            user = journal.message("user", "Continue original authorized work.", at=stamp(10))
+            user.update(uuid=str(uuid.uuid4()), parentUuid=None, isSidechain=False)
+            journal.append(user)
+            hook = dict(type="attachment", uuid=str(uuid.uuid4()), parentUuid=user["uuid"],
+                        sessionId=journal.session["session_id"], isSidechain=False, timestamp=stamp(11),
+                        attachment=dict(type="hook_success", content="Original hook completed."))
+            journal.append(hook)
+            # An in-flight registration must keep the pre-fence ancestry, not its health.
+            self.sessions[lane]["freeze_fence"] = journal.reader.snapshot()
+            queued = dict(type="attachment", uuid=str(uuid.uuid4()), parentUuid=hook["uuid"],
+                          sessionId=journal.session["session_id"], isSidechain=False, timestamp=stamp(12),
+                          attachment=dict(type="queued_command", content="Quoted HTTP 502; not an outcome."))
+            journal.append(queued)
+            answer = journal.message("assistant", "Original native terminal result.", at=stamp(13))
+            answer.update(uuid=str(uuid.uuid4()), parentUuid=queued["uuid"], isSidechain=False)
+            answer["message"].update(id="msg_" + uuid.uuid4().hex, type="message", stop_reason="end_turn")
+            if lane == "claude_b":
+                answer.update(isApiErrorMessage=True, apiErrorStatus=502)
+                answer["message"].update(id=str(uuid.uuid4()), model="<synthetic>", stop_reason="stop_sequence")
+            expected[lane] = journal.append(answer)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual(value["pending_lanes"], [])
+        self.assertEqual(len(value["observations"]), 2)
+        by_surface = {event["surface_uuid"]: event for event in value["observations"]}
+        for lane in LANES[1:]:
+            event = by_surface[self.sessions[lane]["surface_uuid"]]
+            self.assertEqual(event["native_record"], expected[lane])
+            self.assertEqual(event["kind"], "API_SUCCESS" if lane == "claude_a" else "API_ERROR")
+            if lane == "claude_b":
+                self.assertEqual(event["http_status"], 502)
+        self.assertEqual(value["input_operations"], 0)
+
+    def test_attachments_without_an_original_same_session_root_cannot_authenticate_a_result(self):
+        for lane in LANES[1:]:
+            journal = self.journals[lane]
+            for index, change in enumerate((dict(isSidechain=True), dict(parentUuid=str(uuid.uuid4())),
+                                             dict(type="queue-operation"))):
+                epoch = 10 + index * 3
+                user = journal.message("user", "Keep original authorized scope.", at=stamp(epoch))
+                user.update(uuid=str(uuid.uuid4()), parentUuid=None, isSidechain=False)
+                journal.append(user)
+                node = dict(type="attachment", uuid=str(uuid.uuid4()), parentUuid=user["uuid"],
+                            sessionId=journal.session["session_id"], isSidechain=False, timestamp=stamp(epoch + 1),
+                            attachment=dict(type="hook_success", content="Cannot certify a model result."))
+                node.update(change)
+                journal.append(node)
+                answer = journal.message("assistant", "Unbound native result.", at=stamp(epoch + 2))
+                answer.update(uuid=str(uuid.uuid4()), parentUuid=node["uuid"], isSidechain=False)
+                answer["message"].update(id="msg_" + uuid.uuid4().hex, type="message", stop_reason="end_turn")
+                journal.append(answer)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual(value["observations"], [])
+        self.journals["claude_a"].append(dict(type="attachment", uuid=str(uuid.uuid4()),
+            parentUuid=user["uuid"], sessionId=str(uuid.uuid4()), isSidechain=False, timestamp=stamp(30),
+            attachment=dict(type="hook_success")))
+        with self.assertRaisesRegex(ContractError, "record belongs to another Claude session"):
+            collect_native_outcomes(self.sessions, task_id=TASK, now=40, fixtures=True)
+
+    def test_prefence_partial_codex_turn_with_postfence_activity_still_cannot_overlap(self):
+        journal, turn = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(1),
+                            payload=dict(type="task_started", turn_id=turn)))
+        self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
+        journal.append(dict(type="turn_context", timestamp=stamp(10),
+                            payload=dict(turn_id=turn, model=journal.session["model"])))
+        self.codex_success(11)
+        with self.assertRaisesRegex(ContractError, "overlapping original native turns"):
+            collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+
     def test_codex_abort_resets_health_but_is_not_an_api_outage_or_success(self):
         journal, turn = self.journals["codex"], str(uuid.uuid4())
         journal.append(dict(type="event_msg", timestamp=stamp(10),
@@ -221,6 +294,27 @@ class NativeContinuityTests(unittest.TestCase):
                             payload=dict(type="task_started", turn_id=second)))
         with self.assertRaisesRegex(ContractError, "overlapping"):
             collect_native_outcomes(self.sessions, task_id=TASK, now=40, fixtures=True)
+
+    def test_unclosed_prefence_codex_history_does_not_poison_a_fresh_original_turn(self):
+        journal = self.journals["codex"]
+        # Older native crash boundaries provide no terminal outcome. Keep their
+        # original bytes, but do not call them provider failures or current work.
+        for epoch in (1, 2):
+            turn = str(uuid.uuid4())
+            journal.append(dict(type="event_msg", timestamp=stamp(epoch),
+                                payload=dict(type="task_started", turn_id=turn)))
+            journal.append(dict(type="turn_context", timestamp=stamp(epoch),
+                                payload=dict(turn_id=turn, model=journal.session["model"])))
+        self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
+        historical = collect_native_outcomes(self.sessions, task_id=TASK, now=5, fixtures=True)
+        self.assertEqual(historical["observations"], [])
+        expected = self.codex_success(10)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual(value["pending_lanes"], [])
+        self.assertEqual(len(value["observations"]), 1)
+        self.assertEqual(value["observations"][0]["native_record"], expected)
+        self.assertEqual(value["observations"][0]["kind"], "API_SUCCESS")
+        self.assertEqual(value["input_operations"], 0)
 
     def test_duplicate_original_turn_id_cannot_count_as_distinct_retry_attempts(self):
         self.codex_error(10, 502)

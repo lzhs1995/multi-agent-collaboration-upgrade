@@ -47,6 +47,7 @@ def outcome(session, task_id, ref, record, attempt_id, now, *, kind="API_SUCCESS
 
 def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
     active, model, final = None, None, None
+    active_offset, active_observed = None, False
     values = []
 
     def append(ref, record, attempt_id, **fields):
@@ -58,10 +59,18 @@ def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
         if not isinstance(payload, dict):
             continue
         if record.get("type") == "event_msg" and payload.get("type") == "task_started":
-            require(active is None, "overlapping original native turns")
+            # A crash can leave an unclosed historical turn. It is not current
+            # availability or an API error. A fresh start may replace only that
+            # pre-fence state, never a turn with observed post-fence activity.
+            require(active is None or (active_offset < outcome_after and not active_observed),
+                    "overlapping original native turns")
             active = canonical_uuid(payload.get("turn_id"), "native turn id")
+            active_offset, active_observed = ref["offset"], ref["offset"] >= outcome_after
             model, final = None, None
-        elif (record.get("type") == "turn_context" and active is not None
+            continue
+        if active is not None and ref["offset"] >= outcome_after:
+            active_observed = True
+        if (record.get("type") == "turn_context" and active is not None
               and payload.get("turn_id") == active):
             require(payload.get("model") == session["model"], "native continuity model changed")
             model = payload["model"]
@@ -104,7 +113,9 @@ def claude_outcomes(session, records, task_id, now, *, outcome_after=0):
             ancestors[uid] = uid
             continue
         parent = ancestors.get(record.get("parentUuid"))
-        if parent and record.get("type") in ("assistant", "user", "system"):
+        # Native hooks, deferred tools and queued commands are ancestry links,
+        # not assistant API outcomes. They retain the original session/UUID gate.
+        if parent and record.get("type") in ("assistant", "user", "system", "attachment"):
             uid = canonical_uuid(record.get("uuid"), "native parent-chain id")
             ancestors[uid] = parent
         if record.get("type") == "system" and record.get("subtype") == "api_error" and parent:

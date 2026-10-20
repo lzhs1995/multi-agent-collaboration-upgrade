@@ -44,6 +44,8 @@
 
 2026-10-21 原生三态接入：新增独立只读[原生连续性观察入口](NATIVE-CONTINUITY-OBSERVATION.md)，由已采用原1+2会话的真实记录/turn/message/父链/固定fence推导终态，再在完整生成控制器的实际内核边界内调用原MAC evaluator。引用、队列、工具错误、内部重试、字符串HTTP状态和不完整窗口不冒充API故障。晚追加不改变原已固定窗口；下一次观察包含追加；进行中登记用原前序建立解析状态、不复用旧成功。原用户授权、私有runtime/adoption/root/Python/source均固定；无输入、第二SDK、角色转移或资源释放。该建议不代表whole-task子预算已受约束，也不替代两轮实机hook及配对验收；具体测试/冻结结果另行保存，不能继承438提交的full绿色。
 
+2026-10-21 R5原生反例：原43独审7426发现真实Claude的attachment中间链漏接(P2)，以及Codex历史半截回合污染后续扫描(P3)。已在独立工作源补attachment只继承原父链、历史未闭合只在未见fence后活动时允许新start替代；队列正文不变API终态，fence后重叠仍拒。两项RED→GREEN原件和负边界保留；同一原43真实6000记录新窗口旧源0、新源267，接链对照267、挖除对照0，集合相同。它是只读解析诊断，不是adoption或可用性验收；仍待冻结修复源与独立续审。7426本机2361全量的1条原Stop5s超时不改判；单独复跑及四矩阵CI通过仅另列证据。
+
 2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。c6全量原14errors留存，夹具修复96全量2327项及四矩阵CI通过，见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容／夹具缺口，尚未证明三态角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中；upgrade冻结候选交原surface43按communication_only独立只读审，不改旧 R33 或不可变共享版本，不推出唯一整合权。
 
 首次对 0.4.57 全部 226 个顶层 Python 脚本执行了内存转换检查（不执行输出、不生成 runtime、不启客户端）：220 个转换成功，6 个拒绝。具体为 `cmux_bridge.py` 的旧 footer/activity 片段、`cmux_callback_journal.py` 的 deliver 签名、`cmux_daemon_identity.py` 的无 daemon 分支、`cmux_native_delivery.py` 的 ps 参数、`mac_harness.py` 的旧 preflight bridge-test 调用、`reconcile_handshake_ack.py` 的旧 bridge_clear 条件。部分旧补丁对应的行为已被上游改变，需核对语义后适配；不能删除 source-shape 检查或把转换成功当运行隔离成功。
