@@ -41,6 +41,9 @@ An unclosed pre-fence Codex historical turn may be superseded by a fresh origina
 start only before any post-fence activity of that turn has been observed. The
 old missing terminal is not an API failure. Post-fence overlapping turns remain
 refused, and a turn that really continues across the fence retains its state.
+Thread-level settings/goal events and session metadata do not mark an older
+turn active. Native response items retain implicit open-turn ownership; context
+and event records with the matching turn ID do mark post-fence activity.
 
 ## Bounded and append-safe
 
@@ -121,3 +124,17 @@ the task evidence root, with source, native device/inode/offsets and exact hashe
 The frozen 7426 local full run still has one original 5-second Stop subprocess
 timeout among 2361 tests; its exact isolated rerun and all four CI jobs passed.
 Neither result removes R5's findings or substitutes for live acceptance.
+
+## R6 fence-boundary refinement
+
+R6 independently closed attachment ancestry on frozen9819 (same tail:7426=0,
+9819=282,attachment-excised=0,lost=0), but retained P3 because thread-level
+events after a fence falsely marked a crashed historical Codex turn active.
+The repair now distinguishes turn-owned activity from thread-level events.
+Its public collector test first reproduced the original overlap refusal;
+the repaired23 parser tests also retain a post-fence response-item overlap
+negative control. A bounded, source-pinned diagnostic of the original2078
+rollout simulated six removed historical terminals without altering the log:
+9819 refused all six thread-event fences; the repair accepted all six. Both
+accepted the six direct next-start fences. This is parser diagnosis, not a
+native outage, replay, adoption, or task-continuity acceptance.

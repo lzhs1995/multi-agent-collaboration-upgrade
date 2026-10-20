@@ -243,6 +243,22 @@ class NativeContinuityTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "overlapping original native turns"):
             collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
 
+    def test_postfence_native_response_keeps_a_historical_turn_active_despite_thread_events(self):
+        journal, turn = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(1),
+                            payload=dict(type="task_started", turn_id=turn)))
+        journal.append(dict(type="turn_context", timestamp=stamp(2),
+                            payload=dict(turn_id=turn, model=journal.session["model"])))
+        self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
+        journal.append(dict(type="event_msg", timestamp=stamp(3),
+                            payload=dict(type="thread_settings_applied")))
+        journal.append(journal.message("assistant", "This same original turn is still working.", at=stamp(4)))
+        journal.append(dict(type="event_msg", timestamp=stamp(5),
+                            payload=dict(type="thread_goal_updated")))
+        self.codex_success(10)
+        with self.assertRaisesRegex(ContractError, "overlapping original native turns"):
+            collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+
     def test_codex_abort_resets_health_but_is_not_an_api_outage_or_success(self):
         journal, turn = self.journals["codex"], str(uuid.uuid4())
         journal.append(dict(type="event_msg", timestamp=stamp(10),
@@ -308,6 +324,26 @@ class NativeContinuityTests(unittest.TestCase):
         self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
         historical = collect_native_outcomes(self.sessions, task_id=TASK, now=5, fixtures=True)
         self.assertEqual(historical["observations"], [])
+        expected = self.codex_success(10)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual(value["pending_lanes"], [])
+        self.assertEqual(len(value["observations"]), 1)
+        self.assertEqual(value["observations"][0]["native_record"], expected)
+        self.assertEqual(value["observations"][0]["kind"], "API_SUCCESS")
+        self.assertEqual(value["input_operations"], 0)
+
+    def test_postfence_thread_events_do_not_turn_historical_crashes_into_active_work(self):
+        journal, turn = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(1),
+                            payload=dict(type="task_started", turn_id=turn)))
+        journal.append(dict(type="turn_context", timestamp=stamp(2),
+                            payload=dict(turn_id=turn, model=journal.session["model"])))
+        self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
+        for index, kind in enumerate(("thread_settings_applied", "thread_goal_updated")):
+            journal.append(dict(type="event_msg", timestamp=stamp(3 + index),
+                                payload=dict(type=kind)))
+        journal.append(dict(type="session_meta", timestamp=stamp(5),
+                            payload=dict(id=journal.session["session_id"])))
         expected = self.codex_success(10)
         value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
         self.assertEqual(value["pending_lanes"], [])

@@ -68,7 +68,13 @@ def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
             active_offset, active_observed = ref["offset"], ref["offset"] >= outcome_after
             model, final = None, None
             continue
-        if active is not None and ref["offset"] >= outcome_after:
+        # Thread configuration/goal events and session metadata may sit between
+        # a crashed historical turn and its next start. They are not activity
+        # of that turn. Native response items have implicit open-turn ownership;
+        # context and event records must carry the matching original turn id.
+        turn_activity = (record.get("type") == "response_item" or
+            record.get("type") in ("turn_context", "event_msg") and payload.get("turn_id") == active)
+        if active is not None and ref["offset"] >= outcome_after and turn_activity:
             active_observed = True
         if (record.get("type") == "turn_context" and active is not None
               and payload.get("turn_id") == active):
