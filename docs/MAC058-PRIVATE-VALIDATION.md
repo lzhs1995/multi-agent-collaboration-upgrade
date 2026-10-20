@@ -24,9 +24,15 @@
 | 当前实际完整 controller | 16 测，31.997 秒，通过；真实 Seatbelt/kernel、生成模块、回执围栏、私有 roots、启动 argv、body reader、callback 8 进程×10 轮锁竞争 |
 | 可移植实际生成 entrypoint | 15 测，2.242 秒，通过；原 sender/observer/reconcile/deliver，RPC exact-once/no fallback、完整 gate pin、未发成员、未知变体、原 import/gate-pin excision反例 |
 | 两版 materialized + 调度反例 + 可移植 | 94 测，97.827 秒，通过；新增 recover_stranded fail-fast 检查包括在内 |
-| 新候选完整回归 / CI | 尚未完成，须冻结源码并运行 |
+| `c6a34dd` 完整回归 | 2322 测，0 failures、14 errors、0 skips，809.258 秒；三个其他测试组借用 materialization 构造器却未继承新增 `source_controller`。失败原样保留，不计为 PASS |
+| 公共夹具兼容修复后 | 原三个报错组 + 旧/新 materialized controller 共 58 测，158.720 秒，通过；构造器对未继承调用者保留原 0.4.34 默认，对现代 subclass 保留显式 0.4.58 |
+| 修复提交完整回归 / CI | 尚未完成，须冻结新提交并重跑；不修改审查中的 `c6a34dd` |
 | 三态现场、自动 hook、配对提效 | 尚未完成；不由离线检查替代 |
 
 以上生成控制器测试不调用模型、不发送实际业务输入。macOS 和完整本地源码依赖的测试在远端 CI 会明确跳过；十文件可移植测试仍运行，不能将 CI 跳过解释为现场验证。
+
+`c6a34dd` 原失败日志固定在 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/mac058-full-v1/test-all.log`，16979 字节，SHA256 `fcc93237bb11ec195a581bd1a7740e052cb26f783f37dfe1a8394253e5144dd5`；308 个前后源码 pin 相同。新完整回归须另开输出目录，不覆盖它。
+
+原 surface45 的 R2 独审回件全文已读并验 SHA256 `22b2fa50d5242fe317ac8caf0b7823eae508fa9326e94f6d5011cb89d631aa12`，5611 字节，结论仍 PARTIAL：callback 调度 1–4 项闭合，三项实跑反例通过；版本适配及夹具安全第 5 项 NOT_EXAMINED。R1 的证据优先级问题已修，v2 可达性及 failure guard 阻塞收取两项假设 REFUTED。需要下一轮覆盖当前适配、完整回归/CI和最终整合，不把范围外内容推断为独审通过。
 
 实际三个可用性场景、跨双 Claude 的共享最多两子 agent 预算、自动 60 秒 request→reply→全文 read→exact-SHA consume→rearm 两轮，及完整 3 pilot/33 business/15 pairs/192 ordinary 槽合同依旧是最终门槛。JEV 为 rules/offline_mock；R33 仍 INSUFFICIENT_EVIDENCE。共享维护由原 surface40、upgrade 整合由原 surface43 统一管理。

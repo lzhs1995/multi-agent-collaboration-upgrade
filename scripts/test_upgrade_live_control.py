@@ -28,6 +28,7 @@ class LiveControlTests(unittest.TestCase):
         # Reuse only fixture construction, not the earlier test cases.
         startup_fixtures.MaterializedStartupTests.setUpClass.__func__(self)
         self.addCleanup(self.tmp.cleanup)
+        self.assertEqual(self.source_controller, startup_fixtures.SOURCE)
 
     def observation(self):
         workspace = str(uuid.uuid4())

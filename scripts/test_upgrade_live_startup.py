@@ -38,6 +38,10 @@ class MaterializedStartupTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Other fixture suites borrow this constructor without inheriting the
+        # test class. Preserve their original fixed source while letting the
+        # modern subclass select its explicit, separately pinned controller.
+        cls.source_controller = getattr(cls, "source_controller", SOURCE)
         cls.tmp = tempfile.TemporaryDirectory(prefix="", dir="/tmp")
         cls.root = Path(cls.tmp.name).resolve()
         cls.context_ref = init_experiment(cls.root / "l", "focused-startup", cls.source_controller)
