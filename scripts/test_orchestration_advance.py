@@ -549,6 +549,65 @@ class AdvanceTests(unittest.TestCase):
         self.assertTrue((co.root / "nodes/review/continuation.json").exists())
         self.assertIsNone(co.leases.read()[info["task_id"]]["released_at"])
 
+    def callback_with_other_lane(self, *, blocked=False):
+        self.narrow("review", "parallel")
+        co = self.start()
+        info = co.claim("review")
+        co.claim("parallel")
+        self.f.prepare(co, "review")
+        self.f.intent(co, "review")
+        self.f.dispatch(co, "review")
+        self.f.prepare(co, "parallel")
+        self.f.work(info, "claude_a")
+        self.f.callback(co, "review")
+        if blocked:
+            self.f.block(co, "parallel")
+        return co, info
+
+    def test_callback_precedes_another_lanes_prepared_dispatch(self):
+        co, info = self.callback_with_other_lane()
+        before = self.native_bytes()
+        with patch.object(Transport, "dispatch", side_effect=AssertionError("callback must not wait for dispatch")):
+            result = self.r.advance(self.run, max_steps=4)
+        self.assertEqual([r["action"] for r in result["actions"]], ["callback", "candidate"])
+        self.assertEqual(result["stop_reason"], "review_ready_before_dispatch")
+        self.assertEqual(result["states"], {"review": "EVIDENCE_READY", "parallel": "PREPARED"})
+        self.assertEqual(before, self.native_bytes())
+        self.assertIsNone(co.leases.read()[info["task_id"]]["released_at"])
+
+    def test_other_node_block_does_not_discard_received_callback_or_prevent_acceptance(self):
+        co, info = self.callback_with_other_lane(blocked=True)
+        before = self.native_bytes()
+        result = self.r.advance(self.run, max_steps=4)
+        self.assertEqual([r["action"] for r in result["actions"]], ["callback", "candidate"])
+        self.assertEqual(result["states"], {"review": "EVIDENCE_READY", "parallel": "BLOCKED"})
+        continuation = file_ref(co.root / "nodes/review/continuation.json")
+        self.assertEqual(before, self.native_bytes())
+        value = result["supervisor_actions"][0]
+        marker = marker_for(info, json_ref(value["candidate"]))
+        self.f.control("accept", self.run, node_id="review", marker=marker)
+        self.r.accept(self.run, "review", marker)
+        self.assertEqual(co.state()[0]["review"], State.ACCEPTED)
+        self.assertEqual(co.state()[0]["parallel"], State.BLOCKED)
+        self.assertEqual(continuation, file_ref(co.root / "nodes/review/continuation.json"))
+
+    def test_failure_refuses_new_work_gate_and_preserves_prepared_input(self):
+        self.narrow("review", "parallel")
+        co = self.start()
+        co.claim("review")
+        co.claim("parallel")
+        self.f.prepare(co, "parallel")
+        self.f.block(co, "review")
+        before = self.native_bytes()
+        with self.assertRaisesRegex(ContractError, "failure forbids new work"):
+            co._work_budget()
+        with patch.object(Transport, "dispatch", side_effect=AssertionError("failed run cannot dispatch")):
+            result = self.r.advance(self.run, max_steps=4)
+        self.assertFalse(result["actions"])
+        self.assertIn("preserve-unstarted-work", [r["action"] for r in result["waiting"]])
+        self.assertEqual(before, self.native_bytes())
+        self.assertFalse((co.root / "nodes/parallel/dispatch-intent.json").exists())
+
     def test_report_and_callback_without_native_work_cannot_be_accepted(self):
         self.narrow("review")
         co = self.start()

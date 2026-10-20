@@ -258,6 +258,13 @@ class Coordinator:
             runtime = json_ref(self.campaign["runtime"])
             startup = json_ref(runtime["startup"])
             require(not os.path.lexists(startup["stop_path"]), "experiment Stop forbids new work")
+        if campaign_version(self.campaign) == 3:
+            # Keep original halt/deadline/Stop diagnostics ahead of event
+            # inspection. Otherwise collect original results after a business
+            # failure, while refusing fresh claims/preparation/input. This
+            # action boundary cannot cancel work already in flight.
+            require(not any(e["state"] in (State.BLOCKED.value, State.FAILED_PRESERVED.value)
+                            for e in self.events()), "preserved run failure forbids new work")
 
     @contextmanager
     def state_lock(self, *, new_work=False):

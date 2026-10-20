@@ -1,6 +1,6 @@
 # R33：缩短派发与核收等待，修复只读操作误判
 
-2026-10-19。运行源码固定为 `b94b5bd48a49a8511c75468070cc6a81016c3c5d`。本机完整回归已通过，原生 R33 正在执行；目前不能宣称完整压力测试通过或达到 15% 提效。
+2026-10-20 终态更新。运行源码固定为 `b94b5bd48a49a8511c75468070cc6a81016c3c5d`。本机完整回归和四组 CI 已通过。原生 R33 已因实验 Codex 配额 HTTP 401 终止；完整轮次和有效配对均为 0，不能宣称完整压力测试通过或达到 15% 提效。
 
 ## 已落实的修复
 
@@ -25,15 +25,18 @@ R32 旧控制器、metrics、终态及原生输入保持原样。两份已撤回
 
 - [验证汇总](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-effects-and-scheduling/VALIDATION.json)，SHA256 `b14ef0324b994d0ddf942c04f1224a0db41d836ab2e4db83711e96f1d3528d0b`。
 - [冻结导出](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/source-exports/resume-20261019-live-v28/export.json)，SHA256 `dee1e4422977ef6fba0260a6ac24e875025bbcc86421e6a78334715fe755d44f`。
-- 精确源码提交的 [CI run 39280150950](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39280150950) 已触发一次。15:52 UTC 收取的记录中四格均 queued，尚未执行；这不是 CI 通过。原始快照见 [run-first-observed.json](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-effects-and-scheduling/ci-b94b5bd/run-first-observed.json)。
+- 精确源码提交的 [CI run 39280150950](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39280150950) 已完成，四格 success。macOS Python 3.10/3.14 各运行 2280 项、跳过 108；Ubuntu Python 3.10/3.14 各运行 2280 项、跳过 118。跳过项不算实际执行通过。最终元数据、四份原始日志及 SHA 已保存到 [CI 汇总](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/ci/summary.json)；首次 queued 快照作为历史保留，未重复触发。
 
-## 原生 R33 当前进度
+## 原生 R33 终态
 
 - 15:43:25 UTC：独立 watchdog ready；15:43:27 driver 发布首 permit；15:43:29 原客户端启动调用返回。
 - 15:48:47：Codex 和双 Claude 已完成独立 adoption；15:49:16 已发布 bootstrap。
 - 15:52 UTC：实验 Codex 已在原会话执行 pilot-01 START，并提前发布四节点草稿。
 - 15:56:36.286：Claude A 的完整原生握手 ACK 已出现；15:58:36.182449 已记录 inventory 的 DISPATCH_INTENT，15:59:37.682278 已记录 DISPATCHED。ACK 原行 SHA、device/inode 已由根核对。该段为 119.896449 秒；R32 同名阶段为 335.442815 秒。这是跨轮次的补充观察，不能替代注册配对或宣称总体提效。
-- 16:01 UTC 观察中，Claude A 正核对任务包输入，Claude B 已启动；B 正式握手、callback、独立验收和完整轮次仍逐项核验中。完整轮次仍为 0，不能将启动、派发或局部分段计为通过。
+- B 的完整握手 ACK 在 16:03:38.940 UTC 出现；16:04:15.987648 到 PREPARED，之后未派发。双 Claude 均真实启动并握手。
+- A 的原生 callback 在 16:04:15.106 UTC 到达，16:07:03.670660 到 EVIDENCE_READY，间隔 168.564660 秒；尚无成功 ACCEPT。
+- Codex 在 16:10:20.104 UTC 记录 HTTP 401 配额耗尽，request id 为 `20261020001019818609739E0LOLeM1`；driver 16:10:22.262175 HALT，wrapper 16:10:26.137845 结束。七组 STOP 已保存，原客户端和原证据保留。STOP 文件不是远端操作已取消的证明。
+- 完整 pilot 0/3、完整业务轮 0/33、有效配对 0/15。未启动轮保留在分母；不以替换或重放修补失败样本。
 - Claude A/B 均为实际运行的 Claude Code 2.1.303，请求 Opus 5.5 / xhigh；Codex 为 gpt-6-astra / xhigh。三端保留原会话，响应 observer 关闭。
 - 注册总计 33 业务轮（3 pilot + 30 配对业务）、15 对、192 普通通信槽，最多 7 组、同时 1 Codex + 2 Claude。这些是注册分母，不是已执行或通过数量。
 - 本轮是 startup-v2；原生 `/goal` 持续续跑和独立 `/loop` 未计作通过。
@@ -41,9 +44,13 @@ R32 旧控制器、metrics、终态及原生输入保持原样。两份已撤回
 
 [原驱动证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r33-original-driver/)保留原输出和进程身份。运行根为 `/Users/lzhs/ux`，日志观察不修改实验状态。
 
+[终态核验](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/terminal-evidence.json) SHA256 `f54565dadb078c6d8d5aa369e09aee0dc4f70068356f53ff6589bb50aab2b88a`，核对原生 ACK、callback、失败记录及七份 STOP。后续修复在独立 [callback 候选](CALLBACK-DRAIN-VALIDATION.md) 进行，不重新解释 R33。
+
 ## D 计时证据的采用
 
 新 D-TIMING-V1 与已撤回提案分开处理。两份来件 SHA 及 12 条原始引用已核对。R32 inventory 的 ACK → dispatch_intent 为 335.443 秒，callback 原生收件 → EVIDENCE_READY 为 248.233 秒；source_index 已收到 callback，到 HALT 尚未核收。
+
+A 交叉索引所询问的 248.0557 秒是 R31 一次 advance 内部总耗时；248.233 秒是 R32 原生 callback 到 EVIDENCE_READY。二者原次和起止点不同，不能合并或互换。新 A/B/C/D 回件已逐项读完并发布答复。
 
 解释时间字段时，原解析器的 `task_ready_at` 实际取 PREPARING，`report_frozen_at` 实际取 EVIDENCE_READY；native accept 调用不等于 ACCEPT 成功。DONE 前缀检索只作计时线索，送达和核收仍核完整正文及原始围栏。本轮进一步用这些分段比较准备、同步工具等待和核收延迟，不把整个空档归因于模型、锁或哈希。
 

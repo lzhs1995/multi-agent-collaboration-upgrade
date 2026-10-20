@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import time
 import unittest
 from datetime import timedelta
 from pathlib import Path
@@ -36,6 +37,10 @@ class DriverTests(unittest.TestCase):
         for name in ("source", "corpus"):
             (self.root / name).mkdir()
             (self.root / name / "pinned.txt").write_text(name)
+        scripts = self.root / "source/scripts"
+        scripts.mkdir()
+        for name in ("orchestration_coordinator.py", "orchestration_advance.py"):
+            (scripts / name).write_bytes(Path(driver.__file__).with_name(name).read_bytes())
         mocks = [(driver, "validate_live_runtime", lambda ref: (None, json_ref(ref))),
                  (driver, "validate_adoption", lambda *a, **kw: None),
                  (driver, "validate_campaign", json_ref),
@@ -98,6 +103,102 @@ class DriverTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, "positive integer"):
                     driver.configure(self.request, overall_timeout_seconds=value)
                 publish.assert_not_called()
+
+    def test_drain_policy_is_opt_in_bounded_and_requires_overall_deadline(self):
+        for value in (-1, 301, True, 1.5, "60"):
+            with self.subTest(value=value), patch.object(driver, "write_json") as publish:
+                with self.assertRaisesRegex(ContractError, "integer from 0 to 300"):
+                    driver.configure(self.request, overall_timeout_seconds=7200, node_failure_drain_seconds=value)
+                publish.assert_not_called()
+        with self.assertRaisesRegex(ContractError, "immutable overall deadline"):
+            driver.configure(self.request, node_failure_drain_seconds=60)
+        with patch.object(driver, "write_json", return_value={"synthetic": True}) as publish:
+            driver.configure(self.request, overall_timeout_seconds=7200, node_failure_drain_seconds=300)
+        value = publish.call_args.args[1]
+        self.assertEqual(value["schema"], "upgrade-driver-config-v3")
+        self.assertEqual(value["node_failure_policy"], dict(mode="drain-original-results-v1", max_seconds=300))
+
+    def failed_run(self, *, enabled=True):
+        if enabled:
+            config = dict(json_ref(self.ref), schema="upgrade-driver-config-v3",
+                          node_failure_policy=dict(mode="drain-original-results-v1", max_seconds=300))
+            self.ref = write_json(self.ref["path"], config)
+            self.driver = driver.Driver(self.ref)
+        self.started()
+        ref = self.case.campaigns["pilot-B"]
+        root = Path(json_ref(ref)["root"]) / "runs/pilot-01"
+        at = utc_now()
+        header = write_json(root / "run.json", dict(campaign=ref, run=dict(run_id="pilot-01"),
+            started_at=at, created_at=at, started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), launch_start=None))
+        for seq, key, state in ((1, "other", "DISPATCHED"), (2, "failed", "BLOCKED")):
+            write_json(root / "events" / f"{seq:06d}.json", dict(node_id=key, state=state,
+                at=at, monotonic_ns=time.monotonic_ns(), boot_id=boot_id()))
+        return ref, header, root
+
+    def test_failed_node_keeps_original_permit_for_bounded_result_collection(self):
+        ref, header, root = self.failed_run()
+        before = list(self.actions)
+        with patch.object(self.driver, "_clock", return_value={"seconds": 20}):
+            result = self.driver.tick()
+        self.assertEqual(result["status"], "DRAINING_ORIGINAL_RESULTS")
+        self.assertEqual(result["pending_nodes"], ["other"])
+        self.assertFalse(result["new_work_authorized"])
+        self.assertEqual(result["input_operations"], 0)
+        self.assertEqual(self.actions, before)
+        self.assertEqual(driver.schedule.status(self.case.ref)["permits"], 1)
+        saved = result["drain"]
+        fresh = driver.Driver(self.ref)
+        with patch.object(fresh, "_clock", return_value={"seconds": 300}):
+            result = fresh.tick()
+        self.assertEqual((result["status"], result["classification"]), ("HALTED", "FAILED"))
+        self.assertEqual(json_ref(result["halt"])["evidence"], [saved])
+        self.assertEqual(saved, file_ref(saved["path"]))
+
+    def test_drain_does_not_hide_native_supervisor_error(self):
+        self.failed_run()
+        self.watch.observe.return_value = dict(status="NATIVE_CODEX_TURN_FAILED",
+            turn_id="01a14b64-92de-7931-a649-61ef10b038ac", input_operations=0)
+        self.assertEqual(self.driver.tick()["classification"], "FAILED")
+        self.assertFalse(list((self.driver.root / "faults").glob("node-failure-*.json")))
+
+    def test_drain_refuses_older_guard_source(self):
+        (self.root / "source/scripts/orchestration_coordinator.py").write_text("old guard\n")
+        request = dict(json_ref(self.request), source=tree_manifest(self.root / "source"))
+        ref = write_json(self.root / "old-source-request.json", request)
+        with self.assertRaisesRegex(ContractError, "matching new-work guard"):
+            driver.configure(ref, overall_timeout_seconds=7200, node_failure_drain_seconds=60)
+
+    def test_drain_unknown_clock_does_not_wait(self):
+        self.failed_run()
+        with patch.object(self.driver, "_clock", return_value={"seconds": None}):
+            self.assertEqual(self.driver.tick()["classification"], "UNKNOWN")
+
+    def test_legacy_failed_node_still_halts_immediately(self):
+        self.failed_run(enabled=False)
+        result = self.driver.tick()
+        self.assertEqual((result["status"], result["classification"]), ("HALTED", "FAILED"))
+
+    def test_drain_ends_when_other_result_has_been_accepted(self):
+        ref, header, root = self.failed_run()
+        self.assertEqual(self.driver.tick()["status"], "DRAINING_ORIGINAL_RESULTS")
+        write_json(root / "events/000003.json", dict(node_id="other", state="ACCEPTED",
+                   at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id()))
+        self.assertEqual(self.driver.tick()["status"], "HALTED")
+
+    def test_drain_cannot_extend_run_deadline_or_unknown_clock(self):
+        self.failed_run()
+        with patch.object(driver, "elapsed", return_value={"seconds": 1801}), \
+                patch.object(self.driver, "_clock", return_value={"seconds": 10}):
+            self.assertEqual(self.driver.tick()["classification"], "TIMEOUT")
+
+    def test_changed_original_drain_record_is_rejected(self):
+        self.failed_run()
+        result = self.driver.tick()
+        changed = dict(json_ref(result["drain"]), policy=dict(mode="drain-original-results-v1", max_seconds=600))
+        write_json(result["drain"]["path"], changed)
+        result = self.driver.tick()
+        self.assertEqual(result["status"], "HALTED")
+        self.assertEqual(result["classification"], "UNKNOWN")
 
     def test_configure_refuses_each_mixed_observer_group_before_publication(self):
         # Original driver fixtures keep historical semantics. This independent

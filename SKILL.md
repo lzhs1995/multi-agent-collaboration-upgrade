@@ -19,6 +19,14 @@ The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
+The current three-availability-state integration requirements and their evidence
+are tracked in [task continuity integration](docs/TASK-CONTINUITY-INTEGRATION.md).
+MAC owns message delivery, proactive inquiries and shared runtime releases;
+upgrade owns task-graph decisions and experimental measurement. A provider
+failure ends that registered comparison attempt but does not cancel the user's
+overall task. Continue authorized independent implementation and review with the
+available original participants. Do not count a fallback workload as a completed
+paired sample or silently move an old task to a new controller.
 For a prepared experiment's exact socket scope, verify the unique path set and
 each group's original path binding independently of JSON mapping order. Keep
 the registered experiment execution order unchanged. If preparation stops after
@@ -51,6 +59,18 @@ time separately. The original run and watchdog deadlines remain absolute. Time
 is checked between actions, not during an in-flight synchronous operation.
 A1 uses the manual baseline and can run both independent Claude lanes in parallel.
 This explicit foreground batching does not wake an idle model or prove speedup.
+New callbacks take precedence over claiming, preparing or dispatching another
+lane. An already offered EVIDENCE_READY review must not repeatedly starve ready
+work. A failed node stops new work in that registered run while original
+callback collection, candidate validation and independent acceptance remain
+available. Newly configured drivers may opt in to
+`--node-failure-drain-seconds N` (1–300), with an immutable overall deadline and
+the matching coordinator/scheduler source. This preserves a bounded original
+result-collection window from the first failed event, never from its discovery
+or a driver restart. Original run/overall deadlines, native supervisor errors
+and operator Stop still apply. Old driver configurations retain their behavior.
+The observer does not execute acceptance, release resources or start a new run.
+See [callback scheduling validation](docs/CALLBACK-DRAIN-VALIDATION.md).
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded

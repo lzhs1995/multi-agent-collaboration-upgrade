@@ -47,6 +47,8 @@ def _review(runner, run_id, key, result):
 def _options(runner, run_id, view):
     """Advisory selection only. No file existence grants task ownership."""
     options, waiting = [], []
+    failed = any(row["recorded_state"] in (State.BLOCKED.value, State.FAILED_PRESERVED.value)
+                 for row in view["nodes"])
     for row in view["nodes"]:
         key, state = row["node_id"], row["recorded_state"]
         advice = row["recommendation"]
@@ -55,6 +57,10 @@ def _options(runner, run_id, view):
             action = "candidate"
         elif advice["action"] == "review-persisted-candidate":
             action = "candidate"
+        if failed and action in ("claim", "prepare", "dispatch"):
+            waiting.append(dict(node_id=key, state=state, action="preserve-unstarted-work",
+                                reason="A failed node stops new work; collect original results on other lanes."))
+            continue
         if action == "callback":
             # Do not repeatedly run a receiver settlement before any original
             # callback exists. These files are hints, never proof of reception.
@@ -70,8 +76,8 @@ def _options(runner, run_id, view):
                                 instruction="Recover only the existing exact native control; do not repeat it."))
         elif action is not None:
             priority = (0 if action in ("repair-releases", "disarm") else
-                        3 if action == "reconcile" else
-                        2 if state == State.EVIDENCE_READY.value else 1)
+                        1 if action == "callback" or action == "candidate" and state != State.EVIDENCE_READY.value else
+                        3 if action == "reconcile" or state == State.EVIDENCE_READY.value else 2)
             options.append((priority, key, state, action))
         else:
             waiting.append(dict(node_id=key, state=state, **{k: v for k, v in advice.items() if k != "node_id"}))
@@ -190,7 +196,7 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
         # before waiting for another lane's handshake. Keep outer priorities
         # and fresh gates; synchronous transport can still exceed the budget.
         phases = {State.PENDING.value: 0, State.PREPARED.value: 1, State.PREPARING.value: 2}
-        options.sort(key=lambda o: (o[0], phases.get(o[2], 3) if o[0] == 1 else 0,
+        options.sort(key=lambda o: (o[0], phases.get(o[2], 3) if o[0] == 2 else 0,
                                     counts.get(o[1], 0)))
         if not options:
             result["stop_reason"] = "supervisor_or_original_evidence_required"

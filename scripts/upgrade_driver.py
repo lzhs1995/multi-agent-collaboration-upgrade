@@ -40,10 +40,25 @@ class OverallDeadline(ContractError):
         self.observation = observation
 
 
-def configure(request_ref, *, overall_timeout_seconds=None):
+def require_drain_source(source):
+    # Leaving the permit active is safe only with the matching adapter that
+    # refuses fresh work after a failed event. Never enable this driver policy
+    # over an older source tree lacking that gate.
+    for name in ("orchestration_coordinator.py", "orchestration_advance.py"):
+        provided = file_ref(Path(source["path"]) / "scripts" / name)
+        expected = file_ref(Path(__file__).with_name(name))
+        require((provided["sha256"], provided["bytes"]) == (expected["sha256"], expected["bytes"]),
+                "result drain requires the matching new-work guard and callback scheduler source")
+
+
+def configure(request_ref, *, overall_timeout_seconds=None, node_failure_drain_seconds=0):
     require(overall_timeout_seconds is None or
             (type(overall_timeout_seconds) is int and overall_timeout_seconds > 0),
             "overall timeout must be a positive integer number of seconds")
+    require(type(node_failure_drain_seconds) is int and 0 <= node_failure_drain_seconds <= 300,
+            "node failure drain must be an integer from 0 to 300 seconds")
+    require(not node_failure_drain_seconds or overall_timeout_seconds is not None,
+            "node failure drain requires an immutable overall deadline")
     request = json_ref(request_ref, "fixed driver request")
     require(set(request) == REQUEST_FIELDS and request["schema"] == "upgrade-driver-request-v1",
             "complete fixed driver request required")
@@ -52,6 +67,8 @@ def configure(request_ref, *, overall_timeout_seconds=None):
     require(set(request["runtimes"]) == set(registration["groups"]), "all seven original runtime pins required")
     require(isinstance(request["revision"], str) and request["revision"], "source revision required")
     verify_tree(request["source"])
+    if node_failure_drain_seconds:
+        require_drain_source(request["source"])
     verify_tree(request["corpus"])
     authorize(request["native_authorizations"])
     for group, runtime_ref in request["runtimes"].items():
@@ -75,6 +92,10 @@ def configure(request_ref, *, overall_timeout_seconds=None):
             value["overall_deadline"] = dict(timeout_seconds=overall_timeout_seconds,
                 started_at=created_at, started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
                 deadline_at=(parse_time(created_at) + timedelta(seconds=overall_timeout_seconds)).isoformat())
+        if node_failure_drain_seconds:
+            value["schema"] = "upgrade-driver-config-v3"
+            value["node_failure_policy"] = dict(mode="drain-original-results-v1",
+                                               max_seconds=node_failure_drain_seconds)
         return write_json(root / "config.json", value, exclusive=True)
 
 
@@ -84,10 +105,18 @@ class Driver:
         self.config = json_ref(ref, "original driver configuration")
         fields = (REQUEST_FIELDS - {"schema"}) | {"schema", "request", "created_at"}
         version = self.config.get("schema")
-        require(version in ("upgrade-driver-config-v1", "upgrade-driver-config-v2") and
-                set(self.config) == fields | ({"overall_deadline"} if version == "upgrade-driver-config-v2" else set()),
+        extra = ({"overall_deadline", "node_failure_policy"} if version == "upgrade-driver-config-v3" else
+                 {"overall_deadline"} if version == "upgrade-driver-config-v2" else set())
+        require(version in ("upgrade-driver-config-v1", "upgrade-driver-config-v2", "upgrade-driver-config-v3") and
+                set(self.config) == fields | extra,
                 "driver configuration changed")
-        if version == "upgrade-driver-config-v2":
+        if version == "upgrade-driver-config-v3":
+            policy = self.config["node_failure_policy"]
+            require(isinstance(policy, dict) and set(policy) == {"mode", "max_seconds"} and
+                    policy["mode"] == "drain-original-results-v1" and type(policy["max_seconds"]) is int and
+                    0 < policy["max_seconds"] <= 300, "invalid original-result drain policy")
+            require_drain_source(self.config["source"])
+        if version in ("upgrade-driver-config-v2", "upgrade-driver-config-v3"):
             deadline = self.config["overall_deadline"]
             require(isinstance(deadline, dict) and set(deadline) == DEADLINE_FIELDS,
                     "complete immutable overall deadline required")
@@ -244,6 +273,42 @@ class Driver:
         return elapsed(dict(started_at=stamp[key], created_at=stamp[key],
             started_monotonic_ns=stamp["monotonic_ns"], boot_id=stamp["boot_id"], launch_start=None))
 
+    def _failed_node_results(self, campaign_ref, header_ref, events):
+        """Keep the original permit briefly for result collection, never new work.
+
+        The first failed event fixes the clock, even if discovery or a restart is
+        late. Native supervisor errors and original run/overall deadlines still
+        halt immediately. This observer never sends, accepts or releases work.
+        """
+        failed = [(ref, e) for ref, e in events if e["state"] in ("BLOCKED", "FAILED_PRESERVED")]
+        if not failed:
+            return None
+        original, event = failed[0]
+        policy = self.config.get("node_failure_policy")
+        if policy is None:
+            return self.halt("Original supervisor recorded a failed task boundary", "FAILED", [original])
+        path = self.root / "faults" / ("node-failure-" + campaign_ref["sha256"] + "-" +
+                                      json_ref(header_ref)["run"]["run_id"] + ".json")
+        expected = dict(schema="upgrade-original-result-drain-v1", config=self.ref,
+                        campaign=campaign_ref, run=header_ref, first_failure=original, policy=policy)
+        if path.exists():
+            saved = file_ref(path)
+            require(json_ref(saved) == expected, "original result drain evidence changed")
+        else:
+            saved = write_json(path, expected, exclusive=True)
+        timing = self._clock(event, "at")
+        if timing["seconds"] is None:
+            return self.halt("Original failed-node drain clock is unknown", "UNKNOWN", [saved])
+        states = {e["node_id"]: e["state"] for _, e in events}
+        pending = [key for key, state in states.items()
+                   if state in ("DISPATCH_INTENT", "UNCERTAIN", "DISPATCHED", "LOCAL_RUNNING", "EVIDENCE_READY")]
+        if not pending or timing["seconds"] >= policy["max_seconds"]:
+            return self.halt("Original failed-node result drain ended; failure preserved", "FAILED", [saved])
+        return dict(status="DRAINING_ORIGINAL_RESULTS", first_failure=original, drain=saved,
+                    pending_nodes=pending, drain_elapsed_seconds=timing["seconds"],
+                    drain_limit_seconds=policy["max_seconds"], new_work_authorized=False,
+                    input_operations=0)
+
     def supervisor_failure(self, campaign_ref, campaign):
         key = campaign_ref["sha256"]
         if key not in self.failure_watches:
@@ -367,6 +432,7 @@ class Driver:
             return self.once(f"{ordinal:04d}-close", "close",
                 lambda: schedule.close(campaign_ref, step["run_id"]), observed_close)
         header_path = run_root / "run.json"
+        drain = None
         if header_path.exists():
             header_ref = file_ref(header_path)
             header = json_ref(header_ref)
@@ -374,10 +440,13 @@ class Driver:
                     "original run clock scope changed")
             timing = elapsed(header)
             clock_ref = header_ref
+            events = []
             for path in sorted((run_root / "events").glob("*.json")):
-                event = json_ref(file_ref(path))
-                if event["state"] in ("BLOCKED", "FAILED_PRESERVED"):
-                    return self.halt("Original supervisor recorded a failed task boundary", "FAILED", [file_ref(path)])
+                ref = file_ref(path)
+                events.append((ref, json_ref(ref)))
+            drain = self._failed_node_results(campaign_ref, header_ref, events)
+            if drain is not None and drain["status"] in TERMINAL:
+                return drain
         else:
             # A granted run which never starts cannot hold the driver forever.
             # This is a watchdog, not a fabricated native business measurement.
@@ -389,6 +458,8 @@ class Driver:
             return self.halt("Original registered run exceeded 1800 seconds without complete closeout", "TIMEOUT", [clock_ref])
         if failure is not None:
             return dict(failure, step=step, elapsed_seconds=timing["seconds"])
+        if drain is not None:
+            return dict(drain, step=step, elapsed_seconds=timing["seconds"])
         return dict(status="WAITING_ORIGINAL_SUPERVISOR", step=step, elapsed_seconds=timing["seconds"], input_operations=0)
 
     def tick(self):
@@ -422,14 +493,18 @@ def main(argv=None):
     parser.add_argument("--poll-seconds", type=float, default=10)
     parser.add_argument("--overall-timeout-seconds", type=int,
         help="configure only: immutable total campaign cap, anchored now; run/tick cannot reset it")
+    parser.add_argument("--node-failure-drain-seconds", type=int,
+        help="configure only: opt in to at most 300 seconds of original-result collection after a task failure")
     args = parser.parse_args(argv)
     try:
         if args.command == "configure":
             require(args.request and args.request_sha256, "pinned driver request required")
             print(json.dumps(configure(anchored_ref(args.request, args.request_sha256),
-                overall_timeout_seconds=args.overall_timeout_seconds), sort_keys=True), flush=True)
+                overall_timeout_seconds=args.overall_timeout_seconds,
+                node_failure_drain_seconds=args.node_failure_drain_seconds or 0), sort_keys=True), flush=True)
             return 0
         require(args.overall_timeout_seconds is None, "overall timeout is configure-only; the original deadline is immutable")
+        require(args.node_failure_drain_seconds is None, "node failure policy is configure-only; no runtime override")
         require(args.config and args.config_sha256, "pinned original driver configuration required")
         require(1 <= args.poll_seconds <= 45, "driver observation interval must be between 1 and 45 seconds")
         driver = Driver(anchored_ref(args.config, args.config_sha256))
@@ -446,7 +521,7 @@ def main(argv=None):
                     return 0 if result["status"] == "COMPLETE" else 2
                 if args.command == "tick":
                     return 0
-                if result["status"].startswith("WAITING") or result["status"] == "NOT_READY":
+                if result["status"].startswith("WAITING") or result["status"] in ("NOT_READY", "DRAINING_ORIGINAL_RESULTS"):
                     time.sleep(driver.poll_delay(args.poll_seconds))
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps(dict(status="REFUSED_OR_UNKNOWN_PRESERVED", error=str(exc), input_operations=0)), flush=True)
