@@ -78,6 +78,14 @@ preserving its current delivery and recovery semantics. Use
 source, offline counterexamples and actual generated-controller probes. Source
 fixtures are test inputs, never a complete release or a live runtime. Their
 passing tests do not establish automatic hook adoption or the native benchmark.
+For a new explicitly authorized continuity experiment, the materializer may opt
+in with `--register-private-continuity`. It pins the original scheduler/guardian
+CURRENT contract to that immutable private release, not the shared installation.
+It starts no client, episode or background job. The original executor must still
+register the authorized continuing inquiry and read the complete reply before
+exact-SHA consumption. Retain the original Stop budget and verify actual native
+hook adoption and two real cycles separately from sandbox fixture results. See
+[private continuity validation](docs/PRIVATE-CONTINUITY-VALIDATION.md).
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded

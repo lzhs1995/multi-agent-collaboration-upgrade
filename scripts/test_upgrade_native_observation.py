@@ -154,6 +154,7 @@ class ObservationFileBoundaryTests(unittest.TestCase):
     def setUp(self):
         startup_fixtures.MaterializedStartupTests.setUpClass.__func__(self)
         self.addCleanup(self.tmp.cleanup)
+        self.assertEqual(self.source_controller, startup_fixtures.SOURCE)
         self.proof_ref = self.publish_fixture()
         self.sessions = runtime.authenticated_sessions(self.runtime_ref, self.proof_ref)
 

@@ -36,7 +36,9 @@ def literal_assignment(raw, name):
 def hook_config(source, controller, python):
     # Read literal wiring from the pinned original. Do not import controller
     # modules into this materializer or execute any old install/doctor action.
-    guards = literal_assignment(read_regular(source / "scripts/manage_install.py"), "GUARDS")
+    manager = read_regular(source / "scripts/manage_install.py")
+    guards = literal_assignment(manager, "GUARDS")
+    timeouts = original_hook_timeouts(manager)
     advisory = literal_assignment(read_regular(source / "scripts/cmux_workflow_advisory.py"), "WORKFLOW_HOOKS")
     hooks = {}
     for name, event in guards.items():
@@ -46,9 +48,52 @@ def hook_config(source, controller, python):
             command += [str(controller / "scripts/cmux_workflow_advisory.py"), "--hook", filename]
         else:
             command += [str(controller / "scripts" / filename)]
-        hooks.setdefault(event, []).append({"matcher": "*", "hooks": [
-            {"type": "command", "command": shlex.join(command)}]})
+        item = {"type": "command", "command": shlex.join(command)}
+        if name in timeouts:
+            item["timeout"] = timeouts[name]
+        hooks.setdefault(event, []).append({"matcher": "*", "hooks": [item]})
     return {"hooks": hooks}
+
+
+def original_hook_timeouts(raw):
+    """Preserve reviewed literal hook budgets without executing an installer.
+
+    Old sources have no timeout override. A new or ambiguous timeout assignment
+    is refused before publication, not silently dropped or guessed.
+    """
+    found, assignments = {}, []
+    tree = ast.parse(raw)
+    for node in ast.walk(tree):
+        targets = (node.targets if isinstance(node, ast.Assign) else
+                   [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign)) else [])
+        if any(isinstance(target, ast.Subscript)
+                and isinstance(target.slice, ast.Constant) and target.slice.value == "timeout"
+                for target in targets):
+            require(isinstance(node, ast.Assign), "private hook timeout assignment shape changed")
+            assignments.append(node)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name) and node.test.left.id == "name"
+                and len(node.test.ops) == len(node.test.comparators) == 1
+                and isinstance(node.test.ops[0], ast.Eq)
+                and isinstance(node.test.comparators[0], ast.Constant)
+                and node.test.comparators[0].value == "cmux_executor_idle_guard"):
+            continue
+        budgets = [item for item in node.body if item in assignments]
+        if not budgets:
+            continue
+        require(not node.orelse and len(budgets) == 1 and len(node.body) == 1,
+                "private hook timeout source shape changed")
+        budget = budgets[0]
+        require(len(budget.targets) == 1 and isinstance(budget.targets[0].value, ast.Name)
+                and budget.targets[0].value.id == "item"
+                and isinstance(budget.value, ast.Constant) and type(budget.value.value) is int
+                and budget.value.value == 75 and not found,
+                "private proactive hook timeout source changed")
+        found["cmux_executor_idle_guard"] = budget.value.value
+        assignments.remove(budget)
+    require(not assignments, "private unrecognized hook timeout assignment")
+    return found
 
 
 def rendered_helper(source, controller, python):

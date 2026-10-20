@@ -128,6 +128,34 @@ def native_readers(name, text):
         text = replace_once(text, "if (Path.home() / '.claude/projects') not in log.parents:",
                             "from upgrade_native_roots import transcript_root\n"
                             "    if transcript_root('claude', binding=binding) not in log.parents:")
+    elif name in ("executor_reask_identity.py", "executor_reply_advisory.py"):
+        # Native delivery now requires the selected process to locate its
+        # private root. These separate original consumer/advisory entrypoints
+        # must carry that same pin; our own environment cannot locate a peer.
+        text = replace_once(text, "import cmux_native_delivery as native",
+                            "import cmux_native_delivery as native\n"
+                            "from upgrade_native_roots import process_root, binding_root")
+        provider = "provider" if name == "executor_reask_identity.py" else "'claude'"
+        text = replace_once(text, f"native._native_root({provider}).resolve()",
+                            f"native._native_root({provider}, binding=binding).resolve()")
+        text = replace_once(text, f"native._transcript_path({provider}, session)",
+                            f"native._transcript_path({provider}, session, process)")
+        if name == "executor_reply_advisory.py":
+            text = replace_once(text, "session_id=session, captured_epoch=time.time(),",
+                                f"session_id=session, captured_epoch=time.time(),\n"
+                                f"                  native_config_root=str(process_root({provider}, process)),")
+        else:
+            text = replace_once(text, "captured_epoch=time.time())",
+                                "captured_epoch=time.time(),\n"
+                                f"                  native_config_root=str(process_root({provider}, process)))")
+        anchor = "    process = native.identity.process(binding['process']['pid'], validate_argv=False)"
+        text = replace_once(text, anchor, anchor + "\n"
+            f"    if process_root({provider}, process) != binding_root(binding):\n"
+            "        raise ValueError('original consumer private configuration changed')")
+        if name == "executor_reask_identity.py":
+            text = replace_once(text,
+                "proof.get('source') == 'embedded-native-client-v1'",
+                "proof.get('source') in ('embedded-native-client-v1', 'private-standalone-native-client-v1')")
     return text
 
 
@@ -597,7 +625,15 @@ def live_gates(name, text):
     elif name == "cmux_codex_input.py":
         # Match the complete import, not a prefix which would move a newer
         # RPCError import into the private input gate's module.
-        imports = [node for node in ast.parse(text).body
+        tree = ast.parse(text)
+        gate_modules = {"upgrade_input_gate", PRIVATE_MODULES["upgrade_input_gate"]}
+        if any((isinstance(node, ast.ImportFrom) and node.module in gate_modules)
+               or (isinstance(node, ast.Import)
+                   and any(item.name in gate_modules for item in node.names))
+               for node in ast.walk(tree)):
+            from orchestration_common import ContractError
+            raise ContractError("private native input already patched")
+        imports = [node for node in tree.body
                    if isinstance(node, ast.ImportFrom) and node.module == "cmux_codex_rpc"]
         if (len(imports) != 1 or any(item.asname is not None for item in imports[0].names)
                 or [item.name for item in imports[0].names] not in
@@ -620,7 +656,7 @@ def live_gates(name, text):
             "        if advisory and hook:\n"
             "            try:\n"
             "                from upgrade_hook_observer import record as observe_upgrade_hook\n"
-            "                observe_upgrade_hook(payload, original_hook=hook)\n"
+            "                observe_upgrade_hook(payload, original_hook=hook, scope_status=scope_status)\n"
             "            except Exception:\n"
             "                pass  # Observation failure never blocks ordinary tools.\n" + marker)
     return text

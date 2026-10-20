@@ -11,7 +11,7 @@ import shlex
 import stat
 import uuid
 
-from orchestration_common import checked_path, file_ref, json_ref, read_regular, require
+from orchestration_common import checked_path, digest, file_ref, json_ref, read_regular, require
 from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_ps_wrapper, client_argv, control_socket,
                                       environment, private_native_roots, sandbox_profile, verify_client_temp)
 from upgrade_live_integrity import verify_artifacts
@@ -27,6 +27,16 @@ MAX_INSTRUCTION_BYTES = 256 * 1024
 RESPONSE_OBSERVATION = "consumed-response-v1"
 RESPONSE_OBSERVER_FILE = "upgrade_claude_response_observer.cjs"
 RESPONSE_OBSERVER_PIN = "claude_response_observer"
+CONTINUITY_REGISTRATION = "private-current-v1"
+CONTINUITY_CURRENT_PIN = "mac_upgrade_private_current"
+
+
+def continuity_registration_enabled(binding):
+    if "continuity_registration" not in binding:
+        return False
+    require(binding["continuity_registration"] == CONTINUITY_REGISTRATION,
+            "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
+    return True
 
 
 def response_observation_enabled(binding):
@@ -186,6 +196,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     import json
     binding = json.loads(read_regular(source / "upgrade-binding.json"))
     response_observation = response_observation_enabled(binding)
+    continuity_registration = continuity_registration_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -234,6 +245,17 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if continuity_registration:
+        required.add(CONTINUITY_CURRENT_PIN)
+        current_path = paths["state"] / "CURRENT.json"
+        local[CONTINUITY_CURRENT_PIN] = current_path
+        require(pins.get(CONTINUITY_CURRENT_PIN, {}).get("mode") == 0o444
+                and str(current_path) in binding["isolation"]["immutable"],
+                "STARTUP_CONTINUITY_CURRENT_MODE_CHANGED")
+        current = json.loads(read_regular(current_path))
+        require(current == {"source": str(source), "python": pins["python"]["path"],
+                "manifest_sha256": digest(read_regular(source.parent / "MANIFEST.json"))},
+                "STARTUP_CONTINUITY_CURRENT_CHANGED")
     if response_observation:
         required.add(RESPONSE_OBSERVER_PIN)
         local[RESPONSE_OBSERVER_PIN] = response_observer_path(paths)

@@ -6,8 +6,8 @@
 
 - 已读 MAC 0.4.56 的 `SKILL.md`、`references/task-continuity.md` 和 `scripts/collaboration_continuity.py`。随后核对 0.4.57：task-continuity 正文与 0.4.56 相同，新增自动 hook 审计回执修复。
 - 当前此次核对的完整版本为 `/Users/lzhs/.local/share/multi-agent-collaboration/releases/0.4.57-e8685485a9c5/source`；SKILL SHA256 为 `d8c5cee987e9cdfc9dc182beb0c9449274b9121c36d931fea87d098cf0105bf2`。这是源码/安装观测，不能证明旧客户端已更新。
-- surface40 / `A93448E1-E329-493D-9B45-568D5FC0DAD0` 维护共享 MAC、thesis-refiner、hook 和发布。surface43 / `7063B683-2147-4850-BF71-AF48C937BD37` 按用户指定负责 upgrade 整合。DFB70F77 本候选只在独立 worktree 修 callback 调度及结果收取，不改共享配置。
-- 两份撤回的 DFB 直发提案不恢复。修正版的接入归 surface43；A/B/C/D 新来件逐项回件已发布，重复 B 通知只消费一次。
+- surface40 / `A93448E1-E329-493D-9B45-568D5FC0DAD0` 维护共享 MAC、thesis-refiner、hook 和发布。surface43 / `7063B683-2147-4850-BF71-AF48C937BD37` 是用户原话“正在做upgrade”的参与者及已接受的独立只读审者，communication_only；这不授予唯一整合、merge或共享写权限。原 DFB70F77 的 callback 候选已冻结；当前 successor `28407F78-6591-4FAB-9712-D1DACC325F22` 仅在自己的独立 worktree 实施后续修复，不继承旧nonce/租约、不改共享配置。
+- 两份撤回的 DFB 直发提案不恢复。修正版候选按新marker协调原surface43只读审查，若需共享写入或正式整合须有原授权及原owner核验；A/B/C/D 新来件逐项回件已发布，重复 B 通知只消费一次。
 
 ## 接续矩阵
 
@@ -29,20 +29,20 @@
 3. **自动采用。** 分别留证安装、实际进程版本、用户配置与 `--settings` 启动配置、自动 hook 执行、原生收到、正文读取、业务接受。0.4.57 修复审计结果漏记；老进程固定的启动配置可能仍执行旧 hook。不能只看 CURRENT 或磁盘配置。
 4. **调度。** 前序运行中预组下一包；新 callback 优先核收；已有审查不饿死独立就绪通道。原业务失败后的短收取窗口只适用于注册实验，不是生产三态切换器。
 5. **Claude 同行工作。** 先冻结输入和度量定义，CLAIM 载明写域、输出和整合者；至少一个独立审查用合适的不同阅读视角。同一整体任务同时最多两个子 agent，记录父子 ID、范围、结果 marker 和父端读取消费，不能各自各开两个。现有 evaluator 的数字 2 不等于跨进程预算已受约束，须验证实际共享分配机制。
-6. **Git 与发布。** 每个写域一个作者；独立分支/候选目录，冻结被审提交与 SHA。整合后再执行相关测试。报告给 surface40 集中共享发布，upgrade 由 surface43 整合；不复制两套 runtime，不直接修改不可变版本。
+6. **Git 与发布。** 每个写域一个作者；独立分支/候选目录，冻结被审提交与 SHA。整合后再执行相关测试。报告给 surface40 集中共享发布；upgrade候选与原surface43协调只读审查，正式整合另需明确写域／授权，不能由参与身份推定；不复制两套 runtime，不直接修改不可变版本。
 7. **度量。** ACK→intent、native callback→continuation→EVIDENCE_READY→ACCEPT 分段；缺失保持 null。求派数、原生收到数、回复数、全文消费数分别计量；117:1 记录不能称送达率。保留版本、服务重试、介入、启动/冷暖和所有失败样本。
 
 ## 实施顺序与验收证据
 
-1. 固定本 callback 候选，完成完整回归及独立审查，交 surface43 整合；不改 R33 控制器或重放。
+1. 固定本 callback 候选，完成完整回归及独立审查，按新marker交原surface43只读核查及surface40集中共享协调；不改 R33 控制器或重放，不把收到候选等同merge授权。
 2. 固定共享完整版本，验证 private materializer 对其源码的兼容性；保留严格的 source-shape 检查。若不匹配，应修具体补丁和夹具，不能关闭隔离或改用生产状态目录。三态 evaluator、主动询问及审计以该完整 MAC 版本为来源。
 3. 在新的独立验证配置中登记主动询问和三态范围。先验证三个实际客户端、双 Claude 握手、双向收件/阅读、两轮主动求派闭环，再验证故障期间健康成员继续工作、子 agent 父端结果及恢复交接。
 4. 故障注入和三态接续是独立实验轨，保留 33 业务轮/15 对/192 通信槽原比较合同。主比较的 Codex API 故障仍结束该原次，但本机修复和其他授权业务继续。不得把 SOLO 或 Claude 同行结果填进失败的 1+2 配对槽。
 5. 注册配对全部具有正确性、原生回执、ACK、callback、报告哈希、收口和验收证据后，才能按原门槛判断至少 15% 提效。单位测试、单段变短和同行报告均不替代这个结论。
 
-当前缺口：0.4.57 私有 materializer 接入尚未验证；三态真实接续、跨 Claude 两子 agent 预算、自动主动求派闭环和完整配对仍未完成。R33 的 Codex 配额失败及所有 STOP 均已保留。上述要求不能因本候选测试通过而标为完成。
+当前缺口：下述完整0.4.58兼容已验证，原0.4.57的首次拒绝记录不改；原reask consumer/advisory私有根及private CURRENT登记正在独立补充验证。三态真实接续、跨 Claude 两子 agent 预算、自动主动求派闭环和完整配对仍未完成。R33 的 Codex 配额失败及所有 STOP 均已保留。上述要求不能因本候选测试通过而标为完成。
 
-2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。完整范围见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容缺口，尚未证明三態角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中整合，upgrade 冻结候选交原 surface43；不改旧 R33 或不可变共享版本。
+2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。c6全量原14errors留存，夹具修复96全量2327项及四矩阵CI通过，见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容／夹具缺口，尚未证明三态角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中；upgrade冻结候选交原surface43按communication_only独立只读审，不改旧 R33 或不可变共享版本，不推出唯一整合权。
 
 首次对 0.4.57 全部 226 个顶层 Python 脚本执行了内存转换检查（不执行输出、不生成 runtime、不启客户端）：220 个转换成功，6 个拒绝。具体为 `cmux_bridge.py` 的旧 footer/activity 片段、`cmux_callback_journal.py` 的 deliver 签名、`cmux_daemon_identity.py` 的无 daemon 分支、`cmux_native_delivery.py` 的 ps 参数、`mac_harness.py` 的旧 preflight bridge-test 调用、`reconcile_handshake_ack.py` 的旧 bridge_clear 条件。部分旧补丁对应的行为已被上游改变，需核对语义后适配；不能删除 source-shape 检查或把转换成功当运行隔离成功。
 

@@ -146,6 +146,26 @@ class UpstreamTransformTests(unittest.TestCase):
             with self.subTest(shape=bad[:80]), self.assertRaises(ContractError):
                 live_gates("cmux_codex_input.py", bad)
 
+    def test_private_native_input_rejects_second_patch_at_both_entrypoints(self):
+        paths = {name: Path("/offline/mac058") / name
+                 for name in ("state", "controllers", "tmp", "config", "bin")}
+        controller = Path("/offline/mac058/controller")
+        before = source("cmux_codex_input.py")
+        for raw in (before, before + "\n# Source semantics are unchanged.\n"):
+            with self.subTest(entrypoint="live_gates"):
+                patched = live_gates("cmux_codex_input.py", raw)
+                compile(patched, "cmux_codex_input.py", "exec", dont_inherit=True)
+                with self.assertRaisesRegex(ContractError, "already patched"):
+                    live_gates("cmux_codex_input.py", patched)
+            with self.subTest(entrypoint="transform_live"):
+                patched, _ = transform_live("cmux_codex_input.py", raw, paths, controller,
+                                             compatibility=True)
+                compile(patched, "cmux_codex_input.py", "exec", dont_inherit=True)
+                with self.assertRaisesRegex(ContractError, "already patched"):
+                    transform_live("cmux_codex_input.py", patched, paths, controller,
+                                   compatibility=True)
+        self.assertEqual(source("cmux_codex_input.py"), before)
+
 
 class ModernInputTests(unittest.TestCase):
     def exercise(self, *, active=False, failure=None, reject_gate_at=None, no_method=False, mutate_import=False):
@@ -335,8 +355,10 @@ class OriginalGateObservationTests(unittest.TestCase):
             self.observe_fixture(Path(folder).resolve(), change_gate=True)
 
     def test_gate_pin_excision_counterexample_fails_in_actual_observer(self):
-        with tempfile.TemporaryDirectory() as folder, self.assertRaises(NameError):
+        with tempfile.TemporaryDirectory() as folder, \
+                self.assertRaisesRegex(NameError, "^name 'gate_pin' is not defined$") as caught:
             self.observe_fixture(Path(folder).resolve(), excise_pin=True)
+        self.assertEqual(caught.exception.name, "gate_pin")
 
 
 class ModernCallbackTests(unittest.TestCase):

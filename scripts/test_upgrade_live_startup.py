@@ -50,7 +50,8 @@ class MaterializedStartupTests(unittest.TestCase):
         cls.binaries.update({p + "_wrapper": WRAPPERS / ("cmux-" + p + "-wrapper")
                              for p in ("codex", "claude")})
         cls.runtime_ref = materialize_live(cls.context_ref, "B", binaries=cls.binaries,
-                                           provider_configuration=({}, {}))
+            provider_configuration=({}, {}),
+            continuity_registration=getattr(cls, "continuity_registration", False))
         cls.runtime = json_ref(cls.runtime_ref)
         cls.ref = cls.runtime["startup"]
         cls.spec, cls.binding = validate_startup(cls.ref)

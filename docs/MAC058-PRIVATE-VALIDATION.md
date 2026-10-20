@@ -24,9 +24,9 @@
 | 当前实际完整 controller | 16 测，31.997 秒，通过；真实 Seatbelt/kernel、生成模块、回执围栏、私有 roots、启动 argv、body reader、callback 8 进程×10 轮锁竞争 |
 | 可移植实际生成 entrypoint | 15 测，2.242 秒，通过；原 sender/observer/reconcile/deliver，RPC exact-once/no fallback、完整 gate pin、未发成员、未知变体、原 import/gate-pin excision反例 |
 | 两版 materialized + 调度反例 + 可移植 | 94 测，97.827 秒，通过；新增 recover_stranded fail-fast 检查包括在内 |
-| `c6a34dd` 完整回归 | 2322 测，0 failures、14 errors、0 skips，809.258 秒；三个其他测试组借用 materialization 构造器却未继承新增 `source_controller`。失败原样保留，不计为 PASS |
+| `c6a34dd` 完整回归 | 2322 测，0 failures、14 errors、0 skips，809.258 秒；三个其他测试组借用 materialization 构造器却未继承新增 `source_controller`。14 errors 含 1 条 checker 类级 setUpClass 失败，该类 5 项测试未运行、未计入 total；因此修复后的 2327 = 2322 + 5，并非新加 5 项。失败原样保留，不计为 PASS |
 | 公共夹具兼容修复后 | 原三个报错组 + 旧/新 materialized controller 共 58 测，158.720 秒，通过；构造器对未继承调用者保留原 0.4.34 默认，对现代 subclass 保留显式 0.4.58 |
-| 修复提交完整回归 / CI | 尚未完成，须冻结新提交并重跑；不修改审查中的 `c6a34dd` |
+| `96a7b87` 修复提交完整回归 / CI | 冻结 detached snapshot 实跑 2327 测，0 failures/errors/skipped，1062.931 测试秒／1064.661817 wrapper 秒；308 个前后源码 pin 相同。对应 CI 39475536282 四矩阵均 SUCCESS；远端跳过范围不替代本机完整 MAC 验证 |
 | 三态现场、自动 hook、配对提效 | 尚未完成；不由离线检查替代 |
 
 以上生成控制器测试不调用模型、不发送实际业务输入。macOS 和完整本地源码依赖的测试在远端 CI 会明确跳过；十文件可移植测试仍运行，不能将 CI 跳过解释为现场验证。
@@ -35,4 +35,10 @@
 
 原 surface45 的 R2 独审回件全文已读并验 SHA256 `22b2fa50d5242fe317ac8caf0b7823eae508fa9326e94f6d5011cb89d631aa12`，5611 字节，结论仍 PARTIAL：callback 调度 1–4 项闭合，三项实跑反例通过；版本适配及夹具安全第 5 项 NOT_EXAMINED。R1 的证据优先级问题已修，v2 可达性及 failure guard 阻塞收取两项假设 REFUTED。需要下一轮覆盖当前适配、完整回归/CI和最终整合，不把范围外内容推断为独审通过。
 
-实际三个可用性场景、跨双 Claude 的共享最多两子 agent 预算、自动 60 秒 request→reply→全文 read→exact-SHA consume→rearm 两轮，及完整 3 pilot/33 business/15 pairs/192 ordinary 槽合同依旧是最终门槛。JEV 为 rules/offline_mock；R33 仍 INSUFFICIENT_EVIDENCE。共享维护由原 surface40、upgrade 整合由原 surface43 统一管理。
+`96a7b87` 完整原结果 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/mac058-full-v2/result.json`，SHA256 `b647ba04138eec2c6c8c4b2e1dda211d6a78f24c46a1181121de1490c1eea063`；日志 SHA256 `c5e0864795aa833816a2d06a202c8f5ae737542e2e9a2c3ddf4cd5b010c1e745`。对应 [CI 39475536282](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39475536282) HEAD 为 `96a7b874f477d351e603980fa83b15de7e3a4d75`，新连续执行补丁不继承此绿色。
+
+43 R1 独审回件 3539B／SHA256 `0ead7403d50d06c856617deffd311a8ef9b32b711b718aecf2205ee6f3e2dce3` 已全文读并核验。只闭合 c6→96 的夹具修复／计数；未跑测试、未独立读 CI，现代适配第1–3项仍 NOT_EXAMINED。D1 为上述类级失败／5项未运行的文档精度，D2 为另外两组借用者缺显式固定来源断言，D3 为历史“43整合”用语；后续独立 commit 补充，不修改被审快照。
+
+43 R2 回件 4202B／SHA256 `8de391299e42285668bd2b67630475f99b094b23e7d8a94e28ab29993b6d6a73` 已全文读并核验；冻结 c6 的既有兼容 15 测独立通过（2.346 秒、HEAD 不变），仍为 PARTIAL。二次 live_gates／transform_live 被接受及 gate-pin 挖除判据过宽两项 P3 在后续独立候选修复；第2项真实入口与 inventory／footer 边界仍 NOT_EXAMINED。新原 consumer／private CURRENT／Stop 补充的范围及限制见 [私有接续验证](PRIVATE-CONTINUITY-VALIDATION.md)。
+
+实际三个可用性场景、跨双 Claude 的共享最多两子 agent 预算、自动 60 秒 request→reply→全文 read→exact-SHA consume→rearm 两轮，及完整 3 pilot/33 business/15 pairs/192 ordinary 槽合同依旧是最终门槛。JEV 为 rules/offline_mock；R33 仍 INSUFFICIENT_EVIDENCE。共享维护由原 surface40集中；原surface43是用户点名的upgrade参与者及接受的独立只读审者，communication_only，不据“正在做upgrade”推出唯一整合、merge或共享写权限。

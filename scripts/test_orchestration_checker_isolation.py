@@ -58,6 +58,8 @@ class CheckerIsolationTests(unittest.TestCase):
     def setUpClass(cls):
         # Reuse materialization only, without inheriting or running startup tests.
         startup_fixture.MaterializedStartupTests.setUpClass.__func__(cls)
+        if cls.source_controller != startup_fixture.SOURCE:
+            raise AssertionError("borrowed checker fixture must preserve its fixed legacy source")
 
     @classmethod
     def tearDownClass(cls):
