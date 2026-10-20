@@ -1,0 +1,19 @@
+{
+  "schema": "upgrade-upstream-source-fixtures-v1",
+  "upstream": "https://github.com/lzhs1995/multi-agent-collaboration",
+  "release": "0.4.58-cf3f6175840b",
+  "license": "MIT",
+  "scope": "Ten exact source files for reproducible transformation and offline behavior tests. This is not a complete controller or permitted live runtime.",
+  "files": {
+    "cmux_bridge.py": {"bytes": 117052, "sha256": "20e7c6dd1f99bbde6c7d579e1a95da74d24f05030015184faff06b56b4e0300c"},
+    "cmux_callback_journal.py": {"bytes": 24877, "sha256": "c5c0b7358c49183c634eefa38b7546e2db57d15935f02d459283925ca461428b"},
+    "cmux_codex_input.py": {"bytes": 13171, "sha256": "3f79c97261c78aa3ed16691a4820afff9f9e734d1185d2d3ef9a61a9d0bbc607"},
+    "cmux_confirmation.py": {"bytes": 7034, "sha256": "df1645976b9d566adb1e011774fae3fba6289fc16eb86c31b1b407f4f772165f"},
+    "cmux_daemon_identity.py": {"bytes": 28781, "sha256": "25e84742779316635d0e840d92b0213c903f46a3c96e5877eae087462745fdfb"},
+    "cmux_native_delivery.py": {"bytes": 34782, "sha256": "5478f625084e3046f2bde52cfb2d2092de3016b9c09446a0aaa3a0dd5fa493a4"},
+    "handshake_panel.py": {"bytes": 1905, "sha256": "b47b9dd45666d1b7a1b004cf106f876bb0f61ebda30428b946f709ec695cbafc"},
+    "mac_harness.py": {"bytes": 175932, "sha256": "12180299442363ae6da684f8a17fc2f69a2d555b17338ac08998daf9499d7400"},
+    "observe_handshake_ack.py": {"bytes": 9608, "sha256": "c17583c35d0dd6a5eee562baae28eb415afebbe64fda4a13f67b1fa455e4b75a"},
+    "reconcile_handshake_ack.py": {"bytes": 45107, "sha256": "4f4ad7a65e5232aa7bb81cc131e812436c3e711a21f56b308a676b376d0d737b"}
+  }
+}

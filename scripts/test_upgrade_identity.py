@@ -44,6 +44,36 @@ def uuid_selector_fixture(uppercase=False):
 
 
 class IdentityTests(unittest.TestCase):
+    def test_partial_panel_requires_explicit_mode_and_preserves_unsent_member(self):
+        args = fixture()
+        rows, members, gate, binding = args
+        member = dict(members[0], surface_ref="surface:46", surface_uuid=uid(7), ordinal=2)
+        members.append(member)
+        gate["workspace_proofs"][member["surface_ref"]] = dict(
+            gate["workspace_proofs"]["surface:45"], target_surface_uuid=uid(7),
+            target_surface_ref=member["surface_ref"])
+        gate["native_participants"].append(dict(role="executor", surface_uuid=uid(7),
+            native_session_id=uid(8), provider="claude"))
+        before = copy.deepcopy(args)
+        with self.assertRaisesRegex(ValueError, "PANEL_OR_GATE"):
+            bound_rows(*args)
+        resolved, selected = bound_rows(*args, allow_partial=True)
+        self.assertIs(selected, rows[0])
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(args, before)
+        binding["identity"]["target_surface_uuid"] = uid(7)
+        with self.assertRaisesRegex(ValueError, "EXECUTOR_NOT_UNIQUE"):
+            bound_rows(*args, allow_partial=True)
+
+    def test_partial_panel_cannot_hide_duplicate_aliases_or_malformed_mode(self):
+        for value in (1, "true", None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                bound_rows(*fixture(), allow_partial=value)
+        args = fixture()
+        args[1].append(dict(args[1][0], ordinal=2))
+        with self.assertRaisesRegex(ValueError, "DUPLICATE"):
+            bound_rows(*args, allow_partial=True)
+
     def test_uuid_selector_original_ui_proof_and_case_return_original_objects(self):
         for uppercase in (False, True):
             args = uuid_selector_fixture(uppercase)

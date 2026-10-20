@@ -34,11 +34,13 @@ def _register_alias(aliases, value, mid):
     aliases[alias] = mid
 
 
-def bound_rows(rows, members, gate, binding):
+def bound_rows(rows, members, gate, binding, *, allow_partial=False):
     """Return original row objects with canonical IDs; do not mutate either input."""
     identity = binding.get("identity", {})
     if (gate.get("status") != "PASS" or not isinstance(rows, list) or not rows
-            or not isinstance(members, list) or len(rows) != len(members)):
+            or not isinstance(members, list) or type(allow_partial) is not bool):
+        raise ValueError("ACK_ORIGINAL_PANEL_OR_GATE_CHANGED")
+    if not (len(rows) <= len(members) if allow_partial else len(rows) == len(members)):
         raise ValueError("ACK_ORIGINAL_PANEL_OR_GATE_CHANGED")
     if (canonical_uuid(gate.get("supervisor_surface_uuid")) != canonical_uuid(identity.get("caller_surface_uuid"))
             or canonical_uuid(gate.get("workspace_uuid")) != canonical_uuid(identity.get("workspace_uuid"))):

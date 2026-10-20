@@ -3,6 +3,7 @@ import contextlib
 import copy
 import fcntl
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -32,7 +33,7 @@ def run(journal, root, target_root):
         pack = dict(task_id=name, completion_nonce='nonce-' + name,
                     report=str(report), callback_target='surface:offline',
                     completion_receipt=str(receipt), executor_uuid='EXECUTOR',
-                    completion_callback='DONE|' + name)
+                    completion_callback='DONE|' + name + '|nonce-' + name)
         pack_path.write_text(json.dumps(pack))
         proof = dict(workspace_uuid='WS', caller_surface_uuid='EXECUTOR',
                      target_surface_uuid='SUPERVISOR', target_pane_uuid='PANE')
@@ -136,7 +137,10 @@ def run(journal, root, target_root):
                 untouched(f)
             results.append(mode + '_during_wait_zero_input')
 
-        for mode in ('reconcile_only', 'resume_queue_only', 'old_attempt'):
+        recovery_modes = ['reconcile_only', 'resume_queue_only', 'old_attempt']
+        if 'recover_stranded' in inspect.signature(journal.deliver).parameters:
+            recovery_modes.append('recover_stranded')
+        for mode in recovery_modes:
             f = fixture(mode)
             kwargs = {} if mode == 'old_attempt' else {mode: True}
             if mode == 'old_attempt':

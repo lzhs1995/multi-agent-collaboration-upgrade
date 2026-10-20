@@ -9,6 +9,7 @@ R32 中 inventory callback 原生到达后 248.233 秒才进入 EVIDENCE_READY�
 候选修改三处：
 
 1. `orchestration_advance.py` 在下一次推进时先处理新 callback 和未形成 EVIDENCE_READY 的候选，再领取、准备和派发其他工作。已提出的 EVIDENCE_READY 审查不会持续抢占新就绪通道。
+   2026-10-21 独审后补正：EVIDENCE_READY 与 reconcile 不再同级。顺序为原资源收口、新 callback/未成候选、新就绪工作、已成成果交审、原次 reconcile；反序冻结节点测试证明已成成果仍先交审。
 2. `orchestration_coordinator.py` 保留原 HALT、截止和 Stop 检查优先级；一个节点失败后，阻止该注册轮的新 claim、prepare、dispatch，仍允许原 callback、candidate 和原主管独立 ACCEPT。检查不会撤销在途操作，不转移文件写权。
 3. `upgrade_driver.py` 新配置可选择 `--node-failure-drain-seconds N`，N 为 1–300 秒，且必须固定整体截止。配置变为 `upgrade-driver-config-v3`，要求 coordinator 和 advance 与 driver 的源码匹配。窗口从首个失败事件计时；进程重启或晚发现不会重置。待收取节点全部离开在途/待验收状态、窗口到期、原截止到期或原生主管失败时，保留失败并停止该实验。
 
@@ -33,4 +34,6 @@ callback 的来源继续使用原 `continuation.json` 中的 `callback_native`�
 
 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/callback-drain-validation/`
 
-其中 `result.json` 保留首次完整失败；`recheck/result.json` 和 `recheck/test-all.log` 保存最终通过结果。最终日志 SHA256 为 `e248a7278ac52bc74a7052b5e30bd657de1eaa1b790fe26d72b9bad7d3bb1812`，`source_changed=[]` 覆盖 259 个 Python 源文件。首次失败日志不覆盖。当前审查为 `solo_self_review`；由 surface43 整合前须独立核读最终提交。
+其中 `result.json` 保留首次完整失败；`recheck/result.json` 和 `recheck/test-all.log` 保存最终通过结果。最终日志 SHA256 为 `e248a7278ac52bc74a7052b5e30bd657de1eaa1b790fe26d72b9bad7d3bb1812`，`source_changed=[]` 覆盖 259 个 Python 源文件。首次失败日志不覆盖。
+
+2026-10-21：原 surface45 已实际读请求并独审 `10ccc142`，回件 `REVIEWER45-R1.md` 的 SHA256 为 `65e70745fde85919dd700bc762ccfe77354325389a186d8f36a6dd6a247e425c`，3800 字节，结论 PARTIAL。测试和文档未审，不能标作独审完成。R1 的优先级合并疑问已在独立 `upgrade/mac058-20261021` 候选修复；v2 假设由原 `advance` 的 v3/B-only 入口及零副作用拒绝测试排除；BLOCKED 后 callback→candidate→原主管 ACCEPT 实际测试通过，说明 collection 不进入新工作预算门禁。新的提交仍须重新完整回归、冻结提交并由原 reviewer 核读。

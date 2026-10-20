@@ -34,12 +34,15 @@ def patch_ack(name, text):
             "        raise ValueError('ACK_ORIGINAL_GATE_PATH_CHANGED')")
         start = text.index("    if not isinstance(rows, list):", text.index("def observe("))
         end = text.index("    nonce, task, provider =", start)
+        modern = "    gate_pin = None\n" in text[start:end]
         text = text[:start] + (
             "    harness = importlib.import_module('mac_harness')\n"
             "    if Path(harness.__file__).resolve().parent != Path(args.controller) / 'scripts':\n"
             "        raise ValueError('ACK_OBSERVATION_MIXED_CONTROLLER')\n"
             "    gate = json.loads(gate_raw)\n"
-            "    _, row = bound_rows(rows, harness._gate_executors(gate), gate, binding)\n"
+            "    _, row = bound_rows(rows, harness._gate_executors(gate), gate, binding" +
+            (", allow_partial=True" if modern else "") + ")\n" +
+            ("    gate_pin, gate_path = pins[3], paths[3]\n" if modern else "")
         ) + text[end:]
         text = replace_once(text, "'attempt-sha256', 'text-file'):",
                             "'attempt-sha256', 'text-file', 'gate', 'gate-sha256'):")
@@ -50,15 +53,29 @@ def patch_ack(name, text):
         text = replace_once(text, "import observe_handshake_ack as observation",
                             "import observe_handshake_ack as observation\n"
                             "from upgrade_handshake_identity import bound_rows")
-        start = text.index("    if (", text.index("def validate_panel("))
-        end = text.index("        nonce = row.get('ack_nonce')", start)
-        text = text[:start] + (
-            "    resolved, selected = bound_rows(rows, members, gate, binding)\n"
+        nodes = [n for n in ast.parse(text).body
+                 if isinstance(n, ast.FunctionDef) and n.name == "validate_panel"]
+        if len(nodes) != 1:
+            raise ContractError("private ACK panel function shape changed")
+        node = nodes[0]
+        source = ast.get_source_segment(text, node)
+        modern = "or not len(rows) <= len(members)" in source
+        start = source.index("    if (")
+        end = source.index("        nonce = row.get('ack_nonce')", start)
+        source = source[:start] + (
+            "    resolved, selected = bound_rows(rows, members, gate, binding" +
+            (", allow_partial=True" if modern else "") + ")\n"
             "    for row, canonical_id, member in resolved:\n"
-        ) + text[end:]
-        start = text.index("    selected = [r for r in rows", text.index("def validate_panel("))
-        end = text.index("    return rows, selected[0]", start) + len("    return rows, selected[0]")
-        text = text[:start] + "    return rows, selected" + text[end:]
+        ) + source[end:]
+        selector = ("    selected = [r for r, m in zip(rows, members)" if modern else
+                    "    selected = [r for r in rows")
+        start = source.index(selector)
+        end = source.index("    return rows, selected[0]", start) + len("    return rows, selected[0]")
+        # bound_rows already authenticates the exact selected original member,
+        # native session, provider, pane and gate aliases. Keep ACK/aggregate
+        # validation above; never resolve an unsent member from today's tree.
+        source = source[:start] + "    return rows, selected" + source[end:]
+        text = edit_nodes(text, [(node, source)])
         text = replace_once(text,
             "gate = json.loads(originals[root / 'identity-gate.json'][0])",
             "gate_raw = originals[root / 'identity-gate.json'][0]\n"

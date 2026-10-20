@@ -61,7 +61,8 @@ A1 uses the manual baseline and can run both independent Claude lanes in paralle
 This explicit foreground batching does not wake an idle model or prove speedup.
 New callbacks take precedence over claiming, preparing or dispatching another
 lane. An already offered EVIDENCE_READY review must not repeatedly starve ready
-work. A failed node stops new work in that registered run while original
+work. Completed EVIDENCE_READY evidence has its own priority ahead of potentially
+slow original reconciliation, independent of the frozen node order. A failed node stops new work in that registered run while original
 callback collection, candidate validation and independent acceptance remain
 available. Newly configured drivers may opt in to
 `--node-failure-drain-seconds N` (1–300), with an immutable overall deadline and
@@ -71,6 +72,12 @@ or a driver restart. Original run/overall deadlines, native supervisor errors
 and operator Stop still apply. Old driver configurations retain their behavior.
 The observer does not execute acceptance, release resources or start a new run.
 See [callback scheduling validation](docs/CALLBACK-DRAIN-VALIDATION.md).
+New private controllers can transform the complete fixed MAC 0.4.58 source while
+preserving its current delivery and recovery semantics. Use
+[MAC 0.4.58 private validation](docs/MAC058-PRIVATE-VALIDATION.md) for the pinned
+source, offline counterexamples and actual generated-controller probes. Source
+fixtures are test inputs, never a complete release or a live runtime. Their
+passing tests do not establish automatic hook adoption or the native benchmark.
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded

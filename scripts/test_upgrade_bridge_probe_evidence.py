@@ -32,18 +32,19 @@ def screen(body="", status="✻ Brewed for 3m", footer_suffix=""):
 def parser_namespace(text):
     functions = {"_claude_bordered_compose", "compose_block_text", "delivery_compose_text",
                  "compose_rendered_text", "compose_block_is_empty", "_queued_or_active_input",
-                 "_clipped_prefix_pattern"}
+                 "_clipped_prefix_pattern", "_claude_framed_prompt"}
     constants = {"_PROMPT_GLYPH_RE", "_ACTIVITY_RE", "_CLAUDE_BORDER_RE", "_CLAUDE_DURATION",
                  "_CLAUDE_TOOL", "_CLAUDE_COUNTS", "_CLAUDE_ACTIVE_TOOL_RE", "_CLAUDE_SUMMARY_RE",
                  "_CLAUDE_HUD_TOKENS", "_CLAUDE_CONTEXT_ROW_RE", "_COMPOSE_CHROME_RE",
-                 "_PROVIDER_HINT_ROW_RE"}
+                 "_PROVIDER_HINT_ROW_RE", "_CLAUDE_GOAL_DURATION", "_CLAUDE_GOAL_ROW_RE",
+                 "_CLAUDE_BYPASS_ROW_RE"}
     nodes = [n for n in ast.parse(text).body
              if isinstance(n, ast.FunctionDef) and n.name in functions
              or isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in constants
                                                  for t in n.targets)]
     namespace = {"re": re}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "generated-cmux-parser", "exec"), namespace)
-    return {name: namespace[name] for name in functions}
+    return {name: namespace[name] for name in functions if name in namespace}
 
 
 @unittest.skipUnless(SOURCE.is_dir(), "requires fixed local MAC source")

@@ -28,16 +28,19 @@ import upgrade_native_roots as roots
 from upgrade_startup_contract import validate_startup
 
 SOURCE = Path.home() / ".local/share/multi-agent-collaboration/releases/0.4.34-d333557fb498/source"
+MODERN_SOURCE = Path.home() / ".local/share/multi-agent-collaboration/releases/0.4.58-cf3f6175840b/source"
 WRAPPERS = Path("/Applications/cmux.app/Contents/Resources/bin")
 
 
 @unittest.skipUnless(SOURCE.is_dir() and WRAPPERS.is_dir(), "requires fixed local MAC and cmux wrappers")
 class MaterializedStartupTests(unittest.TestCase):
+    source_controller = SOURCE
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="", dir="/tmp")
         cls.root = Path(cls.tmp.name).resolve()
-        cls.context_ref = init_experiment(cls.root / "l", "focused-startup", SOURCE)
+        cls.context_ref = init_experiment(cls.root / "l", "focused-startup", cls.source_controller)
         # Small executable pins keep these offline tests independent of provider credentials.
         cls.binaries = {k: Path("/usr/bin/true") for k in ("codex", "claude", "cmux", "rtk", "node")}
         cls.binaries.update({p + "_wrapper": WRAPPERS / ("cmux-" + p + "-wrapper")
@@ -162,7 +165,7 @@ for name in ("_submit_text_once", "_submit_terminal_once", "_observe_native"):
     assert snippets[0] == snippets[1], name
 print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/receipt-fences")
 '''.replace("CONTROLLER", repr(str(controller))).replace("SCREENS", repr(screens)).replace(
-            "BASE", repr(str(SOURCE / "scripts/cmux_bridge.py"))).replace(
+            "BASE", repr(str(self.source_controller / "scripts/cmux_bridge.py"))).replace(
             "NATIVE_ROOT", repr(self.spec["clients"]["claude_a"]["native_root"]))
         result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
                                  sys.executable, "-I", "-B", "-c", code],
@@ -247,7 +250,7 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
     def test_materialized_callback_wait_keeps_single_attempt_and_fresh_gates(self):
         controller = Path(self.spec["controller"]) / "scripts"
         probe = Path(__file__).with_name("upgrade_callback_wait_probe.py").read_text()
-        source = SOURCE / "scripts/cmux_callback_journal.py"
+        source = self.source_controller / "scripts/cmux_callback_journal.py"
         before = source.read_bytes()
         code = ("import sys, json\nfrom pathlib import Path\n"
                 f"sys.path.insert(0, {str(controller)!r})\n"
@@ -264,7 +267,7 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
                                 capture_output=True, text=True, timeout=25)
         self.assertEqual(result.returncode, 0, result.stderr)
         counts = json.loads(result.stdout)
-        self.assertEqual(len(counts["checks"]), 16)
+        self.assertEqual(len(counts["checks"]), 16 if self.source_controller == SOURCE else 17)
         self.assertEqual(counts["model_requests"], 0)
         self.assertEqual(counts["native_inputs"], 0)
         self.assertEqual(counts["pressure"]["original_invocations"], 80)
@@ -388,7 +391,7 @@ print('MATERIALIZED_STANDALONE_TOOL_HOOK_PASS')
             "printf '%s\\0' --enable hooks --dangerously-bypass-hook-trust -c " +
             shlex.quote('hooks.PreToolUse=[{hooks=[{type="command",command="/fixture/cmux-hook"}]}]') + "\n")
         emitter.chmod(0o755)
-        context = init_experiment(self.root / "j", "argv-join", SOURCE)
+        context = init_experiment(self.root / "j", "argv-join", self.source_controller)
         binaries = dict(self.binaries, codex=capture, cmux=emitter)
         runtime = json_ref(materialize_live(context, "B", binaries=binaries, provider_configuration=({}, {})))
         spec, _ = validate_startup(runtime["startup"])
@@ -428,7 +431,7 @@ print('MATERIALIZED_STANDALONE_TOOL_HOOK_PASS')
                         if isinstance(node, ast.FunctionDef) and node.name == name)
         # Discovery changes must not replace the pinned base's strict reader.
         self.assertEqual(ast.dump(function_tree(controller / "cmux_daemon_identity.py", "process")),
-                         ast.dump(function_tree(SOURCE / "scripts/cmux_daemon_identity.py", "process")))
+                         ast.dump(function_tree(self.source_controller / "scripts/cmux_daemon_identity.py", "process")))
         for module, entrypoint, discovery in (("cmux_daemon_identity.py", "client_candidates", "inventory"),
                                    ("cmux_native_delivery.py", "_target_process", "inventory_for_tty")):
             calls = [node for node in ast.walk(function_tree(controller / module, entrypoint))
@@ -625,7 +628,7 @@ fs.readSync(0, Buffer.alloc(1), 0, 1, null);
             path.chmod(0o444)
 
     def test_long_temp_path_refuses_before_materializing_arm_artifacts(self):
-        context_ref = init_experiment(self.root / ("long-root-" * 3), "long-startup", SOURCE)
+        context_ref = init_experiment(self.root / ("long-root-" * 3), "long-startup", self.source_controller)
         paths = arm_paths(validate_context(context_ref), "B")
         self.assertTrue(all(not p.exists() for p in paths.values()))
         with self.assertRaisesRegex(ContractError, "TMP_PATH_TOO_LONG"):
@@ -733,6 +736,13 @@ print('PRIVATE_CONTROLLER_AND_ADAPTER_COEXIST')
                                 cwd=self.root, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PRIVATE_CONTROLLER_AND_ADAPTER_COEXIST", result.stdout)
+
+
+@unittest.skipUnless(MODERN_SOURCE.is_dir() and WRAPPERS.is_dir(), "requires complete MAC 0.4.58 and cmux wrappers")
+class MaterializedMAC058StartupTests(MaterializedStartupTests):
+    """Run the same real generated-controller probes against current upstream."""
+    __unittest_skip__ = False
+    source_controller = MODERN_SOURCE
 
 
 class InputGateTests(unittest.TestCase):

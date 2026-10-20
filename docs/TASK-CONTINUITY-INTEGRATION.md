@@ -42,6 +42,8 @@
 
 当前缺口：0.4.57 私有 materializer 接入尚未验证；三态真实接续、跨 Claude 两子 agent 预算、自动主动求派闭环和完整配对仍未完成。R33 的 Codex 配额失败及所有 STOP 均已保留。上述要求不能因本候选测试通过而标为完成。
 
+2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。完整范围见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容缺口，尚未证明三態角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中整合，upgrade 冻结候选交原 surface43；不改旧 R33 或不可变共享版本。
+
 首次对 0.4.57 全部 226 个顶层 Python 脚本执行了内存转换检查（不执行输出、不生成 runtime、不启客户端）：220 个转换成功，6 个拒绝。具体为 `cmux_bridge.py` 的旧 footer/activity 片段、`cmux_callback_journal.py` 的 deliver 签名、`cmux_daemon_identity.py` 的无 daemon 分支、`cmux_native_delivery.py` 的 ps 参数、`mac_harness.py` 的旧 preflight bridge-test 调用、`reconcile_handshake_ack.py` 的旧 bridge_clear 条件。部分旧补丁对应的行为已被上游改变，需核对语义后适配；不能删除 source-shape 检查或把转换成功当运行隔离成功。
 
 原观察：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/mac057-transform-observation.json`，SHA256 `316f20308c8ecc59c2e6daf3e9f729afa21ce2b4ea867b3c5b0d9242043fec9f`。它只证明单文件转换结果，不证明完整 materialization、跨模块导入、自动 hook 或运行语义。

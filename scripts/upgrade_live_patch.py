@@ -66,20 +66,32 @@ def native_readers(name, text):
         text = replace_once(text, "import cmux_foreground_thread as foreground",
                             "import cmux_foreground_thread as foreground\nimport upgrade_native_roots as private_roots\n"
                             "import upgrade_process_inventory as private_process")
-        text = replace_once(text,
+        inventory_prefix = (
             '    listing = subprocess.run(["/bin/ps", "-U", str(os.getuid()), "-o", "pid=,comm="],\n'
             '                             capture_output=True, text=True, timeout=3, check=True)\n'
             '    matches = []\n'
             '    for line in listing.stdout.splitlines():\n'
-            '        fields = line.strip().split(None, 1)',
+            '        fields = line.strip().split(None, 1)')
+        modern_prefix = inventory_prefix.replace('["/bin/ps", "-U",', '["/bin/ps", "-ww", "-U",')
+        if text.count(modern_prefix) == 1 and inventory_prefix not in text:
+            inventory_prefix = modern_prefix
+        text = replace_once(text,
+            inventory_prefix,
             '    candidate = private_roots.candidate_process_matcher()\n'
             '    matches = []\n    for fields in private_process.inventory_for_tty(candidate, row["tty"]):')
         text = _terminal_reads(text)
         provider = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_provider")
         text = edit_nodes(text, [(provider, "def _provider(p):\n    return private_roots.executable_provider(p)")])
-        text = replace_once(text,
-            'if Path(fields[1]).name not in ("codex", "claude", "claude.exe", "node"):',
-            'if not candidate(fields[1]):')
+        modern_filter = (
+            '        name = Path(fields[1]).name\n'
+            '        if (name not in ("codex", "claude", "claude.exe", "node")\n'
+            '                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):')
+        if text.count(modern_filter) == 1:
+            text = replace_once(text, modern_filter, '        if not candidate(fields[1]):')
+        else:
+            text = replace_once(text,
+                'if Path(fields[1]).name not in ("codex", "claude", "claude.exe", "node"):',
+                'if not candidate(fields[1]):')
         text = replace_once(text, 'Path.home() / ".claude/sessions" / (str(p["pid"])+".json")',
                             'private_roots.process_root("claude", p) / "sessions" / (str(p["pid"])+".json")')
         start = text.index("def _native_root(provider):")
@@ -132,10 +144,26 @@ def standalone_identity(text):
             raise ValueError("expected native collector missing: " + name)
         node = nodes[0]
         source = ast.get_source_segment(text, node)
-        replacement = replace_once(source, "if daemon is None:\n        return None",
+        old = "if daemon is None:\n        return None"
+        embedded = "if daemon is None:\n        return _collect_embedded(" + arguments + ")"
+        if source.count(embedded) == 1 and old not in source:
+            old = embedded
+        replacement = replace_once(source, old,
             "if daemon is None:\n        return private_standalone.collect(" + arguments + ")")
         edits.append((node, replacement))
     text = edit_nodes(text, edits)
+    modern_origin = "embedded = proof.get('source') == 'embedded-native-client-v1' and daemon is None"
+    if text.count(modern_origin) == 1:
+        text = replace_once(text, modern_origin,
+            "embedded = (proof.get('source') in ('embedded-native-client-v1',\n"
+            "                                        'private-standalone-native-client-v1')\n"
+            "                and daemon is None)")
+        text = replace_once(text, "if proof.get('source') == 'embedded-native-client-v1':",
+            "if proof.get('source') in ('embedded-native-client-v1', 'private-standalone-native-client-v1'):")
+        # The modern public proof already represents a genuinely absent daemon.
+        expected = "daemon_pid=proof['daemon']['pid'] if proof['daemon'] is not None else None,"
+        replace_once(text, expected, expected)
+        return text
     text = replace_once(text, "source, caller = by_env(daemon['env']), by_env(client['env'])",
         "origin = daemon if daemon is not None else client\n"
         "    source, caller = by_env(origin['env']), by_env(client['env'])")
@@ -149,7 +177,17 @@ def _terminal_reads(text):
         if (isinstance(node, ast.Assign) and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "tty"
                 and "/bin/ps" in ast.get_source_segment(text, node)):
-            edits.append((node, "tty = private_process.terminal(p)"))
+            subjects = [child.value.id for child in ast.walk(node.value)
+                        if isinstance(child, ast.Subscript) and isinstance(child.value, ast.Name)
+                        and isinstance(child.slice, ast.Constant) and child.slice.value == "pid"]
+            # The managed inventory names its already-read process `p` but
+            # uses the original candidate variable for the ps argument.
+            if not subjects and any(isinstance(child, ast.Name) and child.id == "candidate"
+                                    for child in ast.walk(node.value)):
+                subjects = ["p"]
+            if len(subjects) != 1 or subjects[0] not in ("p", "client"):
+                raise ValueError("expected native terminal process subject changed")
+            edits.append((node, "tty = private_process.terminal(" + subjects[0] + ")"))
     if not edits:
         raise ValueError("expected native terminal reads missing")
     return edit_nodes(text, edits)
@@ -197,6 +235,22 @@ def claude_measured_chrome(text):
             raise ContractError("private Claude chrome function shape changed: " + name)
         node = nodes[0]
         original = ast.get_source_segment(text, node)
+        if name == "_queued_or_active_input" and old not in original:
+            # 0.4.58 already includes both complete hints and timerless activity.
+            # Authenticate that measured span; do not replace newer transport.
+            modern = r'''        before = list(claude["before"])
+        while before and (not before[-1].strip()
+                          or _CLAUDE_GOAL_ROW_RE.fullmatch(before[-1])
+                          or re.fullmatch(r"\s*⎿\s+Tip:[ \t]+[^\r\n]+", before[-1])):
+            before.pop()
+        screen = before[-1] if before else ""
+'''
+            activity = r'''        if re.fullmatch(r"\s*[·✻✢✳✶✽◐◑◒◓]\s+(?:[A-Za-z][A-Za-z-]*|Compacting (?:conversation|context))(?:…|\.\.\.)(?:\s*\([^\n]+\))?\s*", screen):
+            return True
+'''
+            replace_once(original, modern, modern)
+            replace_once(original, activity, activity)
+            continue
         if new in original:
             raise ContractError("private Claude chrome already patched: " + name)
         edits.append((node, replace_once(original, old, new)))
@@ -259,16 +313,40 @@ def readonly_handshake(name, text):
     """Change only the new handshake precondition; keep the diagnostic probe."""
     from orchestration_common import ContractError
     if name == "reconcile_handshake_ack.py":
-        return replace_once(text,
+        legacy = (
             "                if selected.get('bridge_clear_confirmed') is not True:\n"
-            "                    raise ValueError('ACK_ORIGINAL_BRIDGE_CLEAR_REQUIRED')",
-            "                from upgrade_handshake_capability import require_original\n"
-            "                require_original(selected, gate, binding, text, native)")
+            "                    raise ValueError('ACK_ORIGINAL_BRIDGE_CLEAR_REQUIRED')")
+        replacement = ("                from upgrade_handshake_capability import require_original\n"
+                       "                require_original(selected, gate, binding, text, native)")
+        if text.count(legacy) == 1:
+            return replace_once(text, legacy, replacement)
+        modern = '''                if selected.get('bridge_clear_confirmed') is not True:
+                    # Capability belongs to the complete original controller.
+                    # Old releases retain their clear requirement; a new label
+                    # cannot waive a failed/missing original probe retroactively.
+                    without_probe = getattr(harness, 'handshake_without_probe', None)
+                    if (not callable(without_probe) or not without_probe(selected,
+                            bridge_evidence_present=originals[root / 'bridge-test-evidence.json'] is not None)):
+                        raise ValueError('ACK_ORIGINAL_BRIDGE_CLEAR_REQUIRED')'''
+        gated = ("                if 'handshake_precondition' in selected:\n" +
+                 "\n".join("    " + line for line in replacement.splitlines()) +
+                 "\n                else:\n" +
+                 "\n".join("    " + line for line in modern.splitlines()))
+        return replace_once(text, modern, gated)
     if name != "mac_harness.py":
         return text
-    text = replace_once(text, "    cmd_bridge_test(args)\n    cmd_handshake(args)",
-                        "    # Each original challenge performs a read-only capability check.\n"
-                        "    cmd_handshake(args)")
+    legacy_preflight = "    cmd_bridge_test(args)\n    cmd_handshake(args)"
+    modern = legacy_preflight not in text
+    if modern:
+        direct_preflight = (
+            "    # Optional `bridge-test` is deliberately not run: /goal and ordinary work\n"
+            "    # may continue while the guarded sender delivers the handshake prompt.\n"
+            "    cmd_handshake(args)\n    cmd_validate(args)")
+        replace_once(text, direct_preflight, direct_preflight)
+    else:
+        text = replace_once(text, legacy_preflight,
+                            "    # Each original challenge performs a read-only capability check.\n"
+                            "    cmd_handshake(args)")
     commands = [n for n in ast.parse(text).body
                 if isinstance(n, ast.FunctionDef) and n.name == "cmd_handshake"]
     if len(commands) != 1:
@@ -276,11 +354,17 @@ def readonly_handshake(name, text):
     command = commands[0]
     original = ast.get_source_segment(text, command)
     body = replace_once(original, "def cmd_handshake(args):\n    root = _artifact_root(args)\n", "")
-    body = replace_once(body,
-        '    if (getattr(args, "bridge_clear_recovery", None) and\n'
-        '            any((root / name).exists() for name in ("handshake-receipt.json", "task-pack.json"))):\n'
-        '        _fail("original handshake already started; use its existing receipt, not clear recovery")\n'
-        '        sys.exit(1)\n', "")
+    if modern:
+        body = replace_once(body,
+            '    if any(os.path.lexists(root / name) for name in ("handshake-receipt.json", "task-pack.json")):\n'
+            '        _fail("original handshake already started; reconcile its original ACK or use continue_handshake.py; no replay")\n'
+            '        sys.exit(1)\n', "")
+    else:
+        body = replace_once(body,
+            '    if (getattr(args, "bridge_clear_recovery", None) and\n'
+            '            any((root / name).exists() for name in ("handshake-receipt.json", "task-pack.json"))):\n'
+            '        _fail("original handshake already started; use its existing receipt, not clear recovery")\n'
+            '        sys.exit(1)\n', "")
     body = replace_once(body, "    _recheck_workspace_gate(gate)\n",
                         "    _recheck_workspace_gate(gate)\n    root_recheck()\n")
     body = replace_once(body, "        if not _handshake_one(args, root, gate, item, per_executor):",
@@ -329,22 +413,33 @@ def readonly_handshake(name, text):
     source = ast.get_source_segment(text, node)
     source = replace_once(source, "def _handshake_one(args, root, gate, item, per_executor):",
                           "def _handshake_one(args, root, gate, item, per_executor, *, root_recheck):")
-    begin = source.index("    # Hard precondition: bridge-test must have proven its own token is gone.")
-    end = source.index("    # One fresh nonce per executor.", begin)
-    source = source[:begin] + (
-        "    # No write-and-clear probe: capability is checked against the exact\n"
-        "    # prepared challenge immediately before its one original send.\n\n") + source[end:]
-    source = replace_once(source,
-        '        "bridge_clear_confirmed": True,\n        "bridge_clear_recovery": clear_recovery,',
-        '        "handshake_precondition": None,')
+    if modern:
+        # Keep upstream validation of any explicitly requested old probe.
+        replace_once(source,
+            "        bridge_context = _handshake_bridge_context(args, root, gate, executor_ref)",
+            "        bridge_context = _handshake_bridge_context(args, root, gate, executor_ref)")
+        source = replace_once(source, "    if below_minimum:\n        _info(\n",
+            '    if receipt.get("bridge_clear_confirmed") is not True:\n'
+            '        receipt["handshake_precondition"] = None\n    if below_minimum:\n        _info(\n')
+    else:
+        begin = source.index("    # Hard precondition: bridge-test must have proven its own token is gone.")
+        end = source.index("    # One fresh nonce per executor.", begin)
+        source = source[:begin] + (
+            "    # No write-and-clear probe: capability is checked against the exact\n"
+            "    # prepared challenge immediately before its one original send.\n\n") + source[end:]
+        source = replace_once(source,
+            '        "bridge_clear_confirmed": True,\n        "bridge_clear_recovery": clear_recovery,',
+            '        "handshake_precondition": None,')
     source = replace_once(source, "        prepared = prompt_reference.plan(hello_msg, ack_nonce)\n",
         "        prepared = prompt_reference.plan(hello_msg, ack_nonce)\n"
         "        from upgrade_handshake_capability import observe as observe_capability\n"
         "        import cmux_native_delivery as capability_native\n"
         "        try:\n"
-        "            receipt['handshake_precondition'] = observe_capability(\n"
+        "            observed_capability = observe_capability(\n"
         "                cmux, capability_native, gate, _gate_executors(gate), item,\n"
         "                prepared['text'], lines=args.lines)\n"
+        "            if 'handshake_precondition' in receipt:\n"
+        "                receipt['handshake_precondition'] = observed_capability\n"
         "        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:\n"
         "            diagnostic = getattr(exc, 'diagnostic', None)\n"
         "            if isinstance(diagnostic, dict):\n"
@@ -352,14 +447,14 @@ def readonly_handshake(name, text):
         "            raise cmux.DispatchUnconfirmed(\n"
         "                'READONLY_HANDSHAKE_CAPABILITY_REFUSED: ' + str(exc),\n"
         "                state=cmux.SUPERVISOR_DID_NOT_SUBMIT) from exc\n")
-    if source.count("_write_handshake_receipt(root, per_executor)") != 6:
+    if source.count("_write_handshake_receipt(root, per_executor)") != (7 if modern else 6):
         raise ContractError("readonly handshake receipt writer shape changed")
     source = "\n".join(line[:len(line) - len(line.lstrip())] + "root_recheck()\n" + line
                        if line.strip() == "_write_handshake_receipt(root, per_executor)" else line
                        for line in source.splitlines())
-    source = replace_once(source, "        cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)",
-                          "        root_recheck()\n"
-                          "        cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)")
+    send = ("        result = cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)" if modern else
+            "        cmux.submit_text(executor_ref, prepared['text'], **submit_kwargs)")
+    source = replace_once(source, send, "        root_recheck()\n" + send)
     return edit_nodes(text, [(node, source)])
 
 
@@ -372,9 +467,17 @@ def handshake_contract_settlement(text):
         raise ContractError("handshake settlement requires the original locked challenge")
     node = nodes[0]
     source = ast.get_source_segment(text, node)
-    if (source.count("except cmux.DispatchUnconfirmed as e:") != 1
-            or "except cmux.TaskPackContractError" in source):
+    if source.count("except cmux.DispatchUnconfirmed as e:") != 1:
         raise ContractError("handshake contract settlement source shape changed")
+    if "except cmux.TaskPackContractError" in source:
+        modern = '''        # A contract failure may precede the journal, or follow actual input.
+        # Settle this supervisor workflow without inventing NO_INPUT evidence
+        # or allowing a retry. Only preserve details returned by the sender.
+        handshake_evidence.record_dispatch(receipt, getattr(e, "details", None), failed=True)
+'''
+        extra = ("        from upgrade_handshake_capability import record_dispatch_failure\n"
+                 '        record_dispatch_failure(receipt, getattr(e, "details", None))\n')
+        return edit_nodes(text, [(node, replace_once(source, modern, modern + extra))])
     anchor = '    _info(f"Polling for PREFLIGHT_ACK (timeout={handshake_timeout}s, poll=3s)...")'
     handler = '''    except cmux.TaskPackContractError as e:
         # A contract error can occur before a journal or after actual input.
@@ -400,7 +503,13 @@ def handshake_contract_settlement(text):
 
 def callback_pane_wait(text):
     """Wait before a first input only; never replay a journal or reopen a lock."""
-    text = replace_once(text, "def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):", r'''CALLBACK_PANE_WAIT_SECONDS = 15.0
+    signature = "def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):"
+    modern_signature = ("def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False,\n"
+                        "            resume_queue_only=False, wait_seconds=None, recover_stranded=False):")
+    modern = text.count(modern_signature) == 1 and signature not in text
+    if modern:
+        signature = modern_signature
+    helpers = r'''CALLBACK_PANE_WAIT_SECONDS = 15.0
 
 
 def _callback_lock_identity(bridge, held, path):
@@ -435,10 +544,12 @@ def _callback_acquire_pane(bridge, pane_lock, pane_path, task_lock, task_path, *
         _callback_lock_identity(bridge, held, path)
 
 
-def deliver(bridge, task_pack_path, confirm_lines=200, *, reconcile_only=False, resume_queue_only=False):''')
+'''
+    text = replace_once(text, signature, helpers + signature)
     text = replace_once(text, "        old = json.loads(read_bytes(attempts[-1])) if attempts else None\n",
         "        old = json.loads(read_bytes(attempts[-1])) if attempts else None\n"
-        "        fresh_callback = not attempts and not reconcile_only and not resume_queue_only\n"
+        "        fresh_callback = not attempts and not reconcile_only and not resume_queue_only"
+        + (" and not recover_stranded" if modern else "") + "\n"
         "        if fresh_callback:\n"
         "            from cmux_evidence_io import snapshot as callback_snapshot\n"
         "            callback_pins = {Path(task_pack_path): callback_snapshot(task_pack_path),\n"
@@ -484,14 +595,25 @@ def live_gates(name, text):
     elif name == "reconcile_handshake_ack.py":
         text = readonly_handshake(name, text)
     elif name == "cmux_codex_input.py":
-        text = replace_once(text, "from cmux_codex_rpc import DaemonRPC", "from cmux_codex_rpc import DaemonRPC\n"
-                            "from upgrade_input_gate import check_input")
+        # Match the complete import, not a prefix which would move a newer
+        # RPCError import into the private input gate's module.
+        imports = [node for node in ast.parse(text).body
+                   if isinstance(node, ast.ImportFrom) and node.module == "cmux_codex_rpc"]
+        if (len(imports) != 1 or any(item.asname is not None for item in imports[0].names)
+                or [item.name for item in imports[0].names] not in
+                (["DaemonRPC"], ["DaemonRPC", "RPCError"])):
+            from orchestration_common import ContractError
+            raise ContractError("private native input RPC import shape changed")
+        node = imports[0]
+        text = edit_nodes(text, [(node, ast.get_source_segment(text, node) +
+                                 "\nfrom upgrade_input_gate import check_input")])
         text = replace_once(text, '        emit(INPUT_PHASE, evidence={"native_request": request})',
             '        check_input(binding["identity"], native_binding=binding)\n'
             '        emit(INPUT_PHASE, evidence={"native_request": request})')
-        text = replace_once(text, '            result = client.request(request["method"], request["params"])',
-            '            check_input(binding["identity"], native_binding=binding)\n'
-            '            result = client.request(request["method"], request["params"])')
+        text = replace_once(text,
+            '        try:\n            result = client.request(request["method"], request["params"])',
+            '        check_input(binding["identity"], native_binding=binding)\n'
+            '        try:\n            result = client.request(request["method"], request["params"])')
     elif name == "cmux_hook_runtime_audit.py":
         marker = "        session = str(uuid.UUID(payload.get('session_id') or payload.get('sessionId')))"
         text = replace_once(text, marker,

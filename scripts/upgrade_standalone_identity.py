@@ -69,4 +69,5 @@ def collect(env, chain, *, payload=None):
     if foreground.read(client) != selected:
         raise native.IdentityError("standalone native foreground changed during observation")
     return dict(session=session, daemon=None, client=dict(client, tty=tty),
-                chain=[current] + chain, foreground=selected, caller_kind="standalone_native")
+                chain=[current] + chain, foreground=selected, caller_kind="standalone_native",
+                source="private-standalone-native-client-v1")

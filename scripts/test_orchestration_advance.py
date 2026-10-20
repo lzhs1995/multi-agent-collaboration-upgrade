@@ -591,6 +591,41 @@ class AdvanceTests(unittest.TestCase):
         self.assertEqual(co.state()[0]["parallel"], State.BLOCKED)
         self.assertEqual(continuation, file_ref(co.root / "nodes/review/continuation.json"))
 
+    def test_completed_evidence_precedes_original_reconciliation_in_any_plan_order(self):
+        self.narrow("local", "review")
+        # Put the uncertain lane first: a stable list order must not decide
+        # whether a completed candidate reaches its independent supervisor.
+        self.f.plan["nodes"].reverse()
+        self.f.campaign["plan"] = write_json(self.f.root / "plan.json", self.f.plan)
+        self.f.save()
+        self.r = Runner(self.f.ref, fixtures=True)
+        info, candidate = self.local_candidate()
+        co = self.co
+        co.claim("review")
+        self.f.prepare(co, "review")
+        self.f.intent(co, "review")
+        before = self.native_bytes()
+        with patch.object(Transport, "reconcile", side_effect=AssertionError("review handoff must return first")):
+            result = self.r.advance(self.run, max_steps=4)
+        self.assertEqual([(r["node_id"], r["action"]) for r in result["actions"]], [("local", "candidate")])
+        self.assertEqual(result["stop_reason"], "review_ready_before_reconcile")
+        self.assertEqual(result["supervisor_actions"][0]["action"], "review-and-accept")
+        self.assertEqual(result["states"], {"review": "DISPATCH_INTENT", "local": "EVIDENCE_READY"})
+        self.assertEqual(before, self.native_bytes())
+
+    def test_v2_advance_refuses_before_observation_or_side_effects(self):
+        from orchestration_advance import advance
+        legacy_parent = Path(self.temp.name) / "legacy"
+        legacy_parent.mkdir()
+        legacy = CampaignFixture(legacy_parent, version=2)
+        runner = Runner(legacy.ref, fixtures=True)
+        before = {k: client.path.read_bytes() for k, client in legacy.clients.items()}
+        with patch.object(runner, "spec", side_effect=AssertionError("v2 cannot enter advance")), \
+                self.assertRaisesRegex(ContractError, "B arm of a v3 campaign"):
+            advance(runner, self.run)
+        self.assertEqual(before, {k: client.path.read_bytes() for k, client in legacy.clients.items()})
+        self.assertFalse((legacy.root / "runs" / self.run).exists())
+
     def test_failure_refuses_new_work_gate_and_preserves_prepared_input(self):
         self.narrow("review", "parallel")
         co = self.start()

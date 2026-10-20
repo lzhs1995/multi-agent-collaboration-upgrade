@@ -77,7 +77,8 @@ def _options(runner, run_id, view):
         elif action is not None:
             priority = (0 if action in ("repair-releases", "disarm") else
                         1 if action == "callback" or action == "candidate" and state != State.EVIDENCE_READY.value else
-                        3 if action == "reconcile" or state == State.EVIDENCE_READY.value else 2)
+                        4 if action == "reconcile" else
+                        3 if state == State.EVIDENCE_READY.value else 2)
             options.append((priority, key, state, action))
         else:
             waiting.append(dict(node_id=key, state=state, **{k: v for k, v in advice.items() if k != "node_id"}))
@@ -195,6 +196,8 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
         # all eligible independent lanes first, then dispatch a prepared lane
         # before waiting for another lane's handshake. Keep outer priorities
         # and fresh gates; synchronous transport can still exceed the budget.
+        # Completed evidence has its own class ahead of potentially slow
+        # original reconciliation, even when the uncertain lane appears first.
         phases = {State.PENDING.value: 0, State.PREPARED.value: 1, State.PREPARING.value: 2}
         options.sort(key=lambda o: (o[0], phases.get(o[2], 3) if o[0] == 2 else 0,
                                     counts.get(o[1], 0)))
