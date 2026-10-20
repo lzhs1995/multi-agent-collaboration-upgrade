@@ -520,8 +520,21 @@ class InquiryConsumerPortableTests(unittest.TestCase):
             self.consumer(base / "same-semantics", semantic_variation=True)
             # Execute the complete original consumer entrypoint with every
             # private consumer adaptation absent, not a mocked checker label.
-            with self.assertRaises(TypeError):
+            try:
                 self.consumer(base / "excised", excised=True)
+            except TypeError as exc:
+                # Neither a different missing argument nor an unrelated
+                # dependency's TypeError may satisfy the excision witness.
+                self.assertEqual(str(exc),
+                    "_transcript_path() missing 1 required positional argument: 'process'")
+                frame = exc.__traceback__
+                while frame.tb_next is not None:
+                    frame = frame.tb_next
+                self.assertEqual(
+                    (frame.tb_frame.f_code.co_filename, frame.tb_frame.f_code.co_name),
+                    ("pinned-upstream-entrypoints", "capture_executor"))
+            else:
+                self.fail("complete consumer excision did not reject the missing process argument")
             self.consumer(base / "restored")
         self.assertEqual(source("executor_reask_identity.py"), before)
 

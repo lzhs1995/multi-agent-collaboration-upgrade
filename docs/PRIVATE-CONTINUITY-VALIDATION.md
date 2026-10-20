@@ -14,7 +14,7 @@ Stop 配置保留原 `cmux_executor_idle_guard` 的 75 秒预算；安装器仅 
 
 ## 已执行的行为与反例
 
-- 实际原 consumer 在三个私有根中 capture／check／authenticate，拒绝跨 Claude lane、共享根、改变的进程根、PID／birth／foreground；保持原增长日志。完整 consumer 适配挖除后真实执行产生 TypeError，恢复后通过；原字节和语义不变注释对照保留。
+- 实际原 consumer 在三个私有根中 capture／check／authenticate，拒绝跨 Claude lane、共享根、改变的进程根、PID／birth／foreground；保持原增长日志。完整 consumer 适配挖除后真实执行必须产生 `_transcript_path() missing 1 required positional argument: 'process'`，且最内层 traceback 必须为原固定 `capture_executor` 入口；其他 TypeError 不满足判据。恢复后通过；原字节和语义不变注释对照保留。
 - 真实生成完整 controller 在新的 Python 进程及其实际 Seatbelt 内调用原 guardian、scheduler、inquiry CLI 和 Stop 决策。原授权登记可验证，修改 CURRENT 拒绝启动，控制器对其写入被拒。
 - 同一新 episode 两轮 sweep→完整正文 reply→ANSWERED→错误 SHA 拒绝→完整正文读取→原 CLI 精确 SHA consume→原 receipt→WAITING/rearm。每轮 hook 提示但不代模型消费；receipt 包含完整正文及原消费身份；terminal_sends／input_operations 均为零。这是隔离环境的原入口行为验证，时间和外部进程观测使用夹具，不是两个现场 60 秒自动周期。
 - 真正原 advisory 的 Stop 审计入口产生观测；外部父链使用夹具。此测试不是原生客户端自动 hook 采用、收件或唤醒证明。
@@ -28,4 +28,10 @@ Stop 配置保留原 `cmux_executor_idle_guard` 的 75 秒预算；安装器仅 
 
 43 R2 回件 4202B、SHA256 `8de391299e42285668bd2b67630475f99b094b23e7d8a94e28ab29993b6d6a73` 已整读核验；在冻结 c6 上既有 15 测独立通过，HEAD 不变，但 verdict 为 PARTIAL。第2项真正入口及 inventory／footer 边界仍 NOT_EXAMINED。这里的修复不自动获得该独审批准。
 
-新候选需要独立 full、CI 和最终范围审查；旧 `96a7b87` 的 2327 全绿不覆盖这些改动。现场三个客户端采用、两轮自动 60 秒原生求派闭环、证据约束的三态接续、跨父共享最多两子 agent 与真实父端消费、3 pilot／33 business／15 pairs／192 ordinary 槽及至少 15% 提效仍未完成。结果继续汇报原 surface40 集中维护，不把原 surface43 的参与及只读审查推定为 merge／共享写授权。
+冻结 `d15061c0821f0bd3d1fe96f6daa0f8f912f3a70f` 的本机 full 已实跑 2340 项，0 failures/errors/skips，1240.184 测试秒；319 个源 pin 前后一致、Git 状态为空。原 result SHA256 `0a401b40b1684cf3b7b5e00099d7156ef8a007033bb95b28b355ef83296458fc`，日志 2489B、SHA256 `43cfd07d9e75182ae34a50ace17853d1376e883733ae5f733a1efe5de5050a1e`。[CI 39491109149](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39491109149) 四项均成功；远端不具备本机固定 release 的测试仍可能跳过，不等同本机全测。
+
+43 R3 回件 3876B、SHA256 `ee2550429d3adff8f2dd973122def78d8ba830866d80020babef25d92f34d2ec` 已整读核验；第1项两条旧 P3 CLOSED，冻结 d150 的兼容16及私有根12项独立实跑成功。第2项 PARTIAL 并指出 consumer 挖除裸 TypeError 的新 P3；本次仅收紧该反例消息与原入口出处，不宣称独审已批准。第3项仍 PARTIAL，未读断言体保持 NOT_EXAMINED。上述 d150 full/CI 不覆盖这次测试与文档改动。
+
+此测试收紧后，私有根12＋兼容16共28项实跑通过，19.612测试秒，0 failures/errors/skips；工作快照319个pin前后不变。结果 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/continuity-r3-fix-v1/result.json`，原日志5806B、SHA256 `933c7ad73e4356546c93e6454ce9c9cf0761078386bf8b46c9015aae6aa76819`。只有测试和本说明变更，没有生产适配改动；最后这段结果说明不冒充测试开始前已存在。
+
+现场三个客户端采用、两轮自动 60 秒原生求派闭环、证据约束的三态接续、跨父共享最多两子 agent 与真实父端消费、3 pilot／33 business／15 pairs／192 ordinary 槽及至少 15% 提效仍未完成。结果继续汇报原 surface40 集中维护，不把原 surface43 的参与及只读审查推定为 merge／共享写授权。
