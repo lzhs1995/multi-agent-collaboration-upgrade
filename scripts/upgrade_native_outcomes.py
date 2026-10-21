@@ -133,7 +133,11 @@ def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
     return values
 
 
-def claude_outcomes(session, records, task_id, now, *, outcome_after=0):
+def claude_outcomes(session, records, task_id, now, *, outcome_after=0, deduplicate_messages=True):
+    # Continuity counts one API response, not one streamed content block.
+    # Native creation can additionally inspect every qualifying block of that
+    # response without bypassing ancestry, model or terminal qualification.
+    require(type(deduplicate_messages) is bool, "native message deduplication must be explicit")
     ancestors, seen_messages, values = {}, set(), []
     for ref, record in records:
         if record.get("isSidechain") is True or record.get("sessionId") != session["session_id"]:
@@ -165,7 +169,7 @@ def claude_outcomes(session, records, task_id, now, *, outcome_after=0):
                     and message.get("stop_reason") == "stop_sequence"):
                 canonical_uuid(record.get("uuid"), "native terminal error id")
                 message_id = canonical_uuid(message.get("id"), "native error message id")
-                if message_id in seen_messages:
+                if deduplicate_messages and message_id in seen_messages:
                     continue
                 seen_messages.add(message_id)
                 known = type(status) is int and 400 <= status <= 599
@@ -186,12 +190,11 @@ def claude_outcomes(session, records, task_id, now, *, outcome_after=0):
                 and isinstance(message.get("id"), str) and message["id"].startswith("msg_")
                 and visible):
             canonical_uuid(record.get("uuid"), "native assistant id")
-            if message["id"] in seen_messages:
+            if deduplicate_messages and message["id"] in seen_messages:
                 continue
             seen_messages.add(message["id"])
             if ref["offset"] >= outcome_after:
                 values.append(outcome(session, task_id, ref, record,
                                       "claude-message:" + message["id"], now))
     return values
-
 

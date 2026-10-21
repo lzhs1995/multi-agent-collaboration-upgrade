@@ -108,6 +108,166 @@ class NativeChildServiceTests(unittest.TestCase):
         resumed = self.request("claude_a", self.original_call("claude_a", "toolu_same_model_recovered"))
         self.assertEqual((resumed["status"], resumed["inflight"]), ("RESERVED", 1))
 
+    def test_current_split_response_text_then_agent_reserves_its_original_call(self):
+        journal = self.journals["claude_a"]
+        user_id, text_id = str(uuid.uuid4()), str(uuid.uuid4())
+        journal.append(journal.message("user", "Continue this original bounded task.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=user_id))
+        message_id = "msg_" + uuid.uuid4().hex
+        text = journal.message("assistant", "I will delegate the assigned independent review.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=text_id, parentUuid=user_id)
+        text["message"].update(type="message", id=message_id, stop_reason="tool_use")
+        journal.append(text)
+        tool_input = dict(description="Original readonly review", prompt="Read assigned original section.",
+                          subagent_type="general-purpose")
+        agent = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat(),
+            uuid=str(uuid.uuid4()), parentUuid=text_id)
+        agent["message"].update(type="message", id=message_id, stop_reason="tool_use",
+            content=[dict(type="tool_use", name="Agent", id="toolu_split_response", input=tool_input)])
+        journal.append(agent)
+        payload = dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
+            transcript_path=str(journal.path), tool_name="Agent", tool_use_id="toolu_split_response",
+            tool_input=tool_input)
+        reserved = self.request("claude_a", payload)
+        self.assertEqual((reserved["status"], reserved["inflight"]), ("RESERVED", 1))
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
+        self.assertNotIn("permissionDecision", reserved["hook_output"]["hookSpecificOutput"])
+
+    def test_current_split_response_parallel_agents_share_exactly_two_task_slots(self):
+        journal = self.journals["claude_a"]
+        parent = str(uuid.uuid4())
+        journal.append(journal.message("user", "Review the independent assigned sections.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=parent))
+        message_id, payloads = "msg_" + uuid.uuid4().hex, []
+        for index in range(3):
+            tool_input = dict(description="Assigned independent review", prompt="Read assigned section " + str(index),
+                              subagent_type="general-purpose")
+            tool_id, current = "toolu_parallel_" + str(index), str(uuid.uuid4())
+            record = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat(),
+                uuid=current, parentUuid=parent)
+            record["message"].update(type="message", id=message_id, stop_reason="tool_use",
+                content=[dict(type="tool_use", name="Agent", id=tool_id, input=tool_input)])
+            journal.append(record)
+            parent = current
+            payloads.append(dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
+                transcript_path=str(journal.path), tool_name="Agent", tool_use_id=tool_id, tool_input=tool_input))
+        first, second = self.request("claude_a", payloads[0]), self.request("claude_a", payloads[1])
+        self.assertEqual((first["status"], first["inflight"]), ("RESERVED", 1))
+        self.assertEqual((second["status"], second["inflight"]), ("RESERVED", 2))
+        with self.assertRaisesRegex(ContractError, "WHOLE_TASK_CHILD_LIMIT"):
+            self.request("claude_a", payloads[2])
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 2)
+
+    def test_current_response_ownership_requires_the_agent_block_in_its_original_chain(self):
+        journal = self.journals["claude_a"]
+        baseline = journal.path.read_bytes()
+        for shape in ("unlinked", "truncated", "nonterminal"):
+            with self.subTest(shape=shape):
+                journal.path.write_bytes(baseline)
+                user_id, text_id = str(uuid.uuid4()), str(uuid.uuid4())
+                journal.append(journal.message("user", "Review this original assigned section.",
+                    at=datetime.now(timezone.utc).isoformat(), uuid=user_id))
+                message_id = "msg_" + uuid.uuid4().hex
+                text = journal.message("assistant", "I will review it.", at=datetime.now(timezone.utc).isoformat(),
+                    uuid=text_id, parentUuid=user_id)
+                text["message"].update(type="message", id=message_id, stop_reason="tool_use")
+                journal.append(text)
+                tool_input = dict(description="Assigned review", prompt="Read the assigned section.",
+                                  subagent_type="general-purpose")
+                tool_id = "toolu_unqualified_" + shape
+                agent = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat(),
+                    uuid=str(uuid.uuid4()), parentUuid=str(uuid.uuid4()) if shape == "unlinked" else text_id)
+                agent["message"].update(type="message", id=message_id,
+                    stop_reason=None if shape == "nonterminal" else "tool_use",
+                    content=[dict(type="tool_use", name="Agent", id=tool_id, input=tool_input)])
+                if shape == "truncated":
+                    agent["truncatedAfterOutput"] = True
+                journal.append(agent)
+                payload = dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
+                    transcript_path=str(journal.path), tool_name="Agent", tool_use_id=tool_id, tool_input=tool_input)
+                with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED"):
+                    self.request("claude_a", payload)
+                self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+
+    def test_long_parent_history_does_not_refuse_a_fresh_bounded_original_agent_call(self):
+        journal = self.journals["claude_a"]
+        parent = str(uuid.uuid4())
+        journal.append(journal.message("user", "Historical original task.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=parent))
+        for _ in range(70):
+            current = str(uuid.uuid4())
+            journal.append(dict(type="system", subtype="historical_test_telemetry",
+                sessionId=journal.session["session_id"], uuid=current, parentUuid=parent,
+                timestamp=datetime.now(timezone.utc).isoformat(), data="x" * (512 * 1024)))
+            parent = current
+        self.assertGreater(journal.path.stat().st_size, 32 * 1024 * 1024)
+        journal.session["freeze_fence"] = journal.reader.snapshot()
+        payload = self.original_call("claude_a", "toolu_after_long_history")
+        reserved = self.request("claude_a", payload)
+        self.assertEqual((reserved["status"], reserved["inflight"]), ("RESERVED", 1))
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
+
+    def test_late_old_message_block_cannot_make_a_superseded_agent_call_current(self):
+        payload = self.original_call("claude_a", "toolu_old_response")
+        journal = self.journals["claude_a"]
+        old = json.loads(journal.path.read_bytes().splitlines()[-1])
+        newer = journal.message("assistant", "The current response is a later independent result.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=str(uuid.uuid4()), parentUuid=old["uuid"])
+        newer["message"].update(type="message", id="msg_" + uuid.uuid4().hex, stop_reason="end_turn")
+        journal.append(newer)
+        late = journal.message("assistant", "A late block from the earlier response.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=str(uuid.uuid4()), parentUuid=newer["uuid"])
+        late["message"].update(type="message", id=old["message"]["id"], stop_reason="tool_use")
+        journal.append(late)
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED"):
+            self.request("claude_a", payload)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+
+    def test_current_child_creation_keeps_the_original_window_and_partial_tail_fail_closed(self):
+        journal = self.journals["claude_a"]
+        partial_payload = self.original_call("claude_a", "toolu_partial_tail")
+        complete = journal.path.read_bytes()
+        with journal.path.open("ab") as stream:
+            stream.write(b'{"type":"assistant"')
+        with self.assertRaisesRegex(ContractError, "native EOF is not a record boundary"):
+            self.request("claude_a", partial_payload)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+        journal.path.write_bytes(complete)
+        for _ in range(70):
+            journal.append(dict(type="system", sessionId=journal.session["session_id"],
+                timestamp=datetime.now(timezone.utc).isoformat(), data="x" * (512 * 1024)))
+        latest = self.original_call("claude_a", "toolu_overlong_episode")
+        with self.assertRaisesRegex(ContractError, "CHILD_NATIVE_CALL_WINDOW_PENDING"):
+            self.request("claude_a", latest)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+
+    def test_bounded_current_tail_cannot_manufacture_a_missing_original_user_root(self):
+        journal = self.journals["claude_a"]
+        root = str(uuid.uuid4())
+        journal.append(journal.message("user", "Original user root before the bounded current tail.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=root))
+        parent = root
+        for _ in range(70):
+            current = str(uuid.uuid4())
+            journal.append(dict(type="system", subtype="historical_test_telemetry",
+                sessionId=journal.session["session_id"], uuid=current, parentUuid=parent,
+                timestamp=datetime.now(timezone.utc).isoformat(), data="x" * (512 * 1024)))
+            parent = current
+        journal.session["freeze_fence"] = journal.reader.snapshot()
+        tool_input = dict(description="Assigned original review", prompt="Read only the assigned section.",
+                          subagent_type="general-purpose")
+        tool_id = "toolu_missing_bounded_root"
+        record = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat(),
+            uuid=str(uuid.uuid4()), parentUuid=parent)
+        record["message"].update(type="message", id="msg_" + uuid.uuid4().hex, stop_reason="tool_use",
+            content=[dict(type="tool_use", name="Agent", id=tool_id, input=tool_input)])
+        journal.append(record)
+        payload = dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
+            transcript_path=str(journal.path), tool_name="Agent", tool_use_id=tool_id, tool_input=tool_input)
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED"):
+            self.request("claude_a", payload)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+
     def test_completed_native_child_body_is_published_without_releasing_its_slot(self):
         payload = self.original_call("claude_a", "toolu_complete")
         reserved = self.request("claude_a", payload)

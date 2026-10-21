@@ -115,7 +115,70 @@ capacity and evidence intact, never authorizing a replacement child. Capacity
 and diagnostic status retain `native_adoption_proven=false` and model/input
 operation counts zero; actual model adoption requires separate native evidence.
 
-## Validation state, not live acceptance
+## R8 response ownership and long-history repair — 2026-10-21T17:48Z
+
+The frozen2d3bafc baseline passed2433 local tests and four exact-commit CI
+jobs. C29's600-second independent R8 increment review returned PARTIAL, not
+whole-range acceptance. Its5791B report SHA256 is
+`b25a14de203fea9f55a88561f11f9d2f8e811acd4a36d23a5a25e08fc732ae48`.
+The original supervisor's exact native DONE record and dedicated callback
+receipt were independently read and matched; only that review task was disarmed.
+All previously closed R5–R7 findings and immutable failed runs are retained.
+
+R8 found two creation liveness defects, now reproduced and repaired in the
+subsequent working candidate, not silently attributed to frozen2d:
+
+- One Claude API response can have several original JSONL content-block records
+  sharing message.id. The current response is still selected with ordinary
+  response deduplication; an additional nondeduplicated inspection qualifies the
+  exact Agent block through the same original user ancestry, model and terminal
+  rules. A message-id match alone is insufficient. A late block from a superseded
+  response cannot make the old invocation current. Continuity's default API
+  outcome counting is unchanged, and report/consume still authenticate their
+  historical original invocation independently of this creation-only gate.
+- The current-response scan no longer requires absolute transcript EOF below
+  32MiB. It reads at most the latest32MiB, aligned to a whole-record boundary,
+  without inventing an ancestry root. The original post-enrollment call interval
+  still has its separate32MiB/65,536-record bound. A missing user root in the
+  bounded tail, an overlong original episode, incomplete EOF or changed source
+  remains a refusal with no reservation. This does not authorize rebinding an
+  active original process, moving its enrollment fence, or unbounded rescanning.
+
+Seven new service tests exercise text-then-Agent records, two split Agent blocks
+sharing the whole-task two-slot budget, unlinked/truncated/nonterminal blocks,
+large pre-enrollment history, a late superseded block, unchanged original
+interval/partial EOF refusal, and missing-root refusal at the bounded edge.
+All tests call the public allocator transaction with original-journal fixtures;
+their process observations are fixtures, not live model-child adoption. The
+initial split-response and long-history REDs and two insufficient intermediate
+repairs' REDs remain under the evidence root. The final bounded-root positive
+and negative pair passed2 tests at17:27:10.129100Z,0.588s unittest,
+0.832197s wrapper,339 source pins unchanged;520B log SHA256
+`58d7d29a3c00c45a80c25762bc83f4974fe61a84e582324b16cfa204dbe18bbd`.
+
+A separate new generated-private-input test fills R8's unexamined partial-tail
+boundary: both original Claude directions refuse `NATIVE_EOF_INCOMPLETE`, while
+historical membership remains intact and no trio adoption is published. It
+passed1 test at17:24:19.360857Z,7.636s unittest/8.0764s wrapper,339 pins unchanged;
+364B log SHA256
+`10293c11ea57259620775c1a9b403788703c8f650134a95bddd8689198039290`.
+It runs the materialized adapter under its original Seatbelt profile, with
+process/kernel-boundary observations explicitly mocked. Its first failed run
+expected the wrong diagnostic; the log is retained and only that assertion was
+corrected. The already refusing production gate was not changed for this test.
+
+Broader working-source regression `child-r8-combined-v1` passed142 tests,
+F0/E0/S0 at17:45:29.924128Z,349.484s unittest/350.203005s wrapper,
+339 source pins unchanged;30754B log SHA256
+`344e85671058381b3a0371d0b8eba0810dd184811f4080926f1b942fedad3501`.
+It covers the original eight-module startup/continuity/observation/adapter/child
+scope plus peer and fixed.58 compatibility. This paragraph is a later doc-only
+update; that run records dirty2d HEAD, not a clean new commit. Clean new-commit
+full regression and new CI are still pending. Neither frozen2d's green nor
+these fixtures prove live children, native hook loading, whole-task production
+enforcement or the user's actual three-mode collaboration.
+
+## Historical validation state, not live acceptance
 
 Working-source evidence is under
 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/`.
@@ -150,15 +213,18 @@ A subsequently added actual harness-version test is separate10-test evidence
 above, not a retrospective eighth test in that original run. These are manually
 invoked Python/offline adoption fixtures, not automatic native Agent execution.
 
-No real model child, production registration/service, active-client hook
+At this historical validation checkpoint no real model child,
+production registration/service, active-client hook
 adoption, actual foreground completion flush, or live two-parent gate has been
 proven. The latest combined eight-test private-startup group, frozen full/CI,
 actual load-bearing failure/third-child gate, fresh original native parents,
 two real60-second request/reply/full-read/SHA-consume/rearm cycles, three-state
 continuity and the unchanged3pilot/33business/15pairs/192ordinary-slot benchmark
-remain separate unfinished gates. Do not inherit624d's2367-test/CI green for
-this new code. Disk headroom below the user10GB floor prevents new large local
-full/native-workspace stages; lightweight work does not lower that gate.
+remained separate unfinished gates. Later complete local regression/CI are
+recorded separately above and in HANDOFF; live collaboration gates remain
+unfinished. Never inherit624d's2367-test/CI green for later code. The historical
+low-disk hold was lifted only after actual filesystem headroom returned; every
+new large full/native-workspace stage still requires a fresh10GB-floor check.
 
 Read-only final-source transformation of the complete fixed MAC0.4.58 passed227
 scripts with no refusal, no changed upstream pin, and no generated runtime in

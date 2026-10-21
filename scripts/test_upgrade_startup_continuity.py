@@ -704,6 +704,49 @@ print('ORIGINAL_STARTUP_ACTIVE_COMMUNICATION_PRESERVED')
             self.assertEqual(result["resource_releases"], 0)
             self.assertFalse(Path(spec["adoption_path"]).exists())
 
+    def test_materialized_peer_input_refuses_incomplete_later_native_tail_without_revoking_membership(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            code = r'''
+import sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(SPEC['controller']) / 'scripts'))
+import cmux_daemon_identity as identity
+import mac_upgrade_input_gate as original
+sessions = SESSIONS
+def process(pid):
+    lane, session = next((lane, session) for lane, session in sessions.items() if session['process']['pid'] == pid)
+    return dict(session['process'], env=dict(HOME=ACCOUNT_HOME_LITERAL, CMUX_SURFACE_ID=session['surface_uuid'],
+        CMUX_WORKSPACE_ID=session['workspace_uuid'], CLAUDE_CONFIG_DIR=session['native_config_root']))
+peer = dict(workspace_uuid=sessions['claude_a']['workspace_uuid'],
+    caller_surface_uuid=sessions['claude_a']['surface_uuid'], target_surface_uuid=sessions['claude_b']['surface_uuid'],
+    target_pane_uuid=sessions['claude_b']['pane_uuid'])
+with patch.object(identity, 'process', side_effect=process), patch.object(original, 'require_kernel_boundary'):
+    assert original.check_input(peer)['sessions'] == sessions
+    with Path(sessions['claude_a']['transcript']['path']).open('ab') as stream:
+        stream.write(b'{"type":"assistant"')
+    for request in (peer, dict(peer, caller_surface_uuid=peer['target_surface_uuid'],
+            target_surface_uuid=peer['caller_surface_uuid'], target_pane_uuid=sessions['claude_a']['pane_uuid'])):
+        try:
+            original.check_input(request)
+        except ValueError as exc:
+            assert str(exc) == 'NATIVE_EOF_INCOMPLETE', str(exc)
+        else:
+            raise AssertionError('partial original native tail admitted new peer input')
+print('ORIGINAL_STARTUP_PARTIAL_INPUT_REFUSED')
+'''.replace("ACCOUNT_HOME_LITERAL", repr(str(Path.home().resolve()))).replace("SPEC", repr(spec)).replace("SESSIONS", repr(sessions))
+            result = subprocess.run(["/usr/bin/sandbox-exec", "-f", spec["pins"]["control_sandbox"]["path"],
+                runtime["python"]["path"], "-I", "-B", "-c", code], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ORIGINAL_STARTUP_PARTIAL_INPUT_REFUSED", result.stdout)
+            self.assertEqual(json_ref(proof)["sessions"], sessions)
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+
     def test_materialized_peer_input_refuses_later_failure_and_accepts_only_same_model_native_recovery(self):
         from upgrade_startup_continuity import register_startup_continuity
         with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:

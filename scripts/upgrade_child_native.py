@@ -81,14 +81,32 @@ def current_original_agent_call(session, payload, *, fixtures=False):
     call = original_agent_call(session, payload, fixtures=fixtures)
     reader = NativeReader(session, fixtures=fixtures)
     end = reader.snapshot()
-    require(end["offset"] <= MAX_BYTES, "CHILD_NATIVE_CURRENT_INTERVAL_PENDING")
+    # Reused original parents can have a large pre-enrollment history. Read
+    # only a bounded current tail, aligned to an original whole-record edge.
+    # Do not manufacture ancestry at that edge: the same parser must still
+    # find the actual user root and qualify the exact Agent content block.
+    start = max(0, end["offset"] - MAX_BYTES)
+    if start:
+        with reader.open() as stream:
+            stream.seek(start - 1)
+            if stream.read(1) != b"\n":
+                partial_prefix = stream.readline(end["offset"] - start)
+                require(partial_prefix.endswith(b"\n"), "CHILD_NATIVE_CURRENT_INTERVAL_PENDING")
+                start = stream.tell()
     records = []
-    for pair in reader.records(0, end["offset"]):
+    for pair in reader.records(start, end["offset"]):
         require(len(records) < MAX_RECORDS, "CHILD_NATIVE_CURRENT_INTERVAL_PENDING")
         records.append(pair)
-    outcomes = claude_outcomes(session, records, "current-original-agent-call", time.time())
+    now = time.time()
+    outcomes = claude_outcomes(session, records, "current-original-agent-call", now)
+    blocks = claude_outcomes(session, records, "current-original-agent-call", now,
+                             deduplicate_messages=False)
+    message_id = reader.record(call["call_record"]).get("message", {}).get("id")
     require(outcomes and outcomes[-1]["kind"] == "API_SUCCESS"
-            and outcomes[-1]["native_record"] == call["call_record"],
+            and isinstance(message_id, str) and message_id.startswith("msg_")
+            and outcomes[-1]["attempt_id"] == "claude-message:" + message_id
+            and any(event["native_record"] == call["call_record"] and event["kind"] == "API_SUCCESS"
+                    for event in blocks),
             "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED: latest native API response must own this call")
     reader.record(call["call_record"])
     reader.verify_pin(session["freeze_fence"])
