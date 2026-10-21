@@ -25,6 +25,22 @@ from upgrade_experiment import validate_sessions
 LANES = ("codex", "claude_a", "claude_b")
 MAX_EPISODE_RECORDS = 65536
 MAX_EPISODE_BYTES = 32 * 1024 * 1024
+RETRYABLE_HTTP_STATUSES = frozenset((429, 500, 502, 503, 504, 524, 529))
+
+
+def _retry_delay_pending_lanes(sessions, collection):
+    """Native terminals preserve status, but not authoritative server advice.
+
+    Do not let the original evaluator's default60 replace an unknown longer
+    Retry-After. A later terminal success or another definitive outcome still
+    supersedes the retryable failure; old failures do not revoke membership.
+    No caller-added field can supply missing provider timing authority.
+    """
+    latest = {event["surface_uuid"]: event for event in collection["observations"]}
+    return [lane for lane in LANES
+            if (event := latest.get(sessions[lane]["surface_uuid"])) is not None
+            and event["kind"] == "API_ERROR"
+            and event.get("http_status") in RETRYABLE_HTTP_STATUSES]
 
 
 
@@ -182,6 +198,8 @@ def invoke_original_plan(controller, python, sessions, collection, authorization
                     max_records=collection["record_budget"], observed_eofs=collection["observed_eofs"])
     fresh = _collect_original_interval(sessions, collection, runtime_ref=runtime_ref, **interval)
     require(fresh == collection, "native outcomes changed or caller-authored labels supplied")
+    require(fixtures or not _retry_delay_pending_lanes(sessions, collection),
+            "ORIGINAL_RETRY_DELAY_NOT_OBSERVABLE")
     verify_tree(controller)
     source = checked_path(controller["path"])
     module = file_ref(source / "scripts/collaboration_continuity.py")
@@ -383,6 +401,11 @@ def observe_registered_native(registration_ref, *, now, max_records=256):
     if collection["pending_lanes"]:
         return dict(status="ORIGINAL_NATIVE_INTERVAL_PENDING", observations=collection,
             advisory_only=True, child_budget_enforced=False, input_operations=0, resource_releases=0)
+    retry_pending = _retry_delay_pending_lanes(value["sessions"], collection)
+    if retry_pending:
+        return dict(status="ORIGINAL_RETRY_DELAY_PENDING", observations=collection,
+            retry_delay_pending_lanes=retry_pending, advisory_only=True,
+            child_budget_enforced=False, input_operations=0, resource_releases=0)
     output = within(Path(value["output_root"]) / "observations" / str(uuid.uuid4()), value["output_root"])
     original = invoke_original_plan(runtime["controller"], runtime["python"], value["sessions"],
         collection, value["authorization"], output=output, now=now, runtime_ref=value["runtime"])

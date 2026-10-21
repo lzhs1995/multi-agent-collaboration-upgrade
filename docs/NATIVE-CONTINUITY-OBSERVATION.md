@@ -80,9 +80,35 @@ kernel boundary before running. The adapter neither imports a substitute
 evaluator nor patches original modules in `sys.modules`.
 
 The complete original evaluator retains its existing classifications: three
-distinct retryable terminal errors separated by at least 60 seconds, success
-resetting that sequence, permanent 401/402/403, and unknown availability. The
-adapter does not authorize or perform retries. It publishes intent, pinned
+distinct retryable terminal errors separated by at least max(60, qualified
+server Retry-After), success resetting that sequence, permanent 401/402/403,
+and unknown availability. The adapter does not authorize or perform retries.
+
+The currently supported native terminal grammar preserves HTTP status but does
+not expose authoritative server retry advice. In installed Codex0.160.0, the
+[pinned error mapping](https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/protocol/src/error.rs)
+does not place its captured RetryAfter in ErrorEvent; the
+[retry handler](https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/core/src/responses_retry.rs)
+retains an exhausted turn's advice in ephemeral thread extension state. Missing
+journal advice is not proof that the server supplied none. Arbitrary error text,
+internal retry counters or caller-added `retry_after_seconds` cannot fill that
+gap. The known Claude terminal grammar also supplies no qualified advice.
+
+When any lane's latest original terminal is retryable429/500/502/503/504/524/529,
+the production public observer returns `ORIGINAL_RETRY_DELAY_PENDING` with the
+exact observations and `retry_delay_pending_lanes`. It does not invoke the
+evaluator or create evaluator intent/result artifacts, and it changes no native
+bytes, registration fences, membership or input/lease authority. Direct
+production evaluator invocation also refuses this incomplete timing authority.
+Earlier retryable failures remain in the evidence; a later same-original
+success clears pending and resets the evaluator's failure count. A later
+concrete permanent failure retains the existing classification. Explicit
+fixture-only evaluator comparisons are still offline tests, not production
+timing qualification. Retryable pre-readiness registration, provider advice
+observability and the separate operational300s sustained-failure threshold
+remain unfinished; this pending boundary does not implement takeover.
+
+For fully qualified nonpending intervals, the adapter publishes intent, pinned
 outcomes, original stdout/stderr/process evidence and an immutable result under
 the private external `live-control/native-continuity/<task-hash>` directory.
 Evidence remains readable after operator Stop; Stop never authorizes new input.
@@ -106,7 +132,9 @@ The tests exercise original native-file identity and record parsing, complete
 original evaluator TRIO/CODEX_SOLO/CLAUDE_PEER decisions, bounded incomplete
 scans, later appends, in-flight registration, unknown failures, queue/quote/tool
 counterexamples, private generated-controller kernel execution, mutated scope
-and authorization refusal, and stopped read-only inspection. Their synthetic
+and authorization refusal, stopped read-only inspection, source-unobservable
+retry delay pending, same-original success reset and direct-verifier denial.
+Their synthetic
 journals and adoption observations are not live automatic-hook adoption,
 real provider fault takeover, two real 60-second inquiry cycles or a benchmark.
 Those acceptance gates remain separate and unfinished.

@@ -668,6 +668,134 @@ class RegisteredNativeContinuityTests(unittest.TestCase):
         self.assertEqual(process["returncode"], 0)
         self.assertEqual(before, {lane: journal.path.read_bytes() for lane, journal in self.journals.items()})
 
+    def test_registered_retryable_failure_without_source_qualified_server_delay_stays_pending(self):
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        registration = register_native_continuity(self.runtime_ref, self.adoption,
+            task_id=TASK, native_authorizations=self.authorizations,
+            automatic_fallback_authorized=True)
+        self.codex_success(10)
+        for lane in LANES[1:]:
+            self.claude_success(lane, 10)
+        healthy = observe_registered_native(registration, now=20)
+        self.assertEqual(healthy["original"]["plan"]["mode"], "TRIO")
+        registered = json_ref(registration)
+        output = Path(registered["output_root"]) / "observations"
+        before_outputs = tree_manifest(output, kind="output")
+        terminal_refs = [self.codex_error(epoch, 502) for epoch in (30, 90, 150)]
+        before_native = {lane: journal.path.read_bytes() for lane, journal in self.journals.items()}
+
+        result = observe_registered_native(registration, now=160)
+
+        self.assertEqual(result["status"], "ORIGINAL_RETRY_DELAY_PENDING")
+        self.assertEqual(result["retry_delay_pending_lanes"], ["codex"])
+        self.assertEqual(result["observations"]["pending_lanes"], [])
+        failures = [event for event in result["observations"]["observations"]
+                    if event["surface_uuid"] == self.sessions["codex"]["surface_uuid"]
+                    and event["kind"] == "API_ERROR"]
+        self.assertEqual([event["native_record"] for event in failures], terminal_refs)
+        self.assertEqual([event["http_status"] for event in failures], [502, 502, 502])
+        self.assertNotIn("original", result)
+        self.assertNotIn("evidence", result)
+        self.assertEqual(tree_manifest(output, kind="output"), before_outputs)
+        self.assertEqual(json_ref(registration), registered)
+        self.assertEqual(before_native, {lane: journal.path.read_bytes() for lane, journal in self.journals.items()})
+        self.assertEqual(result["input_operations"], 0)
+        self.assertEqual(result["resource_releases"], 0)
+        self.assertIs(result["advisory_only"], True)
+
+    def test_same_original_success_resolves_retry_delay_pending_without_resetting_registration(self):
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        registration = register_native_continuity(self.runtime_ref, self.adoption,
+            task_id=TASK, native_authorizations=self.authorizations,
+            automatic_fallback_authorized=True)
+        registered = json_ref(registration)
+        self.codex_success(10)
+        for lane in LANES[1:]:
+            self.claude_success(lane, 10)
+        self.codex_error(30, 429)
+        pending = observe_registered_native(registration, now=40)
+        self.assertEqual(pending["status"], "ORIGINAL_RETRY_DELAY_PENDING")
+        self.assertEqual(pending["retry_delay_pending_lanes"], ["codex"])
+        self.assertNotIn("original", pending)
+
+        success = self.codex_success(100)
+        result = observe_registered_native(registration, now=110)
+
+        self.assertEqual(result["status"], "ORIGINAL_ADVISORY_VERIFIED")
+        self.assertEqual(result["original"]["plan"]["mode"], "TRIO")
+        health = result["original"]["plan"]["health"][self.sessions["codex"]["surface_uuid"]]
+        self.assertEqual(health["state"], "AVAILABLE")
+        self.assertEqual(health["consecutive_failures"], 0)
+        self.assertIsNone(health["retry_due_epoch"])
+        codex_events = [event for event in result["observations"]["observations"]
+                        if event["surface_uuid"] == self.sessions["codex"]["surface_uuid"]]
+        self.assertEqual(codex_events[-1]["native_record"], success)
+        self.assertEqual(codex_events[-1]["kind"], "API_SUCCESS")
+        self.assertEqual(json_ref(registration), registered)
+        self.assertEqual(result["input_operations"], 0)
+        self.assertEqual(result["resource_releases"], 0)
+        self.assertIs(result["advisory_only"], True)
+
+    def test_original_verifier_cannot_bypass_pending_delay_or_accept_caller_authored_advice(self):
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        registration = register_native_continuity(self.runtime_ref, self.adoption,
+            task_id=TASK, native_authorizations=self.authorizations,
+            automatic_fallback_authorized=True)
+        registered = json_ref(registration)
+        for lane in LANES[1:]:
+            self.claude_success(lane, 10)
+        self.codex_error(30, 503)
+        result = observe_registered_native(registration, now=40)
+        self.assertEqual(result["status"], "ORIGINAL_RETRY_DELAY_PENDING")
+        output = Path(registered["output_root"]) / "observations" / "forbidden-direct-plan"
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_RETRY_DELAY_NOT_OBSERVABLE"):
+            invoke_original_plan(self.runtime["controller"], self.runtime["python"],
+                registered["sessions"], result["observations"], registered["authorization"],
+                output=output, now=40, runtime_ref=self.runtime_ref)
+        self.assertFalse(output.exists())
+
+        forged = copy.deepcopy(result["observations"])
+        event = next(event for event in forged["observations"] if event["kind"] == "API_ERROR")
+        event["retry_after_seconds"] = 60
+        with self.assertRaisesRegex(ContractError, "caller-authored labels supplied"):
+            invoke_original_plan(self.runtime["controller"], self.runtime["python"],
+                registered["sessions"], forged, registered["authorization"],
+                output=output, now=40, runtime_ref=self.runtime_ref)
+        self.assertFalse(output.exists())
+        self.assertEqual(json_ref(registration), registered)
+
+    def test_both_original_claude_retryable_lanes_need_delay_but_permanent_failures_remain_definitive(self):
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        registration = register_native_continuity(self.runtime_ref, self.adoption,
+            task_id=TASK, native_authorizations=self.authorizations,
+            automatic_fallback_authorized=True)
+        registered = json_ref(registration)
+        self.codex_success(10)
+        for lane in LANES[1:]:
+            self.claude_error(lane, 30, 502)
+        pending = observe_registered_native(registration, now=40)
+        self.assertEqual(pending["status"], "ORIGINAL_RETRY_DELAY_PENDING")
+        self.assertEqual(pending["retry_delay_pending_lanes"], ["claude_a", "claude_b"])
+        self.assertNotIn("original", pending)
+        self.assertFalse((Path(registered["output_root"]) / "observations").exists())
+
+        failures = {lane: self.claude_error(lane, 90, status)
+                    for lane, status in (("claude_a", 401), ("claude_b", 403))}
+        result = observe_registered_native(registration, now=100)
+
+        self.assertEqual(result["status"], "ORIGINAL_ADVISORY_VERIFIED")
+        self.assertEqual(result["original"]["plan"]["mode"], "CODEX_SOLO")
+        for lane in LANES[1:]:
+            health = result["original"]["plan"]["health"][self.sessions[lane]["surface_uuid"]]
+            self.assertEqual(health["state"], "UNAVAILABLE")
+            self.assertEqual(health["consecutive_failures"], 0)
+            event = [event for event in result["observations"]["observations"]
+                     if event["surface_uuid"] == self.sessions[lane]["surface_uuid"]][-1]
+            self.assertEqual(event["native_record"], failures[lane])
+        self.assertEqual(json_ref(registration), registered)
+        self.assertEqual(result["input_operations"], 0)
+        self.assertEqual(result["resource_releases"], 0)
+
     def test_registration_rejects_caller_fixture_flag_wrong_scope_and_mutated_authorization(self):
         from upgrade_continuity_native import (register_native_continuity, observe_registered_native,
                                                validate_native_registration)
