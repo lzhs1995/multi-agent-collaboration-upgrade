@@ -235,8 +235,12 @@ def validate_session_authority(runtime_ref, proof_ref, *, runtime=None, allow_st
     if runtime is None:
         _, runtime = validate_live_runtime(runtime_ref)
     spec = json_ref(runtime["startup"])
+    require(isinstance(proof_ref, dict), "EXTERNAL_ADOPTION_REQUIRED")
     if proof_ref.get("path") == spec["adoption_path"]:
         return validate_adoption(runtime_ref, proof_ref, runtime=runtime, allow_stopped=allow_stopped)
+    _, binding = validate_startup(runtime["startup"], controller=runtime["controller"]["path"])
+    from upgrade_startup_contract import startup_continuity_enabled
+    require(startup_continuity_enabled(binding), "EXTERNAL_ADOPTION_REQUIRED")
     from upgrade_startup_continuity import continuity_path, validate_startup_continuity
     require(proof_ref.get("path") == str(continuity_path(spec)), "EXTERNAL_SESSION_AUTHORITY_REQUIRED")
     return validate_startup_continuity(runtime_ref, proof_ref, allow_stopped=allow_stopped)

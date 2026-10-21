@@ -96,6 +96,24 @@ test also passed. These are explicit working-source results, not a frozen full
 suite, independent review, installed skill or live acceptance claim. Failed
 RED/control runs and the misspelled combined test command remain preserved.
 
+The first clean prototype commit `e039f034b84750e0bb00ca247b29174060cca4ff`
+failed its frozen full:2427tests,3failures,30errors,0skips,338sourcepins
+unchanged. All30errors were a controller-only inspection dependency becoming
+reachable from the frozen adapter; all3failures were the changed default-mode
+refusal code. This failed result remains immutable and is not promoted by a
+subsequent focused pass.
+
+The repair separates unchanged readiness parsing into
+`upgrade_readiness_evidence.py`, rendered under the same private namespace,
+without weakening the adapter's complete dependency check. Native discovery
+and Codex RPC stay in the original inspector. Default-off native readers retain
+`EXTERNAL_ADOPTION_REQUIRED`; alternative paths must first pass the explicitly
+opted-in immutable startup binding. Existing negative assertions are unchanged.
+Only the readiness tests' injected native-record boundary moved with the parser.
+The repaired working source passed20readiness tests and a separate91-test
+affected-entrypoint group, each with339unchanged source pins and zero skips.
+These are not frozen-commit/full/CI or independent-review results.
+
 Still required for the full task: fresh frozen full/CI, independent review,
 healthy1+2 real handshake/callback, both Claude2×60-second request→reply→FULL
 read→exact-SHA consumption cycles, actual max-two native children and original

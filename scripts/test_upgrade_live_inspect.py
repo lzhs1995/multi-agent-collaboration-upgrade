@@ -18,6 +18,7 @@ from orchestration_common import ContractError, file_ref, write_json
 from upgrade_client_isolation import LANES
 import upgrade_live_entry as entry
 import upgrade_live_inspect as subject
+import upgrade_readiness_evidence as evidence
 from upgrade_startup_contract import (GOAL_SCHEMA, native_goal_condition, pressure_startup_prompt,
                                      readiness_command, readiness_prompt)
 
@@ -98,7 +99,7 @@ class ReadinessTests(unittest.TestCase):
         for lane in ("codex", "claude_a"):
             with self.subTest(lane=lane):
                 session, rows, call, hooks, launches, probe = self.fixture(lane)
-                with patch.object(subject, "native_records", return_value=iter(rows)):
+                with patch.object(evidence, "native_records", return_value=iter(rows)):
                     result = subject.readiness_evidence(None, session, lane, self.spec,
                                                        self.startup, self.binding, launches)
                 self.assertEqual(result["call_id"], call["id"])
@@ -125,7 +126,7 @@ class ReadinessTests(unittest.TestCase):
 
     def check_goal(self, fixture, lane="claude_a"):
         session, rows, _, _, launches, _ = fixture
-        with patch.object(subject, "native_records", return_value=iter(rows)):
+        with patch.object(evidence, "native_records", return_value=iter(rows)):
             return subject.readiness_evidence(None, session, lane, self.spec,
                                               self.startup, self.binding, launches)
 
@@ -230,7 +231,7 @@ class ReadinessTests(unittest.TestCase):
             mutate(value)
             self.assertFalse(subject.hook_matches(value, call, session, "claude_a", self.spec, launches))
         hooks[1][0].unlink()
-        with patch.object(subject, "native_records", return_value=iter(rows)):
+        with patch.object(evidence, "native_records", return_value=iter(rows)):
             with self.assertRaisesRegex(ContractError, "AUTOMATIC_PRE_POST_HOOKS"):
                 subject.readiness_evidence(None, session, "claude_a", self.spec,
                                            self.startup, self.binding, launches)
@@ -254,7 +255,7 @@ class ReadinessTests(unittest.TestCase):
 
     def check_nested(self, fixture):
         session, rows, _, _, launches, _ = fixture
-        with patch.object(subject, "native_records", return_value=iter(rows)):
+        with patch.object(evidence, "native_records", return_value=iter(rows)):
             return subject.readiness_evidence(None, session, "codex", self.spec,
                                               self.startup, self.binding, launches)
 

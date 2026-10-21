@@ -18,7 +18,7 @@ import uuid
 
 from orchestration_common import (ContractError, canonical, checked_path, contract_errors, count, digest, file_ref, finite, json_ref, parse_time, read_ref,
                                   require, strict_json, verify_tree, within, write_json)
-from upgrade_live_inspect import command_in_tool, native_records, readiness_evidence
+from upgrade_readiness_evidence import command_in_tool, native_records, readiness_evidence
 from upgrade_native_outcomes import codex_outcomes, claude_outcomes, native_text
 from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt, readiness_command, readiness_prompt,
                                       startup_continuity_enabled)
