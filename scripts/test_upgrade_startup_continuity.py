@@ -567,6 +567,208 @@ print('ORIGINAL_STARTUP_PEER_INPUT_GATE_PASS')
             self.assertEqual(result["resource_releases"], 0)
             self.assertFalse(Path(spec["adoption_path"]).exists())
 
+    def test_later_original_claude_failure_preserves_task_authority_and_healthy_solo_observation(self):
+        from orchestration_common import canonical
+        from upgrade_startup_continuity import register_startup_continuity, validate_startup_continuity
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            registration = register_native_continuity(runtime_ref, proof, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            original_proof, original_registration = json_ref(proof), json_ref(registration)
+            session = sessions["claude_a"]
+            user_id, message_id = str(uuid.uuid4()), str(uuid.uuid4())
+            rows = [dict(type="user", sessionId=session["session_id"], uuid=user_id,
+                timestamp="2026-10-21T00:01:00Z", message=dict(role="user", content="Continue original task.")),
+                dict(type="assistant", sessionId=session["session_id"], uuid=str(uuid.uuid4()),
+                    parentUuid=user_id, timestamp="2026-10-21T00:01:01Z", isApiErrorMessage=True,
+                    apiErrorStatus=402, message=dict(role="assistant", type="message", model="<synthetic>",
+                        id=message_id, stop_reason="stop_sequence", content=[dict(type="text", text="API Error: 402")]))]
+            with Path(session["transcript"]["path"]).open("ab") as stream:
+                for row in rows:
+                    stream.write(canonical(row))
+            self.assertEqual(validate_startup_continuity(runtime_ref, proof), original_proof)
+            result = observe_registered_native(registration, now=time.time())
+            self.assertEqual(result["original"]["plan"]["mode"], "CLAUDE_SOLO")
+            failure = next(event for event in result["observations"]["observations"]
+                if event["attempt_id"] == "claude-message:" + message_id)
+            self.assertEqual((failure["kind"], failure["http_status"], failure["session_id"]),
+                ("API_ERROR", 402, session["session_id"]))
+            self.assertEqual(json_ref(proof), original_proof)
+            self.assertEqual(json_ref(registration), original_registration)
+            self.assertEqual(result["input_operations"], 0)
+            self.assertEqual(result["resource_releases"], 0)
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+
+    def test_original_codex_same_model_recovery_is_observed_without_fabricating_readiness_adoption(self):
+        from orchestration_common import canonical
+        from upgrade_startup_continuity import register_startup_continuity, validate_startup_continuity
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            registration = register_native_continuity(runtime_ref, proof, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            original_proof, original_registration = json_ref(proof), json_ref(registration)
+            session, turn, final = sessions["codex"], str(uuid.uuid4()), "Original same-model continuation completed."
+            records = [dict(type="event_msg", timestamp="2026-10-21T00:01:00Z",
+                    payload=dict(type="task_started", turn_id=turn)),
+                dict(type="turn_context", timestamp="2026-10-21T00:01:01Z",
+                    payload=dict(turn_id=turn, model=session["model"])),
+                dict(type="response_item", timestamp="2026-10-21T00:01:02Z",
+                    payload=dict(type="message", role="user", content=[dict(type="input_text", text="Continue original task.")])),
+                dict(type="response_item", timestamp="2026-10-21T00:01:03Z", payload=dict(type="message",
+                    role="assistant", phase="final_answer", content=[dict(type="output_text", text=final)])),
+                dict(type="event_msg", timestamp="2026-10-21T00:01:04Z", payload=dict(type="task_complete",
+                    turn_id=turn, last_agent_message=final, error=None))]
+            with Path(session["transcript"]["path"]).open("ab") as stream:
+                for record in records:
+                    stream.write(canonical(record))
+            self.assertEqual(validate_startup_continuity(runtime_ref, proof), original_proof)
+            observed = observe_registered_native(registration, now=time.time())
+            self.assertEqual(observed["original"]["plan"]["mode"], "TRIO")
+            terminal = next(event for event in observed["observations"]["observations"]
+                if event["attempt_id"] == "codex-turn:" + turn)
+            self.assertEqual((terminal["kind"], terminal["session_id"]), ("API_SUCCESS", session["session_id"]))
+            self.assertEqual(json_ref(proof), original_proof)
+            self.assertEqual(json_ref(registration), original_registration)
+            self.assertFalse(original_proof["production_adoption"])
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+            self.assertEqual(observed["input_operations"], 0)
+            self.assertEqual(observed["resource_releases"], 0)
+
+    def test_current_claude_work_preserves_ready_peer_communication_without_inventing_new_api_success(self):
+        from orchestration_common import canonical
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            session = sessions["claude_a"]
+            with Path(session["transcript"]["path"]).open("ab") as stream:
+                stream.write(canonical(dict(type="user", sessionId=session["session_id"], uuid=str(uuid.uuid4()),
+                    timestamp="2026-10-21T00:01:00Z", message=dict(role="user", content="New original task continuation."))))
+            code = r'''
+import sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(SPEC['controller']) / 'scripts'))
+import cmux_daemon_identity as identity
+import mac_upgrade_input_gate as original
+sessions = SESSIONS
+def process(pid):
+    lane, session = next((lane, session) for lane, session in sessions.items() if session['process']['pid'] == pid)
+    return dict(session['process'], env=dict(HOME=ACCOUNT_HOME_LITERAL, CMUX_SURFACE_ID=session['surface_uuid'],
+        CMUX_WORKSPACE_ID=session['workspace_uuid'], CLAUDE_CONFIG_DIR=session['native_config_root']))
+peer = dict(workspace_uuid=sessions['claude_a']['workspace_uuid'],
+    caller_surface_uuid=sessions['claude_a']['surface_uuid'], target_surface_uuid=sessions['claude_b']['surface_uuid'],
+    target_pane_uuid=sessions['claude_b']['pane_uuid'])
+with patch.object(identity, 'process', side_effect=process), patch.object(original, 'require_kernel_boundary'):
+    actual = original.check_input(peer)
+    assert actual['sessions'] == sessions
+    assert actual['production_adoption'] is False
+print('ORIGINAL_STARTUP_ACTIVE_COMMUNICATION_PRESERVED')
+'''.replace("ACCOUNT_HOME_LITERAL", repr(str(Path.home().resolve()))).replace("SPEC", repr(spec)).replace("SESSIONS", repr(sessions))
+            result = subprocess.run(["/usr/bin/sandbox-exec", "-f", spec["pins"]["control_sandbox"]["path"],
+                runtime["python"]["path"], "-I", "-B", "-c", code], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ORIGINAL_STARTUP_ACTIVE_COMMUNICATION_PRESERVED", result.stdout)
+            self.assertEqual(json_ref(proof)["sessions"], sessions)
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+
+    def test_incomplete_later_native_append_is_pending_not_revoked_original_membership(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        from upgrade_continuity_native import register_native_continuity, observe_registered_native
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            registration = register_native_continuity(runtime_ref, proof, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            before = json_ref(registration)
+            with Path(sessions["claude_a"]["transcript"]["path"]).open("ab") as stream:
+                stream.write(b'{"type":')
+            result = observe_registered_native(registration, now=time.time())
+            self.assertEqual(result["status"], "ORIGINAL_NATIVE_INTERVAL_PENDING")
+            self.assertEqual(result["observations"]["pending_lanes"], ["claude_a"])
+            self.assertNotIn("original", result)
+            self.assertEqual(json_ref(registration), before)
+            self.assertEqual(result["input_operations"], 0)
+            self.assertEqual(result["resource_releases"], 0)
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+
+    def test_materialized_peer_input_refuses_later_failure_and_accepts_only_same_model_native_recovery(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l")
+            proof = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            code = r'''
+import json, sys, uuid
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(SPEC['controller']) / 'scripts'))
+import cmux_daemon_identity as identity
+import mac_upgrade_input_gate as original
+sessions = SESSIONS
+def process(pid):
+    lane, session = next((lane, session) for lane, session in sessions.items() if session['process']['pid'] == pid)
+    return dict(session['process'], env=dict(HOME=ACCOUNT_HOME_LITERAL, CMUX_SURFACE_ID=session['surface_uuid'],
+        CMUX_WORKSPACE_ID=session['workspace_uuid'], CLAUDE_CONFIG_DIR=session['native_config_root']))
+def append(lane, row):
+    with Path(sessions[lane]['transcript']['path']).open('ab') as stream:
+        stream.write((json.dumps(row, sort_keys=True) + '\n').encode())
+peer = dict(workspace_uuid=sessions['claude_a']['workspace_uuid'],
+    caller_surface_uuid=sessions['claude_a']['surface_uuid'], target_surface_uuid=sessions['claude_b']['surface_uuid'],
+    target_pane_uuid=sessions['claude_b']['pane_uuid'])
+with patch.object(identity, 'process', side_effect=process), patch.object(original, 'require_kernel_boundary'):
+    assert original.check_input(peer)['sessions'] == sessions
+    user = str(uuid.uuid4())
+    append('claude_a', dict(type='user', sessionId=sessions['claude_a']['session_id'], uuid=user,
+        timestamp='2026-10-21T00:01:00Z', message=dict(role='user', content='Continue original task.')))
+    append('claude_a', dict(type='assistant', sessionId=sessions['claude_a']['session_id'], uuid=str(uuid.uuid4()),
+        parentUuid=user, timestamp='2026-10-21T00:01:01Z', isApiErrorMessage=True, apiErrorStatus=402,
+        message=dict(role='assistant', type='message', id=str(uuid.uuid4()), model='<synthetic>',
+            stop_reason='stop_sequence', content=[dict(type='text', text='API Error: 402')])))
+    for request in (peer, dict(peer, caller_surface_uuid=peer['target_surface_uuid'],
+            target_surface_uuid=peer['caller_surface_uuid'], target_pane_uuid=sessions['claude_a']['pane_uuid'])):
+        try:
+            original.check_input(request)
+        except ValueError as exc:
+            assert 'STARTUP_CONTINUITY_ENDPOINT_NOT_READY' in str(exc), str(exc)
+        else:
+            raise AssertionError('terminally failed original endpoint admitted')
+    user = str(uuid.uuid4())
+    append('claude_a', dict(type='user', sessionId=sessions['claude_a']['session_id'], uuid=user,
+        timestamp='2026-10-21T00:02:00Z', message=dict(role='user', content='Continue the same authorized task.')))
+    append('claude_a', dict(type='assistant', sessionId=sessions['claude_a']['session_id'], uuid=str(uuid.uuid4()),
+        parentUuid=user, timestamp='2026-10-21T00:02:01Z', message=dict(role='assistant', type='message',
+            id='msg_original_recovery', model=sessions['claude_a']['model'], stop_reason='end_turn',
+            content=[dict(type='text', text='Original model task progress completed.')])) )
+    assert original.check_input(peer)['sessions'] == sessions
+    try:
+        original.check_input(dict(peer, target_surface_uuid=sessions['codex']['surface_uuid']))
+    except ValueError as exc:
+        assert 'STARTUP_CONTINUITY_ENDPOINT_NOT_READY' in str(exc), str(exc)
+    else:
+        raise AssertionError('startup-failed Codex gained input readiness from peer recovery')
+print('ORIGINAL_STARTUP_FRESH_ELIGIBILITY_PASS')
+'''.replace("ACCOUNT_HOME_LITERAL", repr(str(Path.home().resolve()))).replace("SPEC", repr(spec)).replace("SESSIONS", repr(sessions))
+            result = subprocess.run(["/usr/bin/sandbox-exec", "-f", spec["pins"]["control_sandbox"]["path"],
+                runtime["python"]["path"], "-I", "-B", "-c", code], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ORIGINAL_STARTUP_FRESH_ELIGIBILITY_PASS", result.stdout)
+            self.assertEqual(json_ref(proof)["sessions"], sessions)
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

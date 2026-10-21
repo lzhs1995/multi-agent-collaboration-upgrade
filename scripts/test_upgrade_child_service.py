@@ -67,7 +67,12 @@ class NativeChildServiceTests(unittest.TestCase):
         journal = self.journals[lane]
         tool_input = dict(description="Original readonly review", prompt="Read assigned original section.",
                           subagent_type="general-purpose")
+        user_id = str(uuid.uuid4())
+        journal.append(journal.message("user", "Continue this original bounded task.",
+            at=datetime.now(timezone.utc).isoformat(), uuid=user_id))
         call = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat())
+        call.update(uuid=str(uuid.uuid4()), parentUuid=user_id)
+        call["message"].update(type="message", id="msg_" + uuid.uuid4().hex, stop_reason="tool_use")
         call["message"]["content"] = [dict(type="tool_use", name="Agent", id=tool_id, input=tool_input)]
         journal.append(call)
         return dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
@@ -88,6 +93,20 @@ class NativeChildServiceTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             self.request("claude_a", dict(first_payload, agent_id="forged-root"))
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 2)
+
+    def test_later_native_failure_cannot_reuse_an_old_agent_call_to_reserve_new_capacity(self):
+        payload = self.original_call("claude_a", "toolu_before_failure")
+        journal = self.journals["claude_a"]
+        parent = json.loads(journal.path.read_bytes().splitlines()[-1])["parentUuid"]
+        journal.append(dict(type="assistant", sessionId=journal.session["session_id"], uuid=str(uuid.uuid4()),
+            parentUuid=parent, timestamp=datetime.now(timezone.utc).isoformat(), isApiErrorMessage=True,
+            apiErrorStatus=402, message=dict(role="assistant", type="message", id=str(uuid.uuid4()),
+                model="<synthetic>", stop_reason="stop_sequence", content=[dict(type="text", text="API Error: 402")])) )
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED"):
+            self.request("claude_a", payload)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+        resumed = self.request("claude_a", self.original_call("claude_a", "toolu_same_model_recovered"))
+        self.assertEqual((resumed["status"], resumed["inflight"]), ("RESERVED", 1))
 
     def test_completed_native_child_body_is_published_without_releasing_its_slot(self):
         payload = self.original_call("claude_a", "toolu_complete")

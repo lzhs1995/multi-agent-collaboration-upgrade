@@ -151,6 +151,55 @@ def _verify_in_controller(value, runtime_ref, runtime, spec, binding, *, allow_s
     return value
 
 
+def _native_outcomes(native, session, task_id, now):
+    """Read one complete, bounded, model-checked original journal interval.
+
+    A terminal failure is an outcome, not removal from the original task.
+    This parser supplies no input or replacement authority.
+    """
+    size, rows = 0, []
+    for ref, row in native_records(native, session):
+        size += ref["length"]
+        require(len(rows) < MAX_STARTUP_RECORDS and size <= MAX_STARTUP_BYTES,
+                "STARTUP_CONTINUITY_READY_INTERVAL_PENDING")
+        rows.append((ref, row))
+        if session["provider"] == "codex":
+            payload = row.get("payload", {})
+            if row.get("type") == "turn_context" and isinstance(payload, dict) and payload.get("model"):
+                require(payload["model"] == session["model"], "STARTUP_FAILURE_MODEL_CHANGED")
+        elif row.get("type") == "assistant" and row.get("isSidechain") is not True:
+            message = row.get("message", {})
+            model = message.get("model") if isinstance(message, dict) else None
+            if row.get("isApiErrorMessage") is not True and model not in (None, "<synthetic>"):
+                require(model == session["model"], "STARTUP_CONTINUITY_READY_MODEL_CHANGED")
+    if session["provider"] == "claude":
+        require(all(isinstance(row.get("uuid"), str) for ref, row in rows
+                    if row.get("type") == "user" and native_text(row, "claude", "user") is not None),
+                "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
+    scan = codex_outcomes if session["provider"] == "codex" else claude_outcomes
+    outcomes = scan(session, rows, task_id, now)
+    with native._open(session["transcript"]["path"]) as stream:
+        native._check_file(stream, session)
+    return outcomes
+
+
+def current_ready_claude_lanes(value, native):
+    """Fresh readiness eligibility, separate from durable task membership.
+
+    Only original probe-verified Claude endpoints with a current successful
+    native terminal may use this startup peer input route. Recovered Codex
+    observation is not Codex input readiness or healthy-trio adoption.
+    """
+    allowed, now = [], time.time()
+    for lane in ("claude_a", "claude_b"):
+        session = copy.deepcopy(value["sessions"][lane])
+        session["transcript"] = native._pin_file(session["transcript"]["path"], "claude", session["session_id"])
+        outcomes = _native_outcomes(native, session, value["task_id"], now)
+        if outcomes and outcomes[-1]["kind"] == "API_SUCCESS":
+            allowed.append(lane)
+    return allowed
+
+
 @contract_errors("startup continuity source contract")
 def validate_source_contract(value, runtime_ref, runtime, spec, binding, native, *, allow_stopped=False):
     """Authenticate exact original launch, journals, hooks and user source.
@@ -240,46 +289,34 @@ def validate_source_contract(value, runtime_ref, runtime, spec, binding, native,
         if lane != "codex":
             require(session["session_id"] == spec["clients"][lane]["session_id"],
                     "STARTUP_CONTINUITY_ORIGINAL_CLAUDE_CHANGED")
-        # Authenticate the original fixed interval, then observe its same-inode
-        # growth. A later Codex model/input/success cannot reuse an old402.
+        # Original launch/readiness is durable membership, not current health.
+        # Re-derive that exact frozen interval, then separately authenticate
+        # later same-inode outcomes without requiring perpetual startup health.
         with native._open(session["transcript"]["path"]) as stream:
             native._check_file(stream, session)
         fresh = copy.deepcopy(session)
         fresh["transcript"] = native._pin_file(session["transcript"]["path"], session["provider"], session["session_id"])
         if lane == "codex":
-            checked = startup_failure_evidence(native, fresh, lane, spec, runtime["startup"],
+            checked = startup_failure_evidence(native, session, lane, spec, runtime["startup"],
                 task_id=value["task_id"], now=time.time())
             require({k: v for k, v in checked.items() if k != "observed_eof"}
                     == {k: v for k, v in failure.items() if k != "observed_eof"},
                     "STARTUP_CONTINUITY_FAILURE_CHANGED")
         else:
-            checked = readiness_evidence(native, fresh, lane, spec, runtime["startup"], binding, launches)
+            checked = readiness_evidence(native, session, lane, spec, runtime["startup"], binding, launches)
             require(checked == result["readiness"][lane] and checked["model"] == session["model"],
                     "STARTUP_CONTINUITY_READINESS_CHANGED")
-            size, seen, rows = 0, 0, []
-            for ref, row in native_records(native, fresh):
-                size += ref["length"]
-                seen += 1
-                require(seen <= MAX_STARTUP_RECORDS and size <= MAX_STARTUP_BYTES,
-                        "STARTUP_CONTINUITY_READY_INTERVAL_PENDING")
-                rows.append((ref, row))
-                if row.get("type") != "assistant" or row.get("isSidechain") is True:
-                    continue
-                message = row.get("message", {})
-                model = message.get("model") if isinstance(message, dict) else None
-                if row.get("isApiErrorMessage") is not True and model not in (None, "<synthetic>"):
-                    require(model == session["model"], "STARTUP_CONTINUITY_READY_MODEL_CHANGED")
-            # Missing UUID ancestry or terminal fields are unknown, not an
-            # available participant. Reuse the one original native grammar.
-            complete = all(isinstance(row.get("uuid"), str) for ref, row in rows
-                           if row.get("type") == "user" and native_text(row, "claude", "user") is not None)
-            require(complete, "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
-            outcomes = claude_outcomes(fresh, rows, value["task_id"], time.time())
+            outcomes = _native_outcomes(native, session, value["task_id"], time.time())
             require(outcomes and outcomes[-1]["kind"] == "API_SUCCESS"
                     and any(event["native_record"] == checked["call"] and event["kind"] == "API_SUCCESS"
                             for event in outcomes), "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
-            with native._open(fresh["transcript"]["path"]) as stream:
-                native._check_file(stream, fresh)
+        if fresh["transcript"]["at_record_boundary"]:
+            _native_outcomes(native, fresh, value["task_id"], time.time())
+        # A partly appended current record is not evidence of revocation or
+        # recovery. The native collector reports PENDING without evaluating;
+        # current_ready_claude_lanes still requires a complete fresh interval.
+        with native._open(fresh["transcript"]["path"]) as stream:
+            native._check_file(stream, fresh)
     context = json_ref(spec["context"], "original startup account context")
     require(context["account_uid"] == os.getuid()
             and context["account_home"] == str(Path.home().resolve())

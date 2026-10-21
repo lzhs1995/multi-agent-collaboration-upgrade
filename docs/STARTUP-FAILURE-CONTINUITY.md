@@ -3,10 +3,13 @@
 2026-10-21. This separate contract addresses an original Codex failure before
 its readiness probe while both original Claude clients remain source-verified.
 It does not manufacture healthy-trio adoption or empirical acceptance. The
-initial supported case is an original terminal401/402/403 on the pinned Codex
-model, followed by neither readiness execution nor later recovery/model input.
-Retryable failures, actual process/session loss and post-startup recovery are
-not implemented by this prototype; the broader three-mode task remains open.
+initial supported registration case is an original terminal401/402/403 on the
+pinned Codex model, with no readiness execution or later recovery at that
+registration boundary. After registration, same-model original native failure
+and recovery may be observed without deleting the original task membership.
+Retryable initial failures, actual process/session loss and recovered Codex
+input requalification are not implemented; the broader three-mode task remains
+open. Observed recovery is not healthy-trio adoption.
 
 ## Explicit source and authorization
 
@@ -46,8 +49,21 @@ startup case. The caller retains the actual original native reference.
 
 Each Claude must also have an original complete API terminal attached to the
 same session's authentic parent chain. A tool return alone is insufficient.
-The whole current captured interval remains bounded and model-checked; native
-model drift or an unproven later availability state refuses new use.
+The initial fixed intervals are rederived as historical membership evidence,
+not a requirement that every participant remain forever in its startup state.
+Current intervals are separately bounded and model-checked. A later original
+Claude API failure preserves source authority and can produce advisory
+CLAUDE_SOLO; same-model Codex recovery can produce advisory TRIO, but cannot
+invent Codex readiness execution. Changed models remain refused.
+
+For new peer input, both original Claude endpoints must still pass the fresh
+native-outcome and process/kernel checks. A later API error excludes that lane;
+only an authentic same-model native success can restore its eligibility. A
+new unanswered user message or ordinary active work does not erase an existing
+successful API outcome or impose an idle/age requirement. Communication during
+work remains allowed. A half-written later record does not revoke historical
+membership: observation returns PENDING without invoking the evaluator, while
+new input still requires a complete captured interval.
 
 `startup-continuity.json` is exclusively published read-only under the original
 runtime's live-control directory. Its schema explicitly records
@@ -55,16 +71,24 @@ runtime's live-control directory. Its schema explicitly records
 Benchmark/campaign validators still require their original healthy trio.
 
 The input gate uses the source-verified contract only for the two original
-ready Claude endpoints. It checks both fresh process/birth/root/kernel bindings,
-the original workspace/pane and stop boundary before returning to the existing
-MAC one-input/native-receipt path. It cannot route to the failed Codex or an
-external/replacement endpoint and never itself sends a message.
+probe-verified Claude endpoints, with current eligibility checked both before
+and after the endpoint checks. It checks fresh process/birth/root/kernel
+bindings, the original workspace/pane and stop boundary before returning to the
+existing MAC one-input/native-receipt path. It cannot route to Codex, even after
+an observed success, or an external/replacement endpoint, and never itself
+sends a message.
 
 Native continuity and the existing child service may refer to this explicit
 alternative authority. The child task ID and native authorization must equal
 the startup contract. The same whole-task ledger, original two parent IDs,
 maximum two unconsumed children and exact parent FULL-read/SHA-consume semantics
 remain unchanged; a new task label cannot create another empty ledger.
+New native Agent reservations additionally require the latest complete original
+Claude API tool-use outcome to own the exact call. A call from before a later
+API failure cannot be reused to reserve capacity; a new same-model native Agent
+response can qualify. Historical child completion/report and parent consumption
+still authenticate their original calls separately, so an outage does not
+discard reports or release reservations. No hook label establishes API success.
 
 ## Separate startup interval, same original evaluator
 
@@ -77,7 +101,7 @@ or mix initial failure evidence into a historical adopted episode.
 
 This interval is independently rederived before and after invoking the actual
 complete original `collaboration_continuity.py`. Pending/partial/exhausted
-intervals cannot invoke it. The resulting CLAUDE_PEER decision remains advisory:
+intervals cannot invoke it. The resulting availability decision remains advisory:
 it is not an actual peer handshake, native child creation, ownership transfer,
 resource release or supervisor acceptance.
 
@@ -114,7 +138,25 @@ The repaired working source passed20readiness tests and a separate91-test
 affected-entrypoint group, each with339unchanged source pins and zero skips.
 These are not frozen-commit/full/CI or independent-review results.
 
-Still required for the full task: fresh frozen full/CI, independent review,
+The subsequent clean frozen `f785d6c513b04e2f8170224f2f1fc3d8c930a790`
+passed2427 local tests, F0/E0/S0, with339 unchanged source pins. Its exact
+[CI run](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39619103512)
+also passed on Ubuntu/macOS and Python3.10/3.14; each job ran2427 tests, with
+168 Ubuntu or158 macOS environment skips. These baseline results do not cover
+the later transition changes.
+
+The later transition working-source group passed114 tests, F0/E0/S0, with339
+unchanged pins on2026-10-21T15:09:45Z. It covers actual generated private
+input-gate calls, the complete original native evaluator and existing native
+child service/hook/budget/startup entrypoints, using disposable test journals
+and mocked endpoint identity/kernel boundaries where stated. It does not prove
+actual live delivery or active client hook loading. The frozen full and CI for
+this newer source are still pending. The original failed RED artifacts remain.
+One newly written test incorrectly expected active work to prohibit peer
+communication; its failed artifact is preserved as a test-design correction,
+not a product defect. The corrected positive control changes no product policy.
+
+Still required for the full task: fresh transition frozen full/CI, independent review,
 healthy1+2 real handshake/callback, both Claude2×60-second request→reply→FULL
 read→exact-SHA consumption cycles, actual max-two native children and original
 parent return/consumption, all three availability scenarios including recovery,

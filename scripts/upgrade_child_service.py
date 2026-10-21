@@ -25,7 +25,7 @@ from upgrade_child_budget import (authority_value, budget_status, initialize_led
 from upgrade_child_budget_protocol import (POLICY, SCHEMA, child_socket, consume_command,
     MAX_PACKET, encode_packet, parse_consumption, updated_agent_input)
 from upgrade_child_native import (child_report, native_agent_completion, original_agent_call,
-                                  original_consumption_call)
+                                  current_original_agent_call, original_consumption_call)
 from upgrade_child_peer import authenticate_hook_peer, kernel_peer
 
 REGISTRATION_SCHEMA = "upgrade-native-child-service-registration-v1"
@@ -208,7 +208,7 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
     if event == "PreToolUse":
         require(payload.get("tool_input", {}).get("run_in_background", False) is False,
                 "CHILD_NATIVE_BACKGROUND_UNSUPPORTED: completion binding is not proven")
-        call = original_agent_call(session, payload, fixtures=fixtures)
+        call = current_original_agent_call(session, payload, fixtures=fixtures)
         reservation = reserve_child(authority, parent=lane, tool_use_id=call["tool_use_id"], tool_input=call["tool_input"])
         require(reservation["status"] == "RESERVED",
                 "ORIGINAL_CHILD_RESERVATION_ALREADY_ISSUED: preserve it; never replay Agent")

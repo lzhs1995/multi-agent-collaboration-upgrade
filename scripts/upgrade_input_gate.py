@@ -25,6 +25,7 @@ def check_input(proof, *, native_binding=None):
     control = Path(binding["evidence_root"]) / "live-control"
     require(not os.path.lexists(control / "stop.json"), "EXPERIMENT_STOP_REQUESTED")
     startup = file_ref(Path(binding["config_root"]) / "startup-v2.json")
+    startup_authority = False
     if os.path.lexists(control / "adoption.json"):
         adoption = json.loads(read_regular(control / "adoption.json"))
         require(adoption.get("schema") == "upgrade-live-adoption-v2"
@@ -33,7 +34,7 @@ def check_input(proof, *, native_binding=None):
         allowed = {"codex", "claude_a", "claude_b"}
     else:
         from upgrade_startup_contract import startup_continuity_enabled, validate_startup
-        from upgrade_startup_continuity import validate_source_contract
+        from upgrade_startup_continuity import validate_source_contract, current_ready_claude_lanes
         require(startup_continuity_enabled(binding), "EXPERIMENT_AUTOMATIC_ADOPTION_REQUIRED")
         spec, checked_binding = validate_startup(startup, controller=binding["controller_root"])
         require(checked_binding == binding, "STARTUP_CONTINUITY_BINDING_CHANGED")
@@ -42,7 +43,8 @@ def check_input(proof, *, native_binding=None):
         adoption = json_ref(file_ref(control / "startup-continuity.json"))
         import cmux_native_delivery as native
         validate_source_contract(adoption, runtime_ref, runtime, spec, binding, native)
-        allowed = set(adoption["healthy_lanes"])
+        startup_authority = True
+        allowed = set(current_ready_claude_lanes(adoption, native))
     sessions = adoption["sessions"]
     require(set(sessions) == {"codex", "claude_a", "claude_b"}, "EXPERIMENT_ADOPTION_LANES_CHANGED")
     by_surface = {canonical(s["surface_uuid"]): (lane, s) for lane, s in sessions.items()}
@@ -79,5 +81,9 @@ def check_input(proof, *, native_binding=None):
                 and native_binding["process"] == receiver["process"]
                 and all(native_binding["transcript"][k] == receiver["transcript"][k]
                         for k in ("path", "device", "inode")), "EXPERIMENT_NATIVE_RECEIVER_CHANGED")
+    if startup_authority:
+        fresh_allowed = set(current_ready_claude_lanes(adoption, native))
+        require(by_surface[caller][0] in fresh_allowed and by_surface[target][0] in fresh_allowed,
+                "STARTUP_CONTINUITY_ENDPOINT_NOT_READY")
     require(not os.path.lexists(control / "stop.json"), "EXPERIMENT_STOP_REQUESTED")
     return adoption

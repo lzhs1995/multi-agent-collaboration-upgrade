@@ -12,6 +12,7 @@ import time
 from orchestration_common import checked_path, contract_errors, digest, object_sha, parse_time, require
 from orchestration_native import NativeReader, native_text
 from upgrade_child_budget_protocol import child_prompt, updated_agent_input
+from upgrade_native_outcomes import claude_outcomes
 
 MAX_RECORDS = 65536
 MAX_BYTES = 32 * 1024 * 1024
@@ -67,6 +68,32 @@ def original_agent_call(session, payload, *, fixtures=False):
     reader.verify_pin(session["freeze_fence"])
     reader.verify_pin(end)
     return matches[0]
+
+
+@contract_errors("current original native Agent creation")
+def current_original_agent_call(session, payload, *, fixtures=False):
+    """Require the current API tool-use response, not a call before failure.
+
+    Only new creation uses this freshness gate. Historical reports and exact
+    parent consumption continue to authenticate their original call separately.
+    A hook label or stale tool-call record cannot prove current API execution.
+    """
+    call = original_agent_call(session, payload, fixtures=fixtures)
+    reader = NativeReader(session, fixtures=fixtures)
+    end = reader.snapshot()
+    require(end["offset"] <= MAX_BYTES, "CHILD_NATIVE_CURRENT_INTERVAL_PENDING")
+    records = []
+    for pair in reader.records(0, end["offset"]):
+        require(len(records) < MAX_RECORDS, "CHILD_NATIVE_CURRENT_INTERVAL_PENDING")
+        records.append(pair)
+    outcomes = claude_outcomes(session, records, "current-original-agent-call", time.time())
+    require(outcomes and outcomes[-1]["kind"] == "API_SUCCESS"
+            and outcomes[-1]["native_record"] == call["call_record"],
+            "ORIGINAL_NATIVE_CURRENT_AGENT_CALL_REQUIRED: latest native API response must own this call")
+    reader.record(call["call_record"])
+    reader.verify_pin(session["freeze_fence"])
+    reader.verify_pin(end)
+    return call
 
 
 class _ChildReader(NativeReader):
