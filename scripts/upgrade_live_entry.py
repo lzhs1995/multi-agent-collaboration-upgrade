@@ -19,7 +19,7 @@ import uuid
 from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref,
                                   read_ref, read_regular, utc_now, write_json)
 from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
-from upgrade_startup_contract import response_observation_enabled, validate_startup
+from upgrade_startup_contract import child_budget_enabled, response_observation_enabled, validate_startup
 from upgrade_socket_boundary import binding_boundary
 
 
@@ -90,12 +90,16 @@ def launch(ref, spec, binding, *, spawn=False, spawn_authorized=False):
     binding_boundary(binding, binary_pin=spec["pins"]["codex"], fresh=True)
     control = Path(binding["state_root"]) / "startup"
     require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
+    from upgrade_child_budget_protocol import verify_child_hook_binary
+    child_capability = (verify_child_hook_binary(spec["pins"]["claude"])
+                        if child_budget_enabled(binding) else None)
     layout = layout_for(ref, spec)
     command = [spec["pins"]["cmux"]["path"], "--json", "new-workspace", "--name", spec["workspace_name"],
                "--cwd", spec["work_root"], "--focus", "false", "--layout",
                json.dumps(layout, ensure_ascii=False, separators=(",", ":"))]
     intent = dict(schema="upgrade-startup-intent-v2", startup=ref, created_at=utc_now(),
-                  argv=command, spawn=True, spawn_authorized=True, input_operations=0)
+                  argv=command, spawn=True, spawn_authorized=True, input_operations=0,
+                  **({"child_hook_capability": child_capability} if child_capability is not None else {}))
     # Exclusive/fsynced before the single creation request. A timeout or crash
     # leaves this intent in place; never retry creation or choose replacements.
     write_json(control / "intent.json", intent, exclusive=True)

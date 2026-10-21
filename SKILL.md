@@ -95,6 +95,16 @@ appends preserve a pinned complete interval. Its advisory result neither
 transfers roles or leases nor enforces the whole-task child budget. Keep actual
 hook adoption, two real inquiry cycles and benchmark acceptance separate. See
 [native continuity observation](docs/NATIVE-CONTINUITY-OBSERVATION.md).
+Whole-task native child accounting is a separate default-off private option,
+`--register-native-child-budget`, not a field of the advisory evaluator. Its
+authenticated original Agent PreToolUse reserves before creation; both original
+Claude parents share at most two unconsumed slots, and a returned report retains
+its slot until the original parent's full native read and exact-SHA consumption.
+Preserve uncertainty, original guards and occupied claims; never reset, retry
+creation or release on timeout/disappearance. The first protocol is non-fork
+foreground only. Tests and a materialized hook declaration do not prove active
+native gating. Follow [native child budget validation](docs/NATIVE-CHILD-BUDGET.md)
+before any real native child; do not promote offline evidence to live acceptance.
 For provider capacity, usage-service success and HTTP 200 response headers alone
 do not establish model availability: a successful HTTP stream may contain only
 pings followed by an account/user concurrency error. Record the complete bounded

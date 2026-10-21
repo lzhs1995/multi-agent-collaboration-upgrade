@@ -138,3 +138,22 @@ rollout simulated six removed historical terminals without altering the log:
 9819 refused all six thread-event fences; the repair accepted all six. Both
 accepted the six direct next-start fences. This is parser diagnosis, not a
 native outage, replay, adoption, or task-continuity acceptance.
+
+## Frozen624d and independent R7 closeout
+
+Frozen624d subsequently passed2367 local full tests with unchanged322 pins and
+all four [CI jobs](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39515882294).
+Original reviewer43 R7 independently closed the fence P3:old9819 refused six
+thread-event fences/new624d accepted six;both accepted direct task-start fences
+and refused the six same-turn response-item or same-turn-ID event negatives.
+The reviewer read both new assertion bodies and ran27 native tests successfully.
+Its3224B report SHA256 is
+`a53e61031a96e5d19e8cce3c72de8f694b38a3d1f27d61fe4bd6f8d8f28f4319`.
+Events without turn IDs were an explicitly unverified observation, not a new
+confirmed finding. Earlier PARTIAL/NOT_EXAMINED items and failed7426 evidence
+remain separate; this is not an all-items independent review.
+
+The new [whole-task child budget](NATIVE-CHILD-BUDGET.md) implementation is
+subsequent working source, not part of624d or this read-only evaluator. Its
+offline tests do not inherit the frozen full/CI result or establish live hook
+adoption, model availability, role takeover or benchmark acceptance.

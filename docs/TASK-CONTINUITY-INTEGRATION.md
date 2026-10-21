@@ -48,6 +48,10 @@
 
 2026-10-21 R6闭环细化：9819本机2365测试、四矩阵CI通过；原43独审attachment第1项CLOSED，但第2项P3保留：线程级event_msg在fence后被误当历史回合活动。新修复只由原生response_item或同turn_id的context/event标记活动，线程设置/目标及session_meta不占用回合；真实2078记录六种崩溃变异旧源6拒、新源6过，同时保留原生response后的重叠拒绝反例。RED/23测及固定窗口只读诊断原件另存；该修改尚不能借用9819的full/CI绿色，更不代表实际子预算、双60s hook或配对任务已验收。
 
+2026-10-21 R7冻结闭合：`624d11a36c4a4ef5426802a88e25d074a114febe` 本机full2367项全绿、322pin不变，四矩阵CI39515882294全绿；原43R7独立只读审PASS，线程fence六例旧9819拒／624d过，task_started正对照两版过，同回合response_item及同turn_id event负对照两版拒，27项原生测试实跑通过。报告3224B、SHA256 `a53e61031a96e5d19e8cce3c72de8f694b38a3d1f27d61fe4bd6f8d8f28f4319`，已全文核读；无turn_id event只为未验证观察。此前7426失败及各轮NOT_EXAMINED原件保留。
+
+2026-10-21 后续私有子预算实现：新增默认关闭的[整任务原生子agent预算](NATIVE-CHILD-BUDGET.md)，两原Claude共同原子计数≤2，原Agent创建前预占，正文回件仍占槽，原父全文读且按SHA消费后只释放一次。外部分配器只核源和账本，不调用模型或管理任务进程；前置hook异常明确阻断，第一版仅非fork前台，缺证据不重启／重派／放槽。最新工作源29小测试通过，不继承624d full/CI，也不声称实机已采用。实际hook、双60s闭环、三态和原配对仍未完成。原surface40绑定进程在01:22Z已读核确认退出，R7原次只读reconcile零输入拒绝，未重发或接管别的进程；报告仍留集中协调目录，后续接收须有原历史恢复依据。磁盘低于10GB后暂缓新大体量full/实机阶段，小代码／文档／读取继续；未写其他项目备份队列或删除唯一原件。
+
 2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。c6全量原14errors留存，夹具修复96全量2327项及四矩阵CI通过，见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容／夹具缺口，尚未证明三态角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中；upgrade冻结候选交原surface43按communication_only独立只读审，不改旧 R33 或不可变共享版本，不推出唯一整合权。
 
 首次对 0.4.57 全部 226 个顶层 Python 脚本执行了内存转换检查（不执行输出、不生成 runtime、不启客户端）：220 个转换成功，6 个拒绝。具体为 `cmux_bridge.py` 的旧 footer/activity 片段、`cmux_callback_journal.py` 的 deliver 签名、`cmux_daemon_identity.py` 的无 daemon 分支、`cmux_native_delivery.py` 的 ps 参数、`mac_harness.py` 的旧 preflight bridge-test 调用、`reconcile_handshake_ack.py` 的旧 bridge_clear 条件。部分旧补丁对应的行为已被上游改变，需核对语义后适配；不能删除 source-shape 检查或把转换成功当运行隔离成功。

@@ -16,6 +16,7 @@ from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_ps_wrapper, c
                                       environment, private_native_roots, sandbox_profile, verify_client_temp)
 from upgrade_live_integrity import verify_artifacts
 from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary, extend_profile
+from upgrade_child_budget_protocol import (POLICY as CHILD_POLICY, child_socket, validate_registered_hooks)
 
 FIELDS = {"schema", "context", "arm", "controller", "native_policy", "pins", "clients",
           "rpc", "work_root", "workspace_name", "protected_surface_uuids", "stop_path",
@@ -29,6 +30,13 @@ RESPONSE_OBSERVER_FILE = "upgrade_claude_response_observer.cjs"
 RESPONSE_OBSERVER_PIN = "claude_response_observer"
 CONTINUITY_REGISTRATION = "private-current-v1"
 CONTINUITY_CURRENT_PIN = "mac_upgrade_private_current"
+
+
+def child_budget_enabled(binding):
+    if "child_budget" not in binding:
+        return False
+    require(binding["child_budget"] == CHILD_POLICY, "STARTUP_CHILD_BUDGET_CHANGED")
+    return True
 
 
 def continuity_registration_enabled(binding):
@@ -167,8 +175,9 @@ def readiness_prompt(controller, python, rtk, lane):
             "正式任务须等待独立 adoption 核验。保留本会话，不得新建替代会话。")
 
 
-def client_environment(roots, paths, lane, rtk, *, response_observation=False):
+def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     result = environment(roots, paths, lane)
     # Frozen native binaries do not use PATH resolution. Tools still need a
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
@@ -176,6 +185,12 @@ def client_environment(roots, paths, lane, rtk, *, response_observation=False):
         paths["bin"], Path(rtk).parent, "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"))))
     if lane != "codex":
         result["PATH"] = str(paths["bin"] / "claude-tools") + os.pathsep + result["PATH"]
+        if child_budget:
+            # This first opt-in protocol binds foreground non-fork native
+            # completion only. Do not silently accept current default forks or
+            # background handback/launch notes as an original complete report.
+            result["CLAUDE_CODE_FORK_SUBAGENT"] = "0"
+            result["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
         if response_observation:
             result["BUN_OPTIONS"] = bun_preload_option(response_observer_path(paths))
             result["UPGRADE_RESPONSE_OBSERVATIONS_DIR"] = str(roots[lane] / "response-observations")
@@ -197,6 +212,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     binding = json.loads(read_regular(source / "upgrade-binding.json"))
     response_observation = response_observation_enabled(binding)
     continuity_registration = continuity_registration_enabled(binding)
+    child_budget = child_budget_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -291,6 +307,17 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
         local[key] = roots[lane] / name
     for key, path in local.items():
         require(pins[key]["path"] == str(path), "STARTUP_PIN_LOCATION_CHANGED:" + key)
+    if child_budget:
+        require(str(child_socket(paths)) in binding["isolation"]["immutable"],
+                "STARTUP_CHILD_SOCKET_IMMUTABILITY_CHANGED")
+    for name in ("codex-hooks.json", "claude-settings.json", "codex/hooks.json",
+                 "claude_a/settings.json", "claude_b/settings.json"):
+        document = json.loads(read_regular(pins[name]["path"]))
+        try:
+            validate_registered_hooks(document, pins["python"]["path"], source,
+                provider="codex" if name.startswith("codex") else "claude", enabled=child_budget)
+        except (ValueError, KeyError, TypeError) as exc:
+            require(False, "STARTUP_CHILD_HOOK_CHANGED:" + name)
     if verify_pins:
         verify_artifacts(pins.values())
     require(pins["claude_ps"]["mode"] == 0o555
@@ -340,6 +367,6 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
                     readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"],
-                                   response_observation=response_observation),
+                                   response_observation=response_observation, child_budget=child_budget),
                 "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding

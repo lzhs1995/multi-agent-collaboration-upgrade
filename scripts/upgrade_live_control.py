@@ -199,12 +199,18 @@ def control(runtime_ref, command):
     require(not stopped, "EXPERIMENT_STOP_REQUESTED")
     if command == "launch":
         require(not launched, "ORIGINAL_LAUNCH_ALREADY_EXISTS: inspect it; no retry or replacement")
+        from upgrade_startup_contract import child_budget_enabled
+        from upgrade_child_budget_protocol import verify_child_hook_binary
+        binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
+        child_capability = (verify_child_hook_binary(spec["pins"]["claude"])
+                            if child_budget_enabled(binding) else None)
         # The private harness also writes its exclusive intent before cmux. This
         # external intent is an additional crash record, never a retry budget.
         external_publisher(spec)
         write_json(adoption.parent / "launch-request.json", dict(runtime=runtime_ref,
             requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
-            startup=runtime["startup"]), exclusive=True)
+            startup=runtime["startup"], **({"child_hook_capability": child_capability}
+                                         if child_capability is not None else {})), exclusive=True)
         ref, value = invocation(runtime_ref, runtime, spec, "experiment-launch", spawn=True)
         return dict(status="LAUNCH_RETURNED" if value["returncode"] == 0 else "LAUNCH_UNCONFIRMED",
                     evidence=ref, observation=value, input_operations=0)

@@ -26,6 +26,7 @@ from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_B
     pressure_startup_prompt, readiness_prompt, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
+from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
 
 SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_native_roots.py", "upgrade_client_isolation.py", "upgrade_live_entry.py",
@@ -34,7 +35,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "orchestration_common.py", "upgrade_process_inventory.py", "upgrade_socket_boundary.py",
            "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py",
            "upgrade_handshake_capability.py", "upgrade_body_read.py",
-           "upgrade_toml.py", "upgrade_toml_re.py")
+           "upgrade_toml.py", "upgrade_toml_re.py",
+           "upgrade_child_hook.py", "upgrade_child_budget_protocol.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -48,7 +50,7 @@ def render_private_support(support):
     buffers, changes = {}, []
     for name in SUPPORT:
         raw = read_regular(support / name)
-        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py"):
+        if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py", "upgrade_child_hook.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
         raw = private_imports(raw.decode()).encode()
@@ -72,9 +74,10 @@ def render_private_support(support):
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
-                     continuity_registration=False):
+                     continuity_registration=False, child_budget=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
+    require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     context = validate_context(context_ref)
     require(arm in ("A1", "B"), "A0 is a retained historical control, not a new live lane")
     paths = arm_paths(context, arm)
@@ -142,6 +145,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                         paths["state"] / "work/CLAUDE.md"]
     if continuity_registration:
         common_immutable.append(paths["state"] / "CURRENT.json")
+    if child_budget:
+        common_immutable.append(child_socket(paths))
     for lane, root in roots.items():
         common_immutable += [root / n for n in (("config.toml", "hooks.json", "auth.json", "AGENTS.md",
                                                 "credential-observations/enabled-v1")
@@ -196,6 +201,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                         "transformations": ["private_opt_in_response_observer"],
                         "after": {"sha256": digest(raw), "bytes": len(raw)}})
     hooks = hook_config(source, controller, context["python"]["path"])
+    provider_hooks = {provider: (registered_hooks(hooks, context["python"]["path"], controller, provider=provider)
+                                if child_budget else hooks) for provider in ("codex", "claude")}
     wrappers = {provider: patch_cmux_wrapper(provider,
         read_regular(binaries[provider + "_wrapper"]), binaries[provider], paths, node=binaries["node"])
         for provider in ("codex", "claude")}
@@ -214,6 +221,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["response_observation"] = RESPONSE_OBSERVATION
     if continuity_registration:
         binding["continuity_registration"] = CONTINUITY_REGISTRATION
+    if child_budget:
+        binding["child_budget"] = CHILD_POLICY
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -257,7 +266,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                              rendered_helper(source, controller, context["python"]["path"]), executable=True)
     pins["helper"] = helper
     for name in ("codex-hooks.json", "claude-settings.json"):
-        ref = write_json(paths["config"] / name, hooks, exclusive=True)
+        ref = write_json(paths["config"] / name, provider_hooks["codex" if name == "codex-hooks.json" else "claude"], exclusive=True)
         Path(ref["path"]).chmod(0o444)
         pins[name] = artifact_ref(Path(ref["path"]))
     (paths["state"] / "kernel-write-probe").write_text("private write probe\n")
@@ -273,6 +282,13 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
               "Never install skills/hooks, contact production sessions, create replacement clients, "
               "change HOME or invoke another message sender. Do not claim adoption from a readiness probe.\n"
               + reader_instructions(context["python"]["path"], controller, executable_pins["rtk"]["path"]))
+    if child_budget:
+        policy += ("\nNative child creation is opt-in and must pass the registered Agent PreToolUse whole-task budget. "
+                   "Across both original Claude parents at most two unconsumed children are permitted. "
+                   "Never create/resume a nested agent or a Codex agent. A returned report does not release its slot. "
+                   "This first opt-in protocol supports non-fork foreground children only; no background launch or handback note. "
+                   "The original parent must read the full pinned body and consume the exact SHA. "
+                   "Missing service or uncertain proof means preserve the slot and continue original bounded work.\n")
     for name in ("AGENTS.md", "CLAUDE.md"):
         pins["work_" + name] = immutable_bytes(work / name, policy.encode())
     # This is an explicit startup choice for the newly authorized, OS-sandboxed
@@ -292,14 +308,14 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         provider = "codex" if lane == "codex" else "claude"
         if provider == "codex":
             (root / "credential-observations").mkdir(mode=0o700)
-            config_files = {"config.toml": codex_config(codex_original, root, hooks),
-                            "hooks.json": (json.dumps(hooks, sort_keys=True) + "\n").encode(),
+            config_files = {"config.toml": codex_config(codex_original, root, provider_hooks[provider]),
+                            "hooks.json": (json.dumps(provider_hooks[provider], sort_keys=True) + "\n").encode(),
                             "AGENTS.md": policy.encode(),
                             "credential-observations/enabled-v1": b"ccc-request-credentials-v1\n"}
         else:
             if response_observation:
                 (root / "response-observations").mkdir(mode=0o700)
-            config_files = {"settings.json": claude_config(claude_original, hooks), "CLAUDE.md": policy.encode()}
+            config_files = {"settings.json": claude_config(claude_original, provider_hooks[provider]), "CLAUDE.md": policy.encode()}
             write_json(root / ".claude.json", claude_seed, exclusive=True)
             (root / ".claude.json").chmod(0o600)
         for name, raw in config_files.items():
@@ -317,7 +333,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                     if goal_contract is not None else
                     readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
         env = client_environment(roots, paths, lane, binaries["rtk"],
-                                 response_observation=response_observation)
+                                 response_observation=response_observation, child_budget=child_budget)
         clients[lane] = dict(provider=provider, native_root=str(root), session_id=session,
                              argv=argv, environment=env)
     writable = [paths[name] for name in ("state", "campaigns", "evidence", "tmp")]
@@ -378,6 +394,8 @@ def main(argv=None):
                         help="pin opt-in observation of responses consumed by new private Claude clients")
     parser.add_argument("--register-private-continuity", action="store_true",
                         help="pin private CURRENT for original inquiry enrollment; does not start an episode")
+    parser.add_argument("--register-native-child-budget", action="store_true",
+                        help="pin opt-in whole-task Agent PreToolUse hook; starts no allocator or child")
     args = parser.parse_args(argv)
     try:
         from orchestration_campaign import anchored_ref
@@ -389,7 +407,8 @@ def main(argv=None):
         ref = materialize_live(context, args.arm, binaries=binaries, credential_files=credentials,
                                protected_surface_uuids=args.protected_surface_uuid, native_policy=args.native_policy,
                                response_observation=args.observe_claude_responses,
-                               continuity_registration=args.register_private_continuity)
+                               continuity_registration=args.register_private_continuity,
+                               child_budget=args.register_native_child_budget)
         print(json.dumps(dict(status="MATERIALIZED_NOT_LAUNCHED", runtime=ref, input_operations=0),
                          ensure_ascii=False, indent=2))
         return 0
