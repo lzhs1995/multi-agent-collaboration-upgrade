@@ -49,6 +49,12 @@ startup case. The caller retains the actual original native reference.
 
 Each Claude must also have an original complete API terminal attached to the
 same session's authentic parent chain. A tool return alone is insufficient.
+One API response may stream a text record before its Bash record with the same
+`msg_id`. Response accounting remains deduplicated; the exact readiness Bash
+record is separately qualified against the original parent chain, model and
+terminal grammar. Valid earlier text cannot qualify an unlinked, truncated or
+nonterminal Bash block. This registration path still publishes no adoption,
+creates no child and sends no input.
 The initial fixed intervals are rederived as historical membership evidence,
 not a requirement that every participant remain forever in its startup state.
 Current intervals are separately bounded and model-checked. A later original
@@ -150,13 +156,24 @@ unchanged pins on2026-10-21T15:09:45Z. It covers actual generated private
 input-gate calls, the complete original native evaluator and existing native
 child service/hook/budget/startup entrypoints, using disposable test journals
 and mocked endpoint identity/kernel boundaries where stated. It does not prove
-actual live delivery or active client hook loading. The frozen full and CI for
-this newer source are still pending. The original failed RED artifacts remain.
+actual live delivery or active client hook loading. That transition was frozen
+as `2d3bafc792a2aed9d8d670f7bccfd8d4f67140a2`; its later child-response/tail
+repair was frozen as `37ad0907eaa91bcbaab63631dde2d4fc0de2939c`. The original
+failed RED artifacts remain.
 One newly written test incorrectly expected active work to prohibit peer
 communication; its failed artifact is preserved as a test-design correction,
 not a product defect. The corrected positive control changes no product policy.
 
-Still required for the full task: fresh transition frozen full/CI, independent review,
+The exact clean37ad090 local full passed2441 tests, F0/E0/S0, with339 unchanged
+source pins on2026-10-21T18:24:09Z. Its
+[CI run](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39653241808)
+completed four successful Ubuntu/macOS × Python3.10/3.14 jobs; each ran2441
+tests with174 Ubuntu or164 macOS environment skips. These author results do
+not cover the subsequent startup-readiness split-response repair above, which
+requires its own frozen regression and independent review. The original R9
+review is pinned only to37ad090 and cannot certify later working-source edits.
+
+Still required for the full task: newer startup repair frozen full/CI, independent review,
 healthy1+2 real handshake/callback, both Claude2×60-second request→reply→FULL
 read→exact-SHA consumption cycles, actual max-two native children and original
 parent return/consumption, all three availability scenarios including recovery,

@@ -35,7 +35,8 @@ def existing_original_user_authorization():
         text_sha256="402e7bd9e9ccdf83295c60b784e00b3eb08c9711d9a165df71bbb2d3d8628e08")]
 
 
-def original_startup_fixture(root, *, codex_rollout_name=False, terminal_ready_outcomes=True):
+def original_startup_fixture(root, *, codex_rollout_name=False, terminal_ready_outcomes=True,
+                             split_ready_response=False, ready_call_variant=None):
     """Real frozen files with explicitly synthetic native/kernel observations."""
     context = init_experiment(root, "startup-continuity-fixture", startup_fixtures.MODERN_SOURCE)
     binaries = {name: Path("/usr/bin/true") for name in ("codex", "claude", "cmux", "rtk", "node")}
@@ -93,6 +94,18 @@ def original_startup_fixture(root, *, codex_rollout_name=False, terminal_ready_o
                 answer["message"].update(type="message", id="msg_startup_" + lane, stop_reason="tool_use")
             answer["message"].update(model="fixture-claude", content=[dict(type="tool_use", id=call_id,
                 name="Bash", input=args)])
+            if split_ready_response:
+                text_block = copy.deepcopy(answer)
+                text_block["uuid"] = str(uuid.uuid4())
+                text_block["message"]["content"] = [dict(type="text", text="Checking original readiness.")]
+                journal.append(text_block)
+                answer["parentUuid"] = text_block["uuid"]
+            if ready_call_variant == "unlinked":
+                answer["parentUuid"] = str(uuid.uuid4())
+            elif ready_call_variant == "truncated":
+                answer["truncatedAfterOutput"] = True
+            elif ready_call_variant == "nonterminal":
+                answer["message"]["stop_reason"] = None
             model_ref = journal.append(answer)
             probe = dict(status="UPGRADE_READINESS_TOOL_COMPLETED", lane=lane,
                 native_root=str(native_root), controller=spec["controller"], adoption_proven=False, input_operations=0)
@@ -378,6 +391,58 @@ class StartupContinuityMaterializationTests(unittest.TestCase):
             self.assertFalse(Path(spec["adoption_path"]).exists())
             self.assertFalse(value["production_adoption"])
             self.assertEqual(value["input_operations"], 0)
+            self.assertFalse((Path(binding["tmp_root"]) / "child-budget.sock").exists())
+
+    def test_original_ready_response_text_before_bash_still_registers_original_peers(self):
+        from upgrade_startup_continuity import register_startup_continuity, validate_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l", split_ready_response=True)
+            ref = register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                native_authorizations=authorizations, automatic_fallback_authorized=True)
+            value = validate_startup_continuity(runtime_ref, ref)
+            self.assertEqual(value["healthy_lanes"], ["claude_a", "claude_b"])
+            self.assertEqual(value["sessions"], sessions)
+            self.assertTrue(value["source_verified"])
+            self.assertEqual(value["input_operations"], 0)
+            self.assertFalse(value["production_adoption"])
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+            self.assertFalse((Path(binding["tmp_root"]) / "child-budget.sock").exists())
+
+    def test_unlinked_bash_after_valid_same_response_text_cannot_register_original_peers(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l", split_ready_response=True, ready_call_variant="unlinked")
+            with self.assertRaisesRegex(ContractError, "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED"):
+                register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                    native_authorizations=authorizations, automatic_fallback_authorized=True)
+            self.assertFalse((Path(spec["adoption_path"]).parent / "startup-continuity.json").exists())
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+            self.assertFalse((Path(binding["tmp_root"]) / "child-budget.sock").exists())
+
+    def test_truncated_bash_after_valid_same_response_text_cannot_register_original_peers(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l", split_ready_response=True, ready_call_variant="truncated")
+            with self.assertRaisesRegex(ContractError, "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED"):
+                register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                    native_authorizations=authorizations, automatic_fallback_authorized=True)
+            self.assertFalse((Path(spec["adoption_path"]).parent / "startup-continuity.json").exists())
+            self.assertFalse(Path(spec["adoption_path"]).exists())
+            self.assertFalse((Path(binding["tmp_root"]) / "child-budget.sock").exists())
+
+    def test_nonterminal_bash_after_valid_same_response_text_cannot_register_original_peers(self):
+        from upgrade_startup_continuity import register_startup_continuity
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as temporary:
+            runtime_ref, runtime, spec, binding, inspection, sessions, authorizations = original_startup_fixture(
+                Path(temporary).resolve() / "l", split_ready_response=True, ready_call_variant="nonterminal")
+            with self.assertRaisesRegex(ContractError, "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED"):
+                register_startup_continuity(runtime_ref, inspection, task_id="startup-continuity-fixture",
+                    native_authorizations=authorizations, automatic_fallback_authorized=True)
+            self.assertFalse((Path(spec["adoption_path"]).parent / "startup-continuity.json").exists())
+            self.assertFalse(Path(spec["adoption_path"]).exists())
             self.assertFalse((Path(binding["tmp_root"]) / "child-budget.sock").exists())
 
     def test_experimental_startup_user_prompt_cannot_self_authorize_fallback(self):

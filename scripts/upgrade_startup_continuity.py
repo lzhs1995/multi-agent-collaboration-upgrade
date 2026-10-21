@@ -151,7 +151,7 @@ def _verify_in_controller(value, runtime_ref, runtime, spec, binding, *, allow_s
     return value
 
 
-def _native_outcomes(native, session, task_id, now):
+def _native_outcomes(native, session, task_id, now, *, deduplicate_messages=True):
     """Read one complete, bounded, model-checked original journal interval.
 
     A terminal failure is an outcome, not removal from the original task.
@@ -177,7 +177,8 @@ def _native_outcomes(native, session, task_id, now):
                     if row.get("type") == "user" and native_text(row, "claude", "user") is not None),
                 "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
     scan = codex_outcomes if session["provider"] == "codex" else claude_outcomes
-    outcomes = scan(session, rows, task_id, now)
+    options = {"deduplicate_messages": deduplicate_messages} if session["provider"] == "claude" else {}
+    outcomes = scan(session, rows, task_id, now, **options)
     with native._open(session["transcript"]["path"]) as stream:
         native._check_file(stream, session)
     return outcomes
@@ -307,9 +308,14 @@ def validate_source_contract(value, runtime_ref, runtime, spec, binding, native,
             require(checked == result["readiness"][lane] and checked["model"] == session["model"],
                     "STARTUP_CONTINUITY_READINESS_CHANGED")
             outcomes = _native_outcomes(native, session, value["task_id"], time.time())
+            # The API outcome is deduplicated once per response. A later Bash
+            # block of that same response still needs its own ancestry/model/
+            # terminal qualification; do not infer it from the earlier text.
+            qualified_blocks = _native_outcomes(native, session, value["task_id"], time.time(),
+                                                deduplicate_messages=False)
             require(outcomes and outcomes[-1]["kind"] == "API_SUCCESS"
                     and any(event["native_record"] == checked["call"] and event["kind"] == "API_SUCCESS"
-                            for event in outcomes), "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
+                            for event in qualified_blocks), "STARTUP_CONTINUITY_READY_API_OUTCOME_REQUIRED")
         if fresh["transcript"]["at_record_boundary"]:
             _native_outcomes(native, fresh, value["task_id"], time.time())
         # A partly appended current record is not evidence of revocation or
