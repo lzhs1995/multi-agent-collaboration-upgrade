@@ -15,167 +15,17 @@ import time
 import uuid
 from pathlib import Path
 
-from orchestration_common import (ContractError, canonical, checked_path, file_ref, finite,
+from orchestration_common import (ContractError, canonical, checked_path, digest, file_ref, finite,
     contract_errors, json_ref, object_sha, parse_time, read_ref, require, strict_json, utc_now,
     verify_tree, within, write_bytes_once, write_json)
-from orchestration_native import NativeReader, native_text, native_verification
+from orchestration_native import NativeReader, native_verification
+from upgrade_native_outcomes import canonical_uuid, outcome, codex_outcomes, claude_outcomes
 from upgrade_experiment import validate_sessions
 
 LANES = ("codex", "claude_a", "claude_b")
 MAX_EPISODE_RECORDS = 65536
 MAX_EPISODE_BYTES = 32 * 1024 * 1024
 
-
-def canonical_uuid(value, label):
-    require(isinstance(value, str) and str(uuid.UUID(value)) == value,
-            label + " must be an original canonical UUID")
-    return value
-
-
-def outcome(session, task_id, ref, record, attempt_id, now, *, kind="API_SUCCESS", http_status=None):
-    epoch = parse_time(record["timestamp"]).timestamp()
-    require(0 <= epoch <= now, "native outcome is outside the observation clock")
-    value = dict(task_id=task_id, surface_uuid=session["surface_uuid"],
-                session_id=session["session_id"], attempt_id=attempt_id,
-                kind=kind, terminal=True, at_epoch=epoch, native_record=ref)
-    if http_status is not None:
-        require(type(http_status) is int and 100 <= http_status <= 599,
-                "native HTTP status must be a concrete integer")
-        value["http_status"] = http_status
-    return value
-
-
-def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
-    active, model, final = None, None, None
-    active_offset, active_observed = None, False
-    values = []
-
-    def append(ref, record, attempt_id, **fields):
-        if ref["offset"] >= outcome_after:
-            values.append(outcome(session, task_id, ref, record, attempt_id, now, **fields))
-
-    for ref, record in records:
-        payload = record.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        if record.get("type") == "event_msg" and payload.get("type") == "task_started":
-            # A crash can leave an unclosed historical turn. It is not current
-            # availability or an API error. A fresh start may replace only that
-            # pre-fence state, never a turn with observed post-fence activity.
-            require(active is None or (active_offset < outcome_after and not active_observed),
-                    "overlapping original native turns")
-            active = canonical_uuid(payload.get("turn_id"), "native turn id")
-            active_offset, active_observed = ref["offset"], ref["offset"] >= outcome_after
-            model, final = None, None
-            continue
-        # Thread configuration/goal events and session metadata may sit between
-        # a crashed historical turn and its next start. They are not activity
-        # of that turn. Native response items have implicit open-turn ownership;
-        # context and event records must carry the matching original turn id.
-        turn_activity = (record.get("type") == "response_item" or
-            record.get("type") in ("turn_context", "event_msg") and payload.get("turn_id") == active)
-        if active is not None and ref["offset"] >= outcome_after and turn_activity:
-            active_observed = True
-        if (record.get("type") == "turn_context" and active is not None
-              and payload.get("turn_id") == active):
-            require(payload.get("model") == session["model"], "native continuity model changed")
-            model = payload["model"]
-        elif (record.get("type") == "response_item" and active is not None
-              and payload.get("phase") == "final_answer"):
-            final = native_text(record, "codex", "assistant")
-        elif (record.get("type") == "event_msg" and payload.get("type") == "task_complete"
-              and active is not None and payload.get("turn_id") == active):
-            error = payload.get("error")
-            if (model == session["model"] and payload.get("error") is None
-                    and isinstance(final, str) and final.strip()
-                    and payload.get("last_agent_message") == final):
-                append(ref, record, "codex-turn:" + active)
-            elif model == session["model"] and isinstance(error, dict):
-                info = error.get("codex_error_info")
-                status = info.get("http_status_code") if isinstance(info, dict) else None
-                # The actual original Codex CLI serializes this enum as an
-                # externally tagged object. Keep the older flat contract,
-                # but never infer an HTTP result from arbitrary nested data.
-                if isinstance(info, dict) and set(info) == {"http_connection_failed"}:
-                    connection = info["http_connection_failed"]
-                    if isinstance(connection, dict) and set(connection) == {"http_status_code"}:
-                        status = connection["http_status_code"]
-                if type(status) is int and 400 <= status <= 599:
-                    append(ref, record, "codex-turn:" + active, kind="API_ERROR", http_status=status)
-                else:
-                    append(ref, record, "codex-turn:" + active, kind="NATIVE_OUTCOME_UNKNOWN")
-            else:
-                append(ref, record, "codex-turn:" + active, kind="NATIVE_OUTCOME_UNKNOWN")
-            active, model, final = None, None, None
-        elif (record.get("type") == "event_msg" and payload.get("type") == "turn_aborted"
-              and active is not None and payload.get("turn_id") == active):
-            require(payload.get("reason") in ("interrupted", "replaced", "review_ended", "budget_limited"),
-                    "native abort has no canonical reason")
-            append(ref, record, "codex-turn:" + active, kind="NATIVE_OUTCOME_UNKNOWN")
-            active, model, final = None, None, None
-    return values
-
-
-def claude_outcomes(session, records, task_id, now, *, outcome_after=0):
-    ancestors, seen_messages, values = {}, set(), []
-    for ref, record in records:
-        if record.get("isSidechain") is True or record.get("sessionId") != session["session_id"]:
-            continue
-        if record.get("type") == "user" and native_text(record, "claude", "user") is not None:
-            uid = canonical_uuid(record.get("uuid"), "native user id")
-            ancestors[uid] = uid
-            continue
-        parent = ancestors.get(record.get("parentUuid"))
-        # Native hooks, deferred tools and queued commands are ancestry links,
-        # not assistant API outcomes. They retain the original session/UUID gate.
-        if parent and record.get("type") in ("assistant", "user", "system", "attachment"):
-            uid = canonical_uuid(record.get("uuid"), "native parent-chain id")
-            ancestors[uid] = parent
-        if record.get("type") == "system" and record.get("subtype") == "api_error" and parent:
-            continue
-        message = record.get("message")
-        if (record.get("type") == "assistant" and isinstance(message, dict)
-                and record.get("isApiErrorMessage") is not True
-                and isinstance(message.get("model"), str) and message["model"] != "<synthetic>"):
-            require(message["model"] == session["model"], "native continuity model changed")
-        if (record.get("type") != "assistant" or not isinstance(message, dict)
-                or parent is None
-                or record.get("truncatedAfterOutput") is True):
-            continue
-        if record.get("isApiErrorMessage") is True:
-            status = record.get("apiErrorStatus")
-            if (message.get("role") == "assistant" and message.get("model") == "<synthetic>"
-                    and message.get("stop_reason") == "stop_sequence"):
-                canonical_uuid(record.get("uuid"), "native terminal error id")
-                message_id = canonical_uuid(message.get("id"), "native error message id")
-                if message_id in seen_messages:
-                    continue
-                seen_messages.add(message_id)
-                known = type(status) is int and 400 <= status <= 599
-                if ref["offset"] >= outcome_after:
-                    values.append(outcome(session, task_id, ref, record, "claude-message:" + message_id, now,
-                        kind="API_ERROR" if known else "NATIVE_OUTCOME_UNKNOWN",
-                        http_status=status if known else None))
-            continue
-        content = message.get("content")
-        visible = isinstance(content, list) and any(isinstance(block, dict) and (
-            block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"].strip()
-            or block.get("type") == "tool_use" and isinstance(block.get("id"), str)
-            and isinstance(block.get("name"), str) and isinstance(block.get("input"), dict))
-            for block in content)
-        if (message.get("role") == "assistant" and message.get("type") == "message"
-                and message.get("model") == session["model"] and message["model"] != "<synthetic>"
-                and message.get("stop_reason") in ("end_turn", "tool_use", "stop_sequence")
-                and isinstance(message.get("id"), str) and message["id"].startswith("msg_")
-                and visible):
-            canonical_uuid(record.get("uuid"), "native assistant id")
-            if message["id"] in seen_messages:
-                continue
-            seen_messages.add(message["id"])
-            if ref["offset"] >= outcome_after:
-                values.append(outcome(session, task_id, ref, record,
-                                      "claude-message:" + message["id"], now))
-    return values
 
 
 @native_verification
@@ -253,6 +103,49 @@ def collect_native_outcomes(sessions, *, task_id, now, max_records=256, fixtures
                 record_budget=max_records, fixture_mode=fixtures, input_operations=0, resource_releases=0)
 
 
+@native_verification
+@contract_errors("original startup native continuity interval")
+def collect_startup_native_outcomes(sessions, runtime_ref, proof_ref, *, task_id, now,
+                                   max_records=256, observed_eofs=None):
+    """A separately named initial interval, not a rewritten adoption episode.
+
+    Keep the original registration fences in the result and on disk. Only the
+    explicitly opted-in, source-verified startup contract may observe its own
+    initial journal history, including the failure before registration.
+    """
+    from upgrade_live_runtime import identity_matches, validate_session_authority
+    proof = validate_session_authority(runtime_ref, proof_ref, allow_stopped=True)
+    require(proof.get("schema") == "upgrade-startup-continuity-v1" and proof["task_id"] == task_id,
+            "ORIGINAL_STARTUP_CONTINUITY_INTERVAL_REQUIRED")
+    validate_sessions(sessions)
+    initial = copy.deepcopy(sessions)
+    for lane, session in initial.items():
+        require(identity_matches(session, proof["sessions"][lane])
+                and session.get("private_native") == dict(runtime=runtime_ref, adoption=proof_ref),
+                "ORIGINAL_STARTUP_CONTINUITY_SESSION_CHANGED")
+        reader = NativeReader(session)
+        require(reader.verify_pin(session["freeze_fence"]) >=
+                reader.verify_pin(proof["sessions"][lane]["freeze_fence"]),
+                "ORIGINAL_STARTUP_REGISTRATION_FENCE_CHANGED")
+        # Explicitly label zero as STARTUP history, never adoption or a new
+        # task fence. Same account/inode/metadata and per-record checks remain.
+        session["freeze_fence"] = dict(session["transcript"], offset=0, prefix_size=0,
+            prefix_sha256=digest(b""), tail_at=0, tail_sha256=digest(b""), at_record_boundary=True)
+    collection = collect_native_outcomes(initial, task_id=task_id, now=now,
+        max_records=max_records, observed_eofs=observed_eofs)
+    return dict(collection, schema="upgrade-startup-native-continuity-observations-v1",
+        observation_scope="ORIGINAL_STARTUP_NOT_ADOPTION_EPISODE", startup_continuity=proof_ref,
+        registration_fences={lane: copy.deepcopy(session["freeze_fence"]) for lane, session in sessions.items()})
+
+
+def _collect_original_interval(sessions, collection, *, runtime_ref, **interval):
+    if collection.get("schema") == "upgrade-startup-native-continuity-observations-v1":
+        require(runtime_ref is not None and interval.pop("fixtures") is False,
+                "ORIGINAL_STARTUP_NATIVE_RUNTIME_REQUIRED")
+        return collect_startup_native_outcomes(sessions, runtime_ref, collection["startup_continuity"], **interval)
+    return collect_native_outcomes(sessions, **interval)
+
+
 ORIGINAL_PLAN = r'''
 import hashlib, json, sys
 from pathlib import Path
@@ -287,7 +180,7 @@ def invoke_original_plan(controller, python, sessions, collection, authorization
             "incomplete original native interval cannot establish continuity")
     interval = dict(task_id=collection["task_id"], now=now, fixtures=fixtures,
                     max_records=collection["record_budget"], observed_eofs=collection["observed_eofs"])
-    fresh = collect_native_outcomes(sessions, **interval)
+    fresh = _collect_original_interval(sessions, collection, runtime_ref=runtime_ref, **interval)
     require(fresh == collection, "native outcomes changed or caller-authored labels supplied")
     verify_tree(controller)
     source = checked_path(controller["path"])
@@ -344,7 +237,7 @@ def invoke_original_plan(controller, python, sessions, collection, authorization
     verify_tree(controller)
     read_ref(python, "unchanged evaluator Python")
     read_ref(authorization, "unchanged original continuity authorization")
-    require(collection == collect_native_outcomes(sessions, **interval),
+    require(collection == _collect_original_interval(sessions, collection, runtime_ref=runtime_ref, **interval),
             "native observations changed during original evaluation")
     return actual
 
@@ -363,8 +256,8 @@ def registration_root(runtime, task_id):
 
 @native_verification
 def registered_sessions(runtime_ref, adoption_ref):
-    from upgrade_live_runtime import validate_adoption
-    proof = validate_adoption(runtime_ref, adoption_ref, allow_stopped=True)
+    from upgrade_live_runtime import validate_session_authority
+    proof = validate_session_authority(runtime_ref, adoption_ref, allow_stopped=True)
     sessions = copy.deepcopy(proof["sessions"])
     for session in sessions.values():
         session["private_native"] = dict(runtime=runtime_ref, adoption=adoption_ref)
@@ -381,7 +274,7 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
     """Publish one scoped read-only episode, never launch or adopt new clients."""
     from orchestration_freeze_v3 import authorize
     from upgrade_live_control import external_publisher
-    from upgrade_live_runtime import validate_live_runtime
+    from upgrade_live_runtime import validate_live_runtime, validate_session_authority
     from upgrade_startup_contract import continuity_registration_enabled
     require(automatic_fallback_authorized is True, "explicit original task fallback authorization required")
     require(isinstance(native_authorizations, list) and 0 < len(native_authorizations) <= 8,
@@ -393,7 +286,13 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
     external_publisher(spec)
     root = registration_root(runtime, task_id)
     require(not root.exists(), "original native continuity registration exists; do not reset its fences")
-    records = authorize(native_authorizations)
+    proof = validate_session_authority(runtime_ref, adoption_ref)
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(task_id == proof["task_id"] and native_authorizations == proof["native_authorizations"],
+                "STARTUP_CONTINUITY_OBSERVER_AUTHORIZATION_CHANGED")
+        records = proof["native_authorizations"]
+    else:
+        records = authorize(native_authorizations)
     sessions = registered_sessions(runtime_ref, adoption_ref)
     authorization = dict(schema="upgrade-native-continuity-authorization-v1", source="user_message",
         task_id=task_id, runtime=runtime_ref, adoption=adoption_ref, approved_root=str(root),
@@ -402,7 +301,10 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
         advisory_only=True, takeover_authorized=False, input_operations=0, resource_releases=0)
     _, current = validate_live_runtime(runtime_ref)
     require(current == runtime, "native registration runtime changed before publication")
-    authorize(records)
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(validate_session_authority(runtime_ref, adoption_ref) == proof, "STARTUP_CONTINUITY_CHANGED")
+    else:
+        authorize(records)
     root.mkdir(parents=True, mode=0o700, exist_ok=False)
     authorization_ref = write_json(root / "authorization.json", authorization, exclusive=True)
     Path(authorization_ref["path"]).chmod(0o444)
@@ -418,7 +320,7 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
 @contract_errors("registered native continuity")
 def validate_native_registration(ref):
     from orchestration_freeze_v3 import authorize
-    from upgrade_live_runtime import validate_adoption, validate_live_runtime, identity_matches
+    from upgrade_live_runtime import validate_session_authority, validate_live_runtime, identity_matches
     from upgrade_startup_contract import continuity_registration_enabled
     value = json_ref(ref, "original native registration")
     require(set(value) == REGISTRATION_FIELDS and value["schema"] == REGISTRATION_SCHEMA
@@ -434,7 +336,7 @@ def validate_native_registration(ref):
             and ref["path"] == str(root / "registration.json")
             and value["authorization"]["path"] == str(root / "authorization.json"),
             "native continuity registration scope changed")
-    proof = validate_adoption(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
+    proof = validate_session_authority(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
     validate_sessions(value["sessions"], protected=spec["protected_surface_uuids"])
     for lane, session in value["sessions"].items():
         require(identity_matches(session, proof["sessions"][lane])
@@ -448,7 +350,12 @@ def validate_native_registration(ref):
     authorization = json_ref(value["authorization"], "native continuity authorization")
     require(isinstance(authorization.get("native_records"), list)
             and 0 < len(authorization["native_records"]) <= 8, "original native user records missing")
-    records = authorize(authorization["native_records"])
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(value["task_id"] == proof["task_id"] and authorization["native_records"] == proof["native_authorizations"],
+                "STARTUP_CONTINUITY_OBSERVER_AUTHORIZATION_CHANGED")
+        records = proof["native_authorizations"]
+    else:
+        records = authorize(authorization["native_records"])
     require(authorization == dict(schema="upgrade-native-continuity-authorization-v1", source="user_message",
         task_id=value["task_id"], runtime=value["runtime"], adoption=value["adoption"], approved_root=str(root),
         automatic_fallback_authorized=True, max_subagents=2, child_budget_scope="WHOLE_TASK",
@@ -465,8 +372,14 @@ def observe_registered_native(registration_ref, *, now, max_records=256):
     value, runtime = validate_native_registration(registration_ref)
     spec = json_ref(runtime["startup"])
     external_publisher(spec)
-    collection = collect_native_outcomes(value["sessions"], task_id=value["task_id"], now=now,
-                                         max_records=max_records)
+    from upgrade_live_runtime import validate_session_authority
+    proof = validate_session_authority(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        collection = collect_startup_native_outcomes(value["sessions"], value["runtime"], value["adoption"],
+            task_id=value["task_id"], now=now, max_records=max_records)
+    else:
+        collection = collect_native_outcomes(value["sessions"], task_id=value["task_id"], now=now,
+                                             max_records=max_records)
     if collection["pending_lanes"]:
         return dict(status="ORIGINAL_NATIVE_INTERVAL_PENDING", observations=collection,
             advisory_only=True, child_budget_enforced=False, input_operations=0, resource_releases=0)

@@ -20,7 +20,7 @@ from orchestration_common import (ContractError, digest, file_ref, json_ref, par
 from upgrade_client_isolation import LANES, require_kernel_boundary
 from upgrade_native_roots import process_root
 from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt,
-                                     readiness_command, readiness_prompt)
+                                     readiness_command, readiness_prompt, startup_continuity_enabled)
 from upgrade_socket_boundary import binding_boundary, verify_kernel
 
 
@@ -406,6 +406,7 @@ def inspect(startup_ref, spec, binding):
         launches[lane] = json_ref(launch_refs[lane])
         require(launches[lane]["startup"] == startup_ref, "LAUNCH_STARTUP_CHANGED")
     sessions, evidence, kernels, errors = {}, {}, {}, {}
+    startup_failures = {}
     for lane in LANES:
         try:
             launch = launches[lane]
@@ -441,6 +442,18 @@ def inspect(startup_ref, spec, binding):
                            freeze_fence=session["transcript"])
         except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
             errors[lane] = str(exc)
+            if (lane == "codex" and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
+                    and lane in sessions and startup_continuity_enabled(binding)):
+                from upgrade_startup_continuity import startup_failure_evidence
+                try:
+                    context = json_ref(binding["context"])
+                    failure = startup_failure_evidence(native, sessions[lane], lane, spec, startup_ref,
+                        task_id=context["experiment_id"], now=time.time())
+                    startup_failures[lane] = failure
+                    sessions[lane].update(model=failure["model"], model_record=failure["model_record"],
+                                          freeze_fence=sessions[lane]["transcript"])
+                except (ValueError, OSError, KeyError, native.NativeDeliveryError) as failure_error:
+                    errors[lane] = "STARTUP_FAILURE_UNVERIFIED:" + str(failure_error)
     capability = None
     if "codex" in sessions:
         try:
@@ -481,4 +494,5 @@ def inspect(startup_ref, spec, binding):
                 launch_intent=intent_ref, launch_result=result_ref, launches=launch_refs,
                 sessions=sessions, readiness=evidence, kernel=kernels, codex_capability=capability,
                 errors=errors, ready=not errors and len(evidence) == 3 and capability is not None,
-                stopped=os.path.lexists(spec["stop_path"]), input_operations=0)
+                stopped=os.path.lexists(spec["stop_path"]), input_operations=0,
+                **({"startup_failures": startup_failures} if startup_continuity_enabled(binding) else {}))

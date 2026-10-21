@@ -48,7 +48,7 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
     from orchestration_freeze_v3 import authorize
     from upgrade_continuity_native import registered_sessions
     from upgrade_live_control import external_publisher
-    from upgrade_live_runtime import validate_live_runtime
+    from upgrade_live_runtime import validate_live_runtime, validate_session_authority
     from upgrade_startup_contract import child_budget_enabled
     require(child_budget_authorized is True, "ORIGINAL_NATIVE_CHILD_AUTHORIZATION_REQUIRED")
     _, runtime = validate_live_runtime(runtime_ref)
@@ -58,7 +58,11 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
     external_publisher(startup)
     root = service_root(runtime)
     require(not os.path.lexists(root), "ORIGINAL_CHILD_SERVICE_REGISTRATION_EXISTS: do not reset it")
-    records = authorize(native_authorizations)
+    proof = validate_session_authority(runtime_ref, adoption_ref)
+    records = proof["native_authorizations"] if proof.get("schema") == "upgrade-startup-continuity-v1" else authorize(native_authorizations)
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(task_id == proof["task_id"] and native_authorizations == records,
+                "STARTUP_CONTINUITY_CHILD_AUTHORIZATION_CHANGED")
     require(0 < len(records) <= 8, "ORIGINAL_NATIVE_CHILD_AUTHORIZATION_BOUND")
     verify_tree(source)
     require(Path(source["path"]).resolve() == Path(__file__).resolve().parent.parent
@@ -73,7 +77,10 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
     # Validate task/parents before creating the irreversible enrollment root.
     require(isinstance(task_id, str) and 0 < len(task_id) <= 128 and task_id == task_id.strip()
             and not any(ord(c) < 32 for c in task_id), "CHILD_TASK_ID_INVALID")
-    authorize(records)
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(validate_session_authority(runtime_ref, adoption_ref) == proof, "STARTUP_CONTINUITY_CHANGED")
+    else:
+        authorize(records)
     verify_tree(source)
     root.mkdir(parents=True, mode=0o700, exist_ok=False)
     authority_ref = write_json(root / "authority.json", authority, exclusive=True)
@@ -94,7 +101,7 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
 def validate_service_registration(ref):
     from orchestration_freeze_v3 import authorize
     from orchestration_native import NativeReader
-    from upgrade_live_runtime import identity_matches, validate_adoption, validate_live_runtime
+    from upgrade_live_runtime import identity_matches, validate_session_authority, validate_live_runtime
     from upgrade_startup_contract import child_budget_enabled
     value = json_ref(ref, "original native child service registration")
     require(set(value) == REGISTRATION_FIELDS and value["schema"] == REGISTRATION_SCHEMA
@@ -116,7 +123,7 @@ def validate_service_registration(ref):
     verify_tree(value["source"])
     require(Path(value["source"]["path"]).resolve() == Path(__file__).resolve().parent.parent,
             "CHILD_SERVICE_SOURCE_CHANGED")
-    proof = validate_adoption(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
+    proof = validate_session_authority(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
     require(set(value["sessions"]) == {"codex", "claude_a", "claude_b"}, "CHILD_SERVICE_ORIGINAL_LANES_CHANGED")
     for lane, session in value["sessions"].items():
         require(identity_matches(session, proof["sessions"][lane])
@@ -126,7 +133,12 @@ def validate_service_registration(ref):
         require(reader.verify_pin(session["freeze_fence"]) >= reader.verify_pin(proof["sessions"][lane]["freeze_fence"]),
                 "CHILD_SERVICE_ORIGINAL_FENCE_CHANGED")
     require(0 < len(value["native_authorizations"]) <= 8, "ORIGINAL_NATIVE_CHILD_AUTHORIZATION_BOUND")
-    authorize(value["native_authorizations"])
+    if proof.get("schema") == "upgrade-startup-continuity-v1":
+        require(value["task_id"] == proof["task_id"]
+                and value["native_authorizations"] == proof["native_authorizations"],
+                "STARTUP_CONTINUITY_CHILD_AUTHORIZATION_CHANGED")
+    else:
+        authorize(value["native_authorizations"])
     require(value["authority"]["path"] == str(root / "authority.json") and authority_value(value["authority"]) == dict(
         schema="upgrade-child-budget-authority-v1", task_id=value["task_id"], ledger_root=str(root / "ledger"),
         max_inflight=2, budget_scope="WHOLE_TASK", parents={lane: value["sessions"][lane]["session_id"]

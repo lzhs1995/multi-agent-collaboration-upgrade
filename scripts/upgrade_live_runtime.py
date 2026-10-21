@@ -45,8 +45,8 @@ def _native_observation_state():
 
 def _read_native_authority(authority):
     context, runtime = validate_live_runtime(authority["runtime"])
-    proof = validate_adoption(authority["runtime"], authority["adoption"],
-                             runtime=runtime, allow_stopped=True)
+    proof = validate_session_authority(authority["runtime"], authority["adoption"],
+                                       runtime=runtime, allow_stopped=True)
     return context, runtime, proof
 
 
@@ -218,6 +218,32 @@ def validate_adoption_candidate(runtime_ref, proof, *, runtime=None, allow_stopp
 def authenticated_sessions(runtime_ref, proof_ref):
     """Attach authority references, never a caller-supplied filesystem root."""
     proof = validate_adoption(runtime_ref, proof_ref)
+    sessions = copy.deepcopy(proof["sessions"])
+    for session in sessions.values():
+        session["private_native"] = dict(runtime=runtime_ref, adoption=proof_ref)
+        session["transcript"] = {key: session["transcript"][key] for key in TRANSCRIPT_FIELDS}
+    return sessions
+
+
+def validate_session_authority(runtime_ref, proof_ref, *, runtime=None, allow_stopped=False):
+    """Healthy trio or a separately source-verified startup contract, never a downgrade.
+
+    Campaign/benchmark adoption validators retain their original healthy-trio
+    requirement. Only native continuing-task readers and child service use this
+    explicit authority chooser; supplied paths cannot impersonate an old proof.
+    """
+    if runtime is None:
+        _, runtime = validate_live_runtime(runtime_ref)
+    spec = json_ref(runtime["startup"])
+    if proof_ref.get("path") == spec["adoption_path"]:
+        return validate_adoption(runtime_ref, proof_ref, runtime=runtime, allow_stopped=allow_stopped)
+    from upgrade_startup_continuity import continuity_path, validate_startup_continuity
+    require(proof_ref.get("path") == str(continuity_path(spec)), "EXTERNAL_SESSION_AUTHORITY_REQUIRED")
+    return validate_startup_continuity(runtime_ref, proof_ref, allow_stopped=allow_stopped)
+
+
+def authenticated_continuing_sessions(runtime_ref, proof_ref, *, allow_stopped=False):
+    proof = validate_session_authority(runtime_ref, proof_ref, allow_stopped=allow_stopped)
     sessions = copy.deepcopy(proof["sessions"])
     for session in sessions.values():
         session["private_native"] = dict(runtime=runtime_ref, adoption=proof_ref)

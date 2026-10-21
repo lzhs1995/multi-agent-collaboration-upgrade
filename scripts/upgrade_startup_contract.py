@@ -30,6 +30,15 @@ RESPONSE_OBSERVER_FILE = "upgrade_claude_response_observer.cjs"
 RESPONSE_OBSERVER_PIN = "claude_response_observer"
 CONTINUITY_REGISTRATION = "private-current-v1"
 CONTINUITY_CURRENT_PIN = "mac_upgrade_private_current"
+STARTUP_CONTINUITY = "original-startup-failure-v1"
+
+
+def startup_continuity_enabled(binding):
+    if "startup_continuity" not in binding:
+        return False
+    require(binding["startup_continuity"] == STARTUP_CONTINUITY
+            and continuity_registration_enabled(binding), "STARTUP_FAILURE_CONTRACT_CHANGED")
+    return True
 
 
 def child_budget_enabled(binding):
@@ -212,6 +221,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     binding = json.loads(read_regular(source / "upgrade-binding.json"))
     response_observation = response_observation_enabled(binding)
     continuity_registration = continuity_registration_enabled(binding)
+    startup_continuity_enabled(binding)
     child_budget = child_budget_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES

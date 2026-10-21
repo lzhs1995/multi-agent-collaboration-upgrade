@@ -21,7 +21,7 @@ from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_materialize import hook_config, rendered_helper
 from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
-    CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN,
+    CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY,
     bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
     pressure_startup_prompt, readiness_prompt, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
@@ -36,7 +36,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_claude_ps.py", "upgrade_standalone_identity.py", "upgrade_claude_registration.py",
            "upgrade_handshake_capability.py", "upgrade_body_read.py",
            "upgrade_toml.py", "upgrade_toml_re.py",
-           "upgrade_child_hook.py", "upgrade_child_budget_protocol.py")
+           "upgrade_child_hook.py", "upgrade_child_budget_protocol.py",
+           "upgrade_native_outcomes.py", "upgrade_startup_continuity.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -74,10 +75,12 @@ def render_private_support(support):
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
-                     continuity_registration=False, child_budget=False):
+                     continuity_registration=False, child_budget=False, startup_continuity=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
+    require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
+            "STARTUP_FAILURE_REQUIRES_PRIVATE_CONTINUITY")
     context = validate_context(context_ref)
     require(arm in ("A1", "B"), "A0 is a retained historical control, not a new live lane")
     paths = arm_paths(context, arm)
@@ -223,6 +226,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["continuity_registration"] = CONTINUITY_REGISTRATION
     if child_budget:
         binding["child_budget"] = CHILD_POLICY
+    if startup_continuity:
+        binding["startup_continuity"] = STARTUP_CONTINUITY
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -396,6 +401,8 @@ def main(argv=None):
                         help="pin private CURRENT for original inquiry enrollment; does not start an episode")
     parser.add_argument("--register-native-child-budget", action="store_true",
                         help="pin opt-in whole-task Agent PreToolUse hook; starts no allocator or child")
+    parser.add_argument("--register-startup-continuity", action="store_true",
+                        help="pin separate original startup-failure contract; requires private continuity, starts no client")
     args = parser.parse_args(argv)
     try:
         from orchestration_campaign import anchored_ref
@@ -408,7 +415,8 @@ def main(argv=None):
                                protected_surface_uuids=args.protected_surface_uuid, native_policy=args.native_policy,
                                response_observation=args.observe_claude_responses,
                                continuity_registration=args.register_private_continuity,
-                               child_budget=args.register_native_child_budget)
+                               child_budget=args.register_native_child_budget,
+                               startup_continuity=args.register_startup_continuity)
         print(json.dumps(dict(status="MATERIALIZED_NOT_LAUNCHED", runtime=ref, input_operations=0),
                          ensure_ascii=False, indent=2))
         return 0

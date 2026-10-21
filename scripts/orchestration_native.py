@@ -17,6 +17,7 @@ from functools import wraps
 from pathlib import Path
 
 from orchestration_common import ContractError, checked_path, contract_errors, count, digest, finite, json_ref, parse_time, strict_json
+from upgrade_native_outcomes import native_text
 
 MAX_RECORD = 16 * 1024 * 1024
 OUTPUT_EFFECT_POLICY = "output-effects-v1"
@@ -186,39 +187,6 @@ def require(condition, reason):
     if not condition:
         raise ContractError(reason)
 
-
-def native_text(record, provider, role):
-    if not isinstance(record, dict) or provider not in ("claude", "codex"):
-        return None
-    if provider == "codex":
-        message = record.get("payload", {})
-        if not isinstance(message, dict) or record.get("type") != "response_item" or message.get("type") != "message":
-            return None
-    else:
-        if record.get("type") != role or record.get("isSidechain") is True:
-            return None
-        message = record.get("message", {})
-    if not isinstance(message, dict) or message.get("role") != role:
-        return None
-    content = message.get("content")
-    if isinstance(content, str) and provider == "claude":
-        return content
-    if not isinstance(content, list):
-        return None
-    kind = ("input_text" if role == "user" else "output_text") if provider == "codex" else "text"
-    texts = []
-    for block in content:
-        if not isinstance(block, dict):
-            return None
-        if block.get("type") == kind and isinstance(block.get("text"), str):
-            texts.append(block["text"])
-        elif role == "assistant" and block.get("type") in ("thinking", "redacted_thinking"):
-            # Ignore reasoning contents, never expose them as receipt evidence.
-            if not isinstance(block.get("thinking", block.get("data")), str):
-                return None
-        else:
-            return None
-    return texts[0] if len(texts) == 1 else None
 
 
 def queued_texts(record):
