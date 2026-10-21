@@ -321,5 +321,3 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         if lane != "codex":
             proof["goal_condition_sha256"] = digest(spec["goal_startup"][lane].encode())
     return proof
-
-
