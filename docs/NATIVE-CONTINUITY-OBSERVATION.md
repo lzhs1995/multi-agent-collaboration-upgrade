@@ -118,6 +118,48 @@ original evaluator's `max_subagents=2` is not a cross-parent atomic allocator.
 Neither a mode nor this registration permits replay, replacement clients,
 shared writes, lease takeover or final task acceptance.
 
+## Separate original-process diagnostics
+
+`observe-processes --registration ABSOLUTE_PATH --registration-sha256 SHA256`
+is a separate read-only entrypoint, not an API observation or mode decision.
+It first validates the same task's immutable original registration, private
+runtime, source, authorization and native-file bindings, then repeats that
+validation before publishing. It does not register or discover another client.
+
+Each original PID is read twice through Darwin libproc. Present records require
+the original PID/birth, current-user ownership, a known kernel status and, for
+non-zombies, the original executable path read twice. Present snapshots must
+agree across both reads. PID reuse, changed birth/name/owner/path, short or
+permission-denied reads, unknown status and mid-read changes are refused before
+creating output. Two matching ESRCH reads yield `ORIGINAL_PID_ABSENT`; a stable
+same-birth BSD zombie yields `ORIGINAL_PROCESS_ZOMBIE` without trying to recover
+its unavailable executable. A stable non-zombie yields
+`ORIGINAL_PROCESS_PRESENT`, not proof that it can accept input or reach an API.
+
+These are sequential, per-PID point observations, not an atomic three-client
+snapshot. They do not authenticate live argv, terminal/session/environment or
+provider reachability; existing input gates retain those independent checks.
+ESRCH means the original PID was absent at the two reads, not that the session
+history disappeared or that a server request failed. A reaped zombie may also
+be indistinguishable from absence. No signal, process launch, exact-session
+resume, retry or replacement is performed or authorized.
+
+An immutable private `process-observations/<uuid>/result.json` retains the
+original registration and kernel/executable read evidence. Its explicit
+`api_availability=NOT_EVALUATED`, `advisory_only=true`,
+`takeover_authorized=false`, `child_budget_enforced=false`, `input_operations=0`
+and `resource_releases=0` prevent confusing diagnostics with an evaluator plan.
+Stop does not prevent this read-only inspection or authorize new input. The
+ordinary `observe` entrypoint and original evaluator are unchanged, and no
+process label is converted into a synthetic native API outcome.
+
+Public tests use complete generated MAC0.4.58 registration fixtures and mock
+only the libproc syscall boundary. They cover absence, same-birth zombies,
+PID reuse, permissions/short reads, changing snapshots, unknown kernel status,
+executable errors, task/registration substitutions and the stopped CLI's
+rejection of caller status/model/PID/time overrides. They do not establish a
+live process-loss recovery, model availability or native collaboration result.
+
 ## Public entrypoints
 
 `register --request ABSOLUTE_PATH --request-sha256 SHA256` accepts only a pinned

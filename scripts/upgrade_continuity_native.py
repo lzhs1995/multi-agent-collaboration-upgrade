@@ -419,6 +419,33 @@ def observe_registered_native(registration_ref, *, now, max_records=256):
     return dict(result, evidence=result_ref)
 
 
+@contract_errors("registered original process observation")
+def observe_registered_processes(registration_ref):
+    """Publish original PID diagnostics without relabelling native API history."""
+    from cmux_daemon_identity import IdentityError
+    from upgrade_live_control import external_publisher
+    from upgrade_process_inventory import observe_original_process
+    value, runtime = validate_native_registration(registration_ref)
+    external_publisher(json_ref(runtime['startup']))
+    try:
+        observations = {lane: observe_original_process(value['sessions'][lane]['process'])
+                        for lane in LANES}
+    except IdentityError as exc:
+        raise ContractError('ORIGINAL_PROCESS_OBSERVATION_UNVERIFIED:' + str(exc)) from exc
+    require(validate_native_registration(registration_ref) == (value, runtime),
+            'ORIGINAL_PROCESS_REGISTRATION_CHANGED')
+    output = within(Path(value['output_root']) / 'process-observations' / str(uuid.uuid4()),
+                    value['output_root'])
+    result = dict(schema='upgrade-original-process-observation-v1',
+        status='ORIGINAL_PROCESS_OBSERVATION_VERIFIED', registration=registration_ref,
+        process_observations=observations, observed_at=utc_now(), api_availability='NOT_EVALUATED',
+        advisory_only=True, takeover_authorized=False, child_budget_enforced=False,
+        input_operations=0, resource_releases=0)
+    ref = write_json(output / 'result.json', result, exclusive=True)
+    Path(ref['path']).chmod(0o444)
+    return dict(result, evidence=ref)
+
+
 def main(argv=None):
     """No fixture, clock, model, status, input or role-transfer override exists."""
     from orchestration_campaign import anchored_ref
@@ -431,6 +458,9 @@ def main(argv=None):
     observe.add_argument("--registration", required=True)
     observe.add_argument("--registration-sha256", required=True)
     observe.add_argument("--max-records", type=int, default=256)
+    processes = commands.add_parser("observe-processes", allow_abbrev=False)
+    processes.add_argument("--registration", required=True)
+    processes.add_argument("--registration-sha256", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "register":
@@ -444,9 +474,11 @@ def main(argv=None):
                 automatic_fallback_authorized=request["automatic_fallback_authorized"])
             value = dict(status="REGISTERED_NOT_MEASURED", registration=ref, input_operations=0,
                          resource_releases=0, advisory_only=True, child_budget_enforced=False)
-        else:
+        elif args.command == "observe":
             value = observe_registered_native(anchored_ref(args.registration, args.registration_sha256),
                                                now=time.time(), max_records=args.max_records)
+        else:
+            value = observe_registered_processes(anchored_ref(args.registration, args.registration_sha256))
         print(json.dumps(value, ensure_ascii=False, sort_keys=True))
         return 0
     except ContractError as exc:

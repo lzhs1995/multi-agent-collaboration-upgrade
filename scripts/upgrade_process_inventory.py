@@ -60,7 +60,8 @@ def _discovery_error(message, pid, stage, *, count=None, error=None):
     return exc
 
 
-def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None, absence=None):
+def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None, absence=None,
+                lifecycle=False):
     """One discovery-only read; retain the original errno and negative evidence."""
     import errno
     from cmux_daemon_identity import BsdInfo
@@ -78,9 +79,14 @@ def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None, absence=None
                                count=count, error=error)
     if b.pid != pid or b.uid != os.getuid() or not b.start_sec:
         raise _discovery_error("kernel process identity changed, foreign, or invalid", pid, stage)
+    if lifecycle and b.status not in (1, 2, 3, 4, 5):
+        raise _discovery_error("kernel process status unknown", pid, stage,
+                               count=count, error=error)
     current = dict(identity=dict(pid=pid, ppid=b.ppid, birth=[b.start_sec, b.start_usec]),
                    name=bytes(b.name), zombie=b.status == 5,
                    uid=int(b.uid), tty_device=int(b.misc[3]))
+    if lifecycle:
+        current['status'] = int(b.status)
     if tty_device is not None:
         current['tty_device'] = int(b.misc[3])
         if current['tty_device'] != tty_device:
@@ -90,6 +96,76 @@ def _kernel_bsd(lib, pid, stage, *, expected=None, tty_device=None, absence=None
                                  or current['name'] != expected['name']):
         raise _discovery_error("kernel executable inventory changed", pid, stage)
     return current
+
+
+def observe_original_process(expected):
+    """Two bounded kernel reads of an already pinned PID/birth, not API health.
+
+    An absent PID is not SESSION_LOST, a healthy server or permission to resume.
+    Callers must authenticate original membership separately. No inventory,
+    substitute process selection, input, signal or task management occurs.
+    """
+    import copy
+    from cmux_daemon_identity import BsdInfo
+    from orchestration_common import require
+    require(isinstance(expected, dict) and type(expected.get('pid')) is int
+            and expected['pid'] > 1 and isinstance(expected.get('birth'), list)
+            and len(expected['birth']) == 2
+            and all(type(item) is int for item in expected['birth'])
+            and expected['birth'][0] > 0 and 0 <= expected['birth'][1] < 1000000
+            and isinstance(expected.get('executable'), str)
+            and Path(expected['executable']).is_absolute(),
+            'ORIGINAL_PROCESS_BINDING_REQUIRED')
+    lib, pid, reads = _lib(), expected['pid'], []
+
+    def read(stage):
+        absent = {}
+        value = _kernel_bsd(lib, pid, stage, absence=absent, lifecycle=True)
+        error = ctypes.get_errno()
+        if value is None:
+            reads.append(dict(absent))
+            return None
+        require(error == 0, 'ORIGINAL_PROCESS_KERNEL_STATUS_UNKNOWN')
+        require(value['identity']['pid'] == pid
+                and value['identity']['birth'] == expected['birth']
+                and ('ppid' not in expected or value['identity']['ppid'] == expected['ppid']),
+                'ORIGINAL_PROCESS_IDENTITY_CHANGED')
+        reads.append(dict(pid=pid, stage=stage, count=ctypes.sizeof(BsdInfo), errno=error,
+            snapshot=dict(value['identity'], uid=value['uid'], tty_device=value['tty_device'],
+                name_hex=value['name'].hex(), zombie=value['zombie'], status=value['status'])))
+        return value
+
+    def executable():
+        budget.check()
+        path = ctypes.create_string_buffer(4096)
+        ctypes.set_errno(0)
+        count = lib.proc_pidpath(pid, path, len(path))
+        error = ctypes.get_errno()
+        require(0 < count <= len(path) and error == 0
+                and path.value.decode('utf-8') == expected['executable'],
+                'ORIGINAL_PROCESS_EXECUTABLE_CHANGED_OR_UNKNOWN')
+        return dict(count=count, errno=error, path=expected['executable'])
+
+    first = read('original_process_bsd_1')
+    path_reads = []
+    if first is not None and not first['zombie']:
+        path_reads.append(executable())
+    second = read('original_process_bsd_2')
+    require((first is None) == (second is None)
+            and (first is None or first == second),
+            'ORIGINAL_PROCESS_CHANGED_DURING_OBSERVATION')
+    if first is None:
+        state = 'ORIGINAL_PID_ABSENT'
+    elif first['zombie']:
+        state = 'ORIGINAL_PROCESS_ZOMBIE'
+    else:
+        path_reads.append(executable())
+        require(path_reads[0] == path_reads[1],
+                'ORIGINAL_PROCESS_CHANGED_DURING_OBSERVATION')
+        state = 'ORIGINAL_PROCESS_PRESENT'
+    budget.check()
+    return dict(state=state, original_process=copy.deepcopy(expected),
+                kernel_reads=reads, executable_reads=path_reads)
 
 
 class _KinfoProc(ctypes.Structure):
