@@ -93,6 +93,13 @@ def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
             elif model == session["model"] and isinstance(error, dict):
                 info = error.get("codex_error_info")
                 status = info.get("http_status_code") if isinstance(info, dict) else None
+                # The actual original Codex CLI serializes this enum as an
+                # externally tagged object. Keep the older flat contract,
+                # but never infer an HTTP result from arbitrary nested data.
+                if isinstance(info, dict) and set(info) == {"http_connection_failed"}:
+                    connection = info["http_connection_failed"]
+                    if isinstance(connection, dict) and set(connection) == {"http_status_code"}:
+                        status = connection["http_status_code"]
                 if type(status) is int and 400 <= status <= 599:
                     append(ref, record, "codex-turn:" + active, kind="API_ERROR", http_status=status)
                 else:

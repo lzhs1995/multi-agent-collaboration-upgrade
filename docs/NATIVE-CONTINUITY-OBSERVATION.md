@@ -19,7 +19,12 @@ hooks, original sessions, old campaigns or existing lease ownership.
 Codex success requires its original `task_started` turn, enrolled model,
 `final_answer` assistant message and matching `task_complete` final text.
 Its terminal structured `error.codex_error_info.http_status_code` is an API
-error. String errors, unknown status and canonical aborts remain UNKNOWN.
+error. The original native CLI's externally tagged
+`error.codex_error_info.http_connection_failed.http_status_code` is also
+recognized, but only with the exact single outer and inner keys. Both forms
+require a concrete integer in400–599. String/boolean/out-of-range statuses,
+unrecognized or ambiguous tagged structures, string errors and canonical
+aborts remain UNKNOWN; message text never supplies a status.
 An internal error/retry notification is not another completed attempt.
 
 Claude uses its original session's user/assistant/tool-result/system/attachment
@@ -138,6 +143,50 @@ rollout simulated six removed historical terminals without altering the log:
 9819 refused all six thread-event fences; the repair accepted all six. Both
 accepted the six direct next-start fences. This is parser diagnosis, not a
 native outage, replay, adoption, or task-continuity acceptance.
+
+## Original startup402 diagnostic, 2026-10-21
+
+The separate `/Users/lzhs/uz` continuity exercise launched its original
+1Codex+2Claude clients once under frozen16f1 and the complete fixed MAC0.4.58
+private controller. The Codex first turn ended with a structured402 budget-pool
+error before executing its startup probe. Both original Claude probes and their
+automatic PreToolUse/PostToolUse observations subsequently matched, but the
+original all-three adoption gate remained unpublished. No live handshake,
+inquiry/reply consumption, child creation or benchmark sample is accepted.
+
+The exact native error used the externally tagged form above, absent from the
+previous synthetic fixtures. A public collector test reproduced UNKNOWN on
+the old parser, then passed as API_ERROR402 after the exact-form repair. A
+separate eight-case negative test retains strings, booleans, invalid ranges,
+unrecognized tags and ambiguous extra fields as UNKNOWN. The relevant focused
+run passed57 tests without failures/errors/skips,93.698seconds unittest/
+94.388359seconds wrapper, with334 source pins unchanged. Result1949B SHA256
+`e5c2b30e54010b66a5020dc308be15dece1d6f7ab6b2b2797d5346bd4a9296a0`;
+12252B log SHA256
+`e8e6236499f6a1beecd12bef7d7ad3828dc15ca4ff21364acbcec09f55b43e96`.
+That run used explicitly dirty working source, not frozen16f1. The initial
+focused command's two incorrect module names and failed result are preserved.
+
+A read-only comparison used the same original90800B/11-record prefix:
+frozen16f1 returned UNKNOWN; the repaired parser returned exactly one402
+API_ERROR with the unchanged original turn ID and terminal-record SHA. Its
+4341B result SHA256 is
+`3cd2d2e6a4600726c32e3eab3c65de4688c16258826fa817c1824f2b0a042b17`,
+under `maintenance/execution-20261021/continuity-tagged-http-native-v1/`.
+This pure-parser diagnosis grants neither adoption nor native-reader authority,
+invokes no availability evaluator and performs no provider request or input.
+
+Later native user continuations occurred in that same Codex session after a
+model-context change fromgpt-6-astra togpt-6.1-sol. The original inspector
+refused `STARTUP_MODEL_UNCONFIRMED_OR_CHANGED`; those later turns are not
+recovery of the original fixed-model observation. No model switch, provider
+write, frozen-controller hot patch or replacement client was performed here.
+Startup-time failure also exposes an unfinished contract boundary: continuity
+and child-service registration currently require full original1+2 adoption,
+so healthy Claude startup alone cannot establish the permitted peer mode.
+Implement and verify a separately scoped startup-failure contract before
+claiming that path; do not bypass the existing adoption gate or fill missing
+benchmark samples with fallback work.
 
 ## Frozen624d and independent R7 closeout
 

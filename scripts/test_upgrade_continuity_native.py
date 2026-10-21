@@ -127,6 +127,56 @@ class NativeContinuityTests(unittest.TestCase):
             self.assertEqual(event["http_status"], 401 if lane == "codex" else 502)
             self.assertEqual(event["native_record"], expected[lane])
 
+    def test_codex_native_externally_tagged_http_failure_preserves_original_402(self):
+        journal, turn = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(10),
+                            payload=dict(type="task_started", turn_id=turn)))
+        journal.append(dict(type="turn_context", timestamp=stamp(10),
+                            payload=dict(turn_id=turn, model=journal.session["model"])))
+        terminal = journal.append(dict(type="event_msg", timestamp=stamp(12), payload=dict(
+            type="task_complete", turn_id=turn, last_agent_message=None,
+            error=dict(message="Original budget pool quota failure.",
+                       codex_error_info=dict(http_connection_failed=dict(http_status_code=402))))))
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual(len(value["observations"]), 1)
+        event = value["observations"][0]
+        self.assertEqual(event["kind"], "API_ERROR")
+        self.assertEqual(event["http_status"], 402)
+        self.assertEqual(event["native_record"], terminal)
+        self.assertEqual(event["attempt_id"], "codex-turn:" + turn)
+        self.assertEqual(value["input_operations"], 0)
+
+    def test_codex_unknown_tagged_failure_never_infers_status_from_message_or_other_data(self):
+        journal = self.journals["codex"]
+        unknown = (
+            {"http_connection_failed": {"http_status_code": "402"}},
+            {"http_connection_failed": {"http_status_code": True}},
+            {"http_connection_failed": {"http_status_code": 200}},
+            {"http_connection_failed": {"http_status_code": 600}},
+            {"http_connection_failed": {"http_status_code": 402, "extra": "unknown"}},
+            {"http_connection_failed": {"http_status_code": 402}, "other_error": {}},
+            {"other_error": {"http_status_code": 402}},
+            {"http_connection_failed": "402"},
+        )
+        expected = []
+        for index, info in enumerate(unknown):
+            turn, epoch = str(uuid.uuid4()), 10 + index * 3
+            journal.append(dict(type="event_msg", timestamp=stamp(epoch),
+                                payload=dict(type="task_started", turn_id=turn)))
+            journal.append(dict(type="turn_context", timestamp=stamp(epoch),
+                                payload=dict(turn_id=turn, model=journal.session["model"])))
+            expected.append(journal.append(dict(type="event_msg", timestamp=stamp(epoch + 2),
+                payload=dict(type="task_complete", turn_id=turn,
+                    error=dict(message="Quoted unexpected status 402 Payment Required.",
+                               codex_error_info=info)))))
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=40, fixtures=True)
+        self.assertEqual(len(value["observations"]), len(unknown))
+        for event, ref in zip(value["observations"], expected):
+            self.assertEqual(event["kind"], "NATIVE_OUTCOME_UNKNOWN")
+            self.assertNotIn("http_status", event)
+            self.assertEqual(event["native_record"], ref)
+        self.assertEqual(value["input_operations"], 0)
+
     def test_unknown_terminal_failure_is_retained_without_guessing_status_from_text(self):
         refs = {"codex": self.codex_error(10, "401"),
                 "claude_a": self.claude_error("claude_a", 10, None)}
