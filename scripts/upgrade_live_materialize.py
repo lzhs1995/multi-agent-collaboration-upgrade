@@ -37,7 +37,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
            "upgrade_handshake_capability.py", "upgrade_body_read.py",
            "upgrade_toml.py", "upgrade_toml_re.py",
            "upgrade_child_hook.py", "upgrade_child_budget_protocol.py",
-           "upgrade_native_outcomes.py", "upgrade_startup_continuity.py", "upgrade_readiness_evidence.py")
+           "upgrade_native_outcomes.py", "upgrade_startup_continuity.py", "upgrade_readiness_evidence.py",
+           "upgrade_stage_fence.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):

@@ -198,15 +198,20 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
                 startup=call["startup"], record=ref, turn_id=call["turn_id"])
 
 
-def readiness_evidence(native, session, lane, spec, startup_ref, binding, launches):
+def readiness_evidence(native, session, lane, spec, startup_ref, binding, launches, *, stage=None):
+    if stage is not None:
+        # Only the controller differs; pins, clients and launches stay original.
+        from upgrade_stage_fence import stage_view
+        spec = stage_view(spec, stage)
     command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
                                 spec["pins"]["rtk"]["path"], lane)
-    goal_mode = spec.get("schema") == GOAL_SCHEMA
-    prompt = (pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
+    goal_mode = spec.get("schema") == GOAL_SCHEMA and stage is None
+    prompt = (stage["prompts"][lane] if stage is not None else
+              pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
               if goal_mode else readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],
                                                  spec["pins"]["rtk"]["path"], lane))
     calls, results, model_records, prompts, execution_records = {}, {}, [], [], []
-    goals = []
+    goals, started, prompt_turns = [], {}, []
     call_count = 0
     for ref, record in native_records(native, session):
         if lane == "codex":
@@ -218,6 +223,8 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                 execution_records.append((ref, record))
             if record.get("type") == "turn_context" and payload.get("model"):
                 model_records.append((ref, payload["model"]))
+            if record.get("type") == "event_msg" and payload.get("type") == "task_started":
+                started.setdefault(payload.get("turn_id"), ref)
             if record.get("type") != "response_item":
                 continue
             if payload.get("type") == "message" and payload.get("role") == "user":
@@ -225,6 +232,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                                if x.get("type") == "input_text")
                 if text == prompt:
                     prompts.append(ref)
+                    prompt_turns.append(payload.get("internal_chat_message_metadata_passthrough", {}).get("turn_id"))
             if payload.get("type") in ("function_call", "custom_tool_call"):
                 args = payload.get("arguments", payload.get("input"))
                 name = payload.get("name", "")
@@ -236,7 +244,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
             if payload.get("type") in ("function_call_output", "custom_tool_call_output"):
                 results.setdefault(payload.get("call_id"), []).append((ref, payload.get("output")))
         else:
-            if goal_mode and record.get("isSidechain") is True:
+            if (goal_mode or stage is not None) and record.get("isSidechain") is True:
                 continue
             attachment = record.get("attachment")
             if (goal_mode and record.get("type") == "attachment"
@@ -294,8 +302,20 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         initial = next(row for ref, row in goals if ref == prompts[0])
         require(parse_time(initial["timestamp"]) <= parse_time(call["timestamp"], "probe timestamp"),
                 "STARTUP_GOAL_TIME_AFTER_PROBE")
-    models = [(ref, model) for ref, model in model_records if ref["offset"] <= completed[0][0]["offset"]]
+    window = 0
+    if stage is not None:
+        # The fence starts at the stage's own input (Codex: that turn's start,
+        # whose turn_context may precede the user item). Earlier models stay
+        # history and are neither required nor rewritten.
+        window = prompts[0]["offset"]
+        if lane == "codex":
+            require(len(prompt_turns) == 1 and prompt_turns[0] in started
+                    and started[prompt_turns[0]]["offset"] < window, "STAGE_PROMPT_TURN_UNOBSERVED")
+            window = started[prompt_turns[0]]["offset"]
+    models = [(ref, model) for ref, model in model_records
+              if window <= ref["offset"] <= completed[0][0]["offset"]]
     require(models and len({model for _, model in models}) == 1, "STARTUP_MODEL_UNCONFIRMED_OR_CHANGED")
+    require(stage is None or models[0][1] == stage["model"], "STAGE_MODEL_CHANGED")
     nested = (nested_readiness_command(execution_records, call, completed[0][0], session, command, spec)
               if lane == "codex" else None)
     matched = {"PreToolUse": [], "PostToolUse": []}
@@ -316,6 +336,8 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                  call_id=call["id"], hooks=matched, model=models[-1][1], model_record=models[-1][0])
     if used_nested:
         proof["native_command"] = {key: nested[key] for key in ("id", "record", "turn_id")}
+    if stage is not None:
+        proof["stage"] = dict(stage_id=stage["stage_id"], window_offset=window, controller=stage["controller"])
     if goal_mode:
         proof["startup_kind"] = "pinned_lane_prompt" if lane == "codex" else "native_goal_set"
         if lane != "codex":
