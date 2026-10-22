@@ -249,3 +249,31 @@ class StageInputGateTests(startup_fixtures.InputGateTests):
         self.binding["stage_fence"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(ContractError, "STAGE_RECORD_CHANGED"):
             gate.check_input(self.proof)
+
+
+class StageEntryTests(unittest.TestCase):
+    def test_stage_release_entry_inspects_with_its_stage_and_never_launches(self):
+        import io
+        import upgrade_live_entry as entry
+        import upgrade_live_inspect as inspector
+        ref = dict(path="/fixture/startup-v2.json", sha256="a" * 64)
+        stage = {"stage_id": "stage-a"}
+        argv = ["--startup", ref["path"], "--startup-sha256", ref["sha256"]]
+        with patch.object(entry, "stage_bound", return_value=True), \
+             patch.object(fence, "load_stage", return_value=(ref, {}, {}, stage)), \
+             patch.object(entry, "checked_path", side_effect=Path), \
+             patch.object(entry, "load_startup") as original, patch.object(entry, "launch") as launch, \
+             patch.object(entry, "start_client") as client, \
+             patch.object(inspector, "inspect", return_value={"ready": False}) as inspect, \
+             patch("sys.stdout", new_callable=io.StringIO) as out:
+            for command in ("experiment-launch", "experiment-client"):
+                self.assertEqual(entry.main([command, *argv, "--lane", "codex"]), 2)
+                self.assertIn("STAGE_INSPECT_ONLY", out.getvalue())
+            self.assertEqual(entry.main(["experiment-inspect", "--startup", ref["path"],
+                                         "--startup-sha256", "b" * 64]), 2)  # pin must equal the stage's startup
+            inspect.assert_not_called()
+            self.assertEqual(entry.main(["experiment-inspect", *argv]), 0)
+        inspect.assert_called_once_with(ref, {}, {}, stage=stage)
+        original.assert_not_called()
+        launch.assert_not_called()
+        client.assert_not_called()

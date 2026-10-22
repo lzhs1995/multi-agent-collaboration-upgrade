@@ -36,6 +36,13 @@ def load_startup(path, sha256):
     return ref, spec, binding
 
 
+def stage_bound(source):
+    """A stage release names its fence in its own binding. Without a binding,
+    load_startup refuses exactly as before."""
+    path = source / "upgrade-binding.json"
+    return path.is_file() and "stage_fence" in json.loads(read_regular(path))
+
+
 def start_server(ref, spec, binding, env):
     """Start the one pinned private server, with no automatic restart."""
     import cmux_daemon_identity as identity
@@ -168,7 +175,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source = Path(__file__).resolve().parent.parent
-        if "stage_fence" in json.loads(read_regular(source / "upgrade-binding.json")):
+        if stage_bound(source):
             # A fenced stage only inspects the original clients; it never
             # launches, starts or replaces a client.
             from upgrade_stage_fence import load_stage
