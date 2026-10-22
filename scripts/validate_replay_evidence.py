@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Fail-closed validator for measured Claude/Codex replay evidence.
+"""Historical v1 claim inspection; never a measured replay or promotion gate.
 
-The graph benchmark is intentionally only an offline estimate.  This command
-is the separate gate required before reporting a real orchestration gain.  It
-does not start agents, read a provider API, or infer delivery from a screen.
-The caller must supply evidence emitted by the existing task-pack, native
-receipt, ACK, callback and closeout lifecycle for both a serial and a scheduled
-run of the same plan.
+V1 accepts self-reported proofs without opening original native records. Even
+structurally valid inputs remain HISTORICAL_ONLY / legacy_unverified_claims.
+Use orchestration_run.py with a separately pinned v2 campaign for live evidence.
 """
 
 from __future__ import annotations
@@ -121,7 +118,11 @@ def _validate_node(
 def validate_replay_evidence(
     plan: dict[str, Any], evidence: dict[str, Any], min_reduction_percent: float = 15.0
 ) -> dict[str, Any]:
-    """Validate two complete runs and return measured, hashable metrics."""
+    """Inspect legacy structure only; v1 self-reports cannot prove a replay.
+
+    Kept for reading historical artifacts. Promotion requires the separately
+    anchored v2 campaign verifier, original CLI journals and frozen checker.
+    """
     normalized = validate_plan(plan)
     if evidence.get("version") != EVIDENCE_VERSION:
         raise EvidenceError(f"version must be {EVIDENCE_VERSION}")
@@ -232,15 +233,19 @@ def validate_replay_evidence(
     if isinstance(checks, bool) or not isinstance(checks, int) or checks < 1:
         raise EvidenceError("correctness.checks must be a positive integer")
     return {
-        "status": "PASS" if reduction >= min_reduction_percent else "FAIL",
-        "evidence_class": "measured_cli_replay",
+        "status": "HISTORICAL_ONLY",
+        "structure_status": "PASS",
+        "evidence_class": "legacy_unverified_claims",
+        "promotion_eligible": False,
+        "reason": "v1 contains self-reported proofs; use orchestration_verify.verify_campaign with a trusted campaign SHA256",
         "plan_id": normalized["plan_id"],
         "serial_seconds": serial_seconds,
         "scheduled_seconds": scheduled_seconds,
         "wall_time_reduction_percent": round(reduction, 3),
         "speedup": round(serial_seconds / scheduled_seconds, 3),
         "minimum_reduction_percent": min_reduction_percent,
-        "meets_target": reduction >= min_reduction_percent,
+        "meets_target": False,
+        "claimed_meets_target": reduction >= min_reduction_percent,
         "correctness_checks": checks,
         "parallel_waves": metrics["scheduled"]["parallel_waves"],
         "retries": {
@@ -268,7 +273,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(json.dumps({"status": "FAIL", "error": str(exc)}, ensure_ascii=False, indent=2))
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result["status"] == "PASS" else 2
+    # Exit 3 distinguishes a readable historical artifact from a measured PASS.
+    return 3
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 """Offline test entrypoint; capture fixture chatter without hiding failures."""
 import contextlib
 import io
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -33,9 +34,14 @@ class OfflineResult(unittest.TextTestResult):
 
 if __name__ == "__main__":
     chatter = io.StringIO()
+    # -B applies only to this interpreter. CLI fixtures spawn fresh Python
+    # processes; keep their bytecode out of the source tree that adapter tests
+    # deliberately validate without ignoring caches.
+    sys.dont_write_bytecode = True
     # CLI fixtures use offline_test_hook to isolate process/marker inputs too.
     # Preserve the invoking environment; identity cases supply explicit inputs.
-    with contextlib.redirect_stdout(chatter), contextlib.redirect_stderr(chatter):
+    with patch.dict(os.environ, {"PYTHONDONTWRITEBYTECODE": "1"}), \
+            contextlib.redirect_stdout(chatter), contextlib.redirect_stderr(chatter):
         suite = unittest.defaultTestLoader.discover(str(Path(__file__).parent), pattern="test_*.py")
         result = unittest.TextTestRunner(stream=sys.__stderr__, verbosity=1,
                                          resultclass=OfflineResult).run(suite)

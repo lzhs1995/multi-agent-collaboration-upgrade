@@ -1,83 +1,106 @@
-# Multi-Agent Collaboration
+# Multi-Agent Collaboration Upgrade
 
-Evidence-bound collaboration for Codex and Claude Code in macOS cmux.
-中文：复用完整上下文会话，明确分工，以真实报告和主动 callback 完成协作；
-压缩故障及时干预，不以重开会话、假 ACK 或反复轮询代替恢复。
+An experimental orchestration layer for Codex-supervisor and Claude Code
+executors in cmux. It aims to shorten task preparation, dependency handoffs and
+callback settlement while preserving native delivery evidence and independent
+acceptance. **Native collaboration speedup has not been demonstrated.**
 
-Current source: **0.4.7**. New messages use bounded single-line notices for pinned
-bodies; formal packs and callbacks retain their dedicated task-bound routes.
-Enter or Tab only requests submission. Reception requires the complete exact
-payload in a new record of the bound receiver's native journal. See the
-[delivery contract](references/verified-compose-delivery.md).
+中文：保留 cmux 作为终端，MAC 作为原会话投递层，upgrade 负责本地依赖调度与批量推进。
+当前是独立私有实验技能，尚未推广到生产共享技能；Jev/TypeSafe 没有接入在线服务。
 
-## Install
+## Implemented behavior
 
-Requirements: Python 3.10+, macOS, cmux, and existing CLI agent sessions.
-No provider credentials or agent subscriptions are included.
+- Dependency-ready scheduling, per-session FIFO, durable claims and one writer
+  per scope. Decisions use local rules; `offline_mock` is test-only.
+- `drafts` previews forthcoming task packages; `next-action` explains recorded
+  blockers without dispatching work or running business checkers.
+- B/v3 `advance --run RUN --max-steps 12 --max-seconds 45` batches original gated
+  actions, selects independent lanes fairly, imports original callbacks and
+  filters obsolete handoffs. Ready local business is handed back promptly.
+- Native START, local business, independent ACCEPT and FINISH remain explicit
+  supervisor actions. `advance` does not wake idle models, and checks its time
+  budget between synchronous actions.
+- Frozen source, session, model, authorization and input pins; original native
+  receipts, callback records and business acceptance stay separate.
+- Materialized private controllers include their TOML dependencies, licenses
+  and provenance in the verified manifest.
+
+This repository is separate from
+[multi-agent-collaboration](https://github.com/lzhs1995/multi-agent-collaboration).
+New v3 experiments require an explicit private context and pinned complete
+controller. Historical attempts retain their original controller and evidence.
+Shared MAC/thesis-refiner integration has a separate maintainer.
+
+## Current validation — 2026-10-19
+
+Tested code and R30 frozen v25: `d8a158509680de53f9c8bdc8c541408c3054f605`.
+All 356 exported files match that commit. Subsequent delivery edits are
+documentation only.
+
+- [CI: Ubuntu/macOS × Python 3.10/3.14](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39241757006)
+  succeeded in all four jobs: 2,176 total tests each, zero failures/errors,
+  with 106 Ubuntu and 96 macOS skips per job. Skipped tests are not passes.
+  The historical local 2,171-test run had zero skips and belongs to `9a09f32`;
+  it is not a new full local run of this commit.
+- Separate observer validation: 47/47 Node tests and four rounds of 256
+  concurrent local streams using Claude 303's embedded Bun passed. Those tests
+  do not belong to the Python CI and used no model requests.
+- Component pressure: 24 processes, 7,200 reserves, 31,200 terminal-release
+  checks and 2,400/2,400 independent successes; no observed double ownership,
+  registry busy errors or lost history. This is not a native efficiency result.
+- Claude Code was upgraded from experimental 2.1.170 to official 2.1.303.
+  Three CLI entrypoints and both R29/R30 native processes were verified on 303.
+  Original sessions, binaries and failure evidence were retained.
+- R30 ended **TIMEOUT / INSUFFICIENT_EVIDENCE** at 11:25:32 UTC: pilot **0/3**, business **0/33**
+  (1 TIMEOUT + 32 MISSING), comparable pairs **0/15**. The ordinary-message
+  plan retains 192 unique IDs, with **0/192** verified closed loops; this does
+  not mean that 192 messages were sent. Only the first of seven prepared groups
+  actually launched its 1 Codex + 2 Claude clients.
+- Both Claude main journals have no assistant result or startup probe. The
+  repaired observer actually intercepted native `Bun.FetchSession.fetch`;
+  A had a reader error, B had rate-limit evidence, and observed responses had
+  no nonempty text/tool block. Incomplete responses and request attribution
+  remain unknown. Goal checks paused themselves. Stable Goal/loop operation, costs
+  and at least 15% collaboration speedup remain unproven.
+
+R30's driver and watchdog exited; all seven stop-input markers were verified.
+Original clients remain preserved, and remote cancellation and Goal termination
+are unverified. Historical R29 used v24 (`b0ac022`); its result is unchanged.
+The prior green CI that missed 13 local packaging failures is retained in the
+validation history.
+
+Read the [final R30 report](docs/VALIDATION-20261019-R30.md),
+[Claude version evidence](docs/CLAUDE-VERSION-VALIDATION.md),
+[41-category issue ledger](docs/COLLABORATION-ISSUE-LEDGER.md), and
+[15-item community review](docs/COMMUNITY-ADOPTION-20261019.md).
+Surface40's two requested replies were received and their hashes verified;
+its shared [MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55)
+was independently reviewed. Shared adoption remains separate from this private
+experiment. The ledger is not an exhaustive manual review: 923 scanned files
+remain unread in full, and community mechanisms retain explicit test gaps.
+
+## Run offline checks
+
+Python 3.10+ is required. Real private experiments additionally require macOS,
+cmux, authorized native clients and their model service access.
 
 ```sh
-git clone https://github.com/lzhs1995/multi-agent-collaboration.git
-cd multi-agent-collaboration
-git checkout main
-python3 scripts/manage_install.py install
-python3 scripts/manage_install.py install --apply
-python3 scripts/manage_install.py doctor
+rtk proxy git clone --branch upgrade/recovery-v2-20261014 https://github.com/lzhs1995/multi-agent-collaboration-upgrade.git
+rtk proxy python3 -B multi-agent-collaboration-upgrade/scripts/test_all.py
 ```
 
-Install defaults to dry-run. It links this checkout into both clients' skill
-directories and merges only this project's hooks. Existing foreign skill
-directories are refused, never overwritten. Keep the checkout at its installed
-path. Complete active work before installation or upgrading; restart/reload client
-configuration only at a user-approved boundary, never replace an agent session.
+Tests do not send live model prompts. For private v3 preparation, start with
+the [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md) and
+[SKILL.md](SKILL.md). Do not run the inherited production installer or replace
+shared hooks. The [v2 runbook](docs/LIVE-REPLAY-RUNBOOK.md) and
+[old validation](verification/ORCHESTRATION-VALIDATION.md) are historical;
+the former nine-run benchmark is not the current acceptance matrix.
 
-```sh
-python3 scripts/manage_install.py uninstall --apply
-```
+The current full native registration has seven groups, three consecutive pilot
+passes, 33 business runs, 15 pairs and 192 ordinary communications. A1 may run
+both independent Claude lanes in parallel. Correctness and intervention
+requirements come first; efficiency acceptance additionally requires at least
+15% warm paired median improvement and no more than 5% median regression in
+each workload class. Failed and missing samples remain in the denominator.
 
-Uninstall removes only entries and links owned by this checkout. JSON backups
-remain beside the original configs and may contain credentials: keep them private.
-Other settings and hooks survive. Use `--home /absolute/sandbox` to test installation
-without touching real client configuration.
-
-## Use
-
-Ask the supervisor to use `$multi-agent-collaboration`, then provide the objective
-and designated existing executor. Both agents must read SKILL.md. The harness
-binds their identity and task; scripts do not log in or start a replacement agent.
-
-```sh
-python3 scripts/mac_harness.py --help
-python3 scripts/mac_harness.py preflight --task-id example-review \
-  --artifact-root /absolute/path/to/example-review --executor-surface surface:7 --executor claude
-```
-
-Replace the example surface with a freshly verified binding. Do not paste task
-prompts manually: use the finalized task-pack and callback entrypoints described
-in [SKILL.md](SKILL.md). Public defaults preserve the current model and refuse
-unknown compose text. Machine-specific preferences belong in local task settings.
-
-## Verification And Boundaries
-
-```sh
-python3 scripts/test_all.py
-```
-
-Tests use isolated files and mocked agent surfaces, without sending live prompts.
-Offline coverage is not certification of every cmux/client version. `doctor`
-proves configured hooks can execute benign payloads; a real task still needs the
-current-session handshake and current-task guards. Linux is an offline-test target,
-not a live UI transport. There is no Windows/tmux or ACP adapter in this release.
-
-See [lessons](references/lessons.md), [security](SECURITY.md), and
-[version history](CHANGELOG.md). MIT; cmux, Codex and Claude remain separate products.
-
-## Isolated orchestration upgrade
-
-This public upgrade branch adds an experimental, CLI-owned graph adapter in
-[`scripts/orchestration_planner.py`](scripts/orchestration_planner.py). Claude
-Code or Codex can author a dependency graph; the adapter validates it, schedules
-bounded ready waves, and emits task-pack seeds for the existing
-`mac_harness.py`/`cmux_bridge` lifecycle. It never starts a replacement session
-or calls a third-party model API. See [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)
-and [`RESEARCH-FINDINGS.md`](RESEARCH-FINDINGS.md) for the evidence review and
-the limits of the offline benchmark.
+MIT. cmux, Codex, Claude Code, OmO, codeg and TypeSafe are separate projects.

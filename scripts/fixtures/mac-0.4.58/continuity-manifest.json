@@ -1,0 +1,14 @@
+{
+  "schema": "upgrade-upstream-source-fixtures-v1",
+  "upstream": "https://github.com/lzhs1995/multi-agent-collaboration",
+  "release": "0.4.58-cf3f6175840b",
+  "license": "MIT",
+  "scope": "Five additional exact original source files for private inquiry consumer, scheduler CURRENT and Stop audit regressions. Kept separate from the original ten-file manifest. Neither set is a complete or installable controller.",
+  "files": {
+    "executor_reask_identity.py": {"bytes": 9816, "sha256": "c9a8542bb91d872bab910498083f478b6fded4c0dd867a208bc105acad7696a2"},
+    "executor_reply_advisory.py": {"bytes": 24368, "sha256": "e2c76da58cf5b970d37627d57e984940776976cc6529bb553a9d1f841be822bb"},
+    "manage_install.py": {"bytes": 13823, "sha256": "3af673f3c8fc6c02018456e726811abac1e513f7ee3f6fed016d46592628e6e6"},
+    "configuration_guardian.py": {"bytes": 27458, "sha256": "2643882ce85ec1b439fe9a28f0da9a21857832ade14544d8d66fa4e7c5b8e35f"},
+    "cmux_hook_runtime_audit.py": {"bytes": 3883, "sha256": "94c2e34e3285c4f9f89276e0f8f09f65b2ed5550621001d4ccaa1ffefa6de698"}
+  }
+}

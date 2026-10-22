@@ -1,9 +1,579 @@
 ---
-name: multi-agent-collaboration
-description: Coordinate context-bearing CLI agents in macOS cmux using scoped task packs, authenticated acknowledgements, evidence-bound callbacks, review gates, and bounded failure recovery. Requires cmux; not a general-purpose parallel-agent launcher.
+name: multi-agent-collaboration-upgrade
+description: Independently test dependency scheduling and durable callbacks for existing Codex and Claude Code sessions in a dedicated cmux experiment. Requires an explicit private experiment context; never installs over production multi-agent-collaboration.
 ---
 
-# Multi-Agent Collaboration
+# Multi-Agent Collaboration Upgrade
+
+This is an independent experimental skill. The installed
+`multi-agent-collaboration` and its active sessions are separately owned.
+Start with `scripts/upgrade_experiment.py`; every v3 campaign must pin its private
+context, controller, configuration, state and exact permitted sessions. No shared
+MAC path is a fallback. Do not run the inherited installer against a real account.
+Do not edit global hooks, use production executors, migrate old attempts or change
+HOME. The user has authorized private CODEX_HOME / CLAUDE_CONFIG_DIR values only
+for newly created experimental clients. Existing processes and global environment
+remain unchanged. Actual automatic hook adoption must be verified before live input.
+
+The inherited transport contract below remains a compatibility reference. v2
+campaigns retain their original controller and evidence; v3 is a separate format.
+Offline estimates, replay and passing tests do not prove live efficiency. Report
+the paired benchmark and correctness results before considering production use.
+The current three-availability-state integration requirements and their evidence
+are tracked in [task continuity integration](docs/TASK-CONTINUITY-INTEGRATION.md).
+MAC owns message delivery, proactive inquiries and shared runtime releases;
+upgrade owns task-graph decisions and experimental measurement. A provider
+failure ends that registered comparison attempt but does not cancel the user's
+overall task. Continue authorized independent implementation and review with the
+available original participants. Do not count a fallback workload as a completed
+paired sample or silently move an old task to a new controller.
+For a prepared experiment's exact socket scope, verify the unique path set and
+each group's original path binding independently of JSON mapping order. Keep
+the registered experiment execution order unchanged. If preparation stops after
+materialization but before publication, first prove that no clients or native
+input were started and that the original scripts, source, configuration, scope
+and deadline are unchanged. Complete only missing metadata under a separately
+recorded finalization; do not rerun materialization, overwrite published files,
+reset the deadline or replay input. A changed pin, occupied path or partial
+native attempt requires its own diagnosis, not this recovery. See
+[R32 preparation and control fixes](docs/VALIDATION-20261019-R32.md).
+For new B/v3 campaigns, use the pinned runner's `advance --run RUN --max-steps 12
+--max-seconds 45` as the primary orchestration entrypoint. It batches original
+gated actions across independent lanes; it does not perform native START,
+local business, independent ACCEPT or FINISH. Handle its supervisor/recovery
+handoffs, collecting existing original actions rather than repeating them.
+Claim eligible independent lanes, then dispatch a prepared lane before waiting
+for another lane's handshake. Preserve closeout, review and original-reconciliation
+priorities. If this invocation has produced a still-current review/acceptance
+handoff, return it before entering another synchronous transport operation;
+refresh its evidence before returning. Native local-work handoffs keep their
+existing priority. Neither behavior performs ACCEPT or releases ownership.
+Attempt fairness is bounded to this invocation; repeated one-step calls after a
+pre-intent refusal have no unconditional fairness guarantee. Synchronous dispatch
+still waits for its original result. New controller behavior must be validated
+separately from the terminal R32, which retains its frozen source and outcome.
+The first complete fenced observation has its own initialization phase; the
+45-second action budget starts after it. Subsequent observations count against
+that action budget. Report initialization, action, finalization and total elapsed
+time separately. The original run and watchdog deadlines remain absolute. Time
+is checked between actions, not during an in-flight synchronous operation.
+A1 uses the manual baseline and can run both independent Claude lanes in parallel.
+This explicit foreground batching does not wake an idle model or prove speedup.
+New callbacks take precedence over claiming, preparing or dispatching another
+lane. An already offered EVIDENCE_READY review must not repeatedly starve ready
+work. Completed EVIDENCE_READY evidence has its own priority ahead of potentially
+slow original reconciliation, independent of the frozen node order. A failed node stops new work in that registered run while original
+callback collection, candidate validation and independent acceptance remain
+available. Newly configured drivers may opt in to
+`--node-failure-drain-seconds N` (1–300), with an immutable overall deadline and
+the matching coordinator/scheduler source. This preserves a bounded original
+result-collection window from the first failed event, never from its discovery
+or a driver restart. Original run/overall deadlines, native supervisor errors
+and operator Stop still apply. Old driver configurations retain their behavior.
+The observer does not execute acceptance, release resources or start a new run.
+See [callback scheduling validation](docs/CALLBACK-DRAIN-VALIDATION.md).
+New private controllers can transform the complete fixed MAC 0.4.58 source while
+preserving its current delivery and recovery semantics. Use
+[MAC 0.4.58 private validation](docs/MAC058-PRIVATE-VALIDATION.md) for the pinned
+source, offline counterexamples and actual generated-controller probes. Source
+fixtures are test inputs, never a complete release or a live runtime. Their
+passing tests do not establish automatic hook adoption or the native benchmark.
+The separately pinned MAC 0.4.61 source also supports private shell-return
+diagnostics without selecting a shell as an agent. Keep the original executable,
+private root, process/session and native receipt checks; unknown source shapes
+still refuse. Follow [MAC 0.4.61 private validation](docs/MAC061-PRIVATE-VALIDATION.md)
+for the actual generated public binding controls and explicit live gaps. Do not
+move an in-flight experiment to that controller or infer new session authority.
+For a new explicitly authorized continuity experiment, the materializer may opt
+in with `--register-private-continuity`. It pins the original scheduler/guardian
+CURRENT contract to that immutable private release, not the shared installation.
+It starts no client, episode or background job. The original executor must still
+register the authorized continuing inquiry and read the complete reply before
+exact-SHA consumption. Retain the original Stop budget and verify actual native
+hook adoption and two real cycles separately from sandbox fixture results. See
+[private continuity validation](docs/PRIVATE-CONTINUITY-VALIDATION.md).
+For a new registered private continuity episode, the external
+`upgrade_continuity_native.py` adapter derives terminal outcomes from the
+original native journals and invokes the complete original evaluator under
+the private kernel boundary. It accepts no caller-authored health labels and
+sends no input. PENDING/partial scans cannot establish availability; later
+appends preserve a pinned complete interval. Its advisory result neither
+transfers roles or leases nor enforces the whole-task child budget. Keep actual
+hook adoption, two real inquiry cycles and benchmark acceptance separate. See
+[native continuity observation](docs/NATIVE-CONTINUITY-OBSERVATION.md).
+Whole-task native child accounting is a separate default-off private option,
+`--register-native-child-budget`, not a field of the advisory evaluator. Its
+authenticated original Agent PreToolUse reserves before creation; both original
+Claude parents share at most two unconsumed slots, and a returned report retains
+its slot until the original parent's full native read and exact-SHA consumption.
+Preserve uncertainty, original guards and occupied claims; never reset, retry
+creation or release on timeout/disappearance. The first protocol is non-fork
+foreground only. Tests and a materialized hook declaration do not prove active
+native gating. Follow [native child budget validation](docs/NATIVE-CHILD-BUDGET.md)
+before any real native child; do not promote offline evidence to live acceptance.
+For provider capacity, usage-service success and HTTP 200 response headers alone
+do not establish model availability: a successful HTTP stream may contain only
+pings followed by an account/user concurrency error. Record the complete bounded
+stream outcome. Even two completed overlapping streams establish only that
+observation, not sustained capacity or native collaboration acceptance. Preserve
+these diagnostic requests separately from registered business/message samples;
+do not launch an unchanged campaign into a just-observed capacity refusal.
+`CCC_CLAUDE_REQUEST_OBSERVATIONS_DIR` selects an auxiliary output directory;
+it does not load the CCC Bun observer. The private launcher removes inherited
+preloads and pins the native binary. Verify observer activation separately before
+interpreting missing files. The inspected CCC observer records request headers
+and redirect credential scope, not complete response status, SSE or usage.
+Neither its presence nor absence establishes model completion or failure.
+New materializations can opt in with `--observe-claude-responses`. The private
+response observer is a pinned controller artifact, scoped to the original root
+PID and its private 0700 directory. It observes only data the original consumer
+reads; it never clones, drains, retries or creates a request. Require an actual
+`LOADED` record with the matching source hash before treating it as active.
+Claude 2.1.303 can use native `Bun.FetchSession.fetch` instead of global fetch.
+Pin the constructor/instance observer and distinguish installation from an
+actually intercepted path in `LOADED.fetch_coverage`. Preexisting sessions and
+cached constructors remain uncovered. Exact-argument cross-path delegation is
+an observation assumption, not a universal network-attempt count. Responses
+already consumed before observation are `PRECONSUMED_UNOBSERVED`, never unread
+or complete. Do not infer an empty answer from a missing visible-text flag when
+coverage, consumption or parsing is incomplete.
+Use Bun's character escaping for `BUN_OPTIONS`, not shell quoting; configuration
+roundtrips and a successful `--version` alone do not prove preload activation.
+Reject unsupported literal backslashes before materialization. APFS path casing
+may differ across Python and Bun: verify the same nonsymlink directory and its
+original inode through both names instead of requiring identical casing.
+Preserve HTTP status, SSE errors, usage, cancellation and EOF separately.
+Native Bun may call `body.cancel()` after iterator EOF. Observe `readMany().done`
+without counting its prefetched values, then count only consumed iterator values.
+Cancellation after that EOF fact does not erase completion. Failed cancellation
+does not end observation of a still-readable body; record failure separately.
+If a pending iterator cancels without an observed reader EOF, retain unknown
+origin rather than inferring natural EOF or deliberate user cancellation.
+Decoded text and parsed JSON cannot establish raw wire-byte hashes; truncated,
+unread or unsupported paths remain incomplete. Request class stays UNKNOWN.
+The observer has bounded request, parse and snapshot budgets, keeps error names
+on a fixed allowlist and stops a failing telemetry sink. Promise/Response identity
+and consumer values are preserved on supported paths, but observer callbacks
+add overhead and rejection handlers; do not claim identical timing or process
+`unhandledRejection` behavior. Its local pressure results are separate from
+native model startup, task acceptance and paired efficiency measurements.
+Use identical observer configuration and source bytes in both comparison arms;
+local instrumentation overhead does not establish collaboration efficiency.
+New paired registrations use `upgrade-paired-registration-v3`, including an
+explicit `compact` boolean and one `response_observation` policy for all seven
+groups. Observation defaults to disabled. To enable it, pass
+`--observe-claude-responses` to both registration and each materialization from
+the same frozen source. Configure, permit issue, driver launch, campaign freeze
+and validation reject a different setting, SHA or byte count. Reports check
+the original registration, runtime/startup and complete external closeout row;
+copied pins cannot authenticate changed timings, costs or intervention counts.
+These checks establish configuration only, never actual observer LOADED.
+Historical v1/v2 registrations retain their interpretation and are labeled
+`legacy_unverified`; do not rewrite them to obtain the new qualification.
+Four local AB/BA pairs at 256 concurrent requests measured 3.57–7.46 times
+the uninstrumented controller elapsed time. This optional diagnostic has material
+cost in that workload; correctness passing is not a performance pass. Disclose
+instrumentation and its calibration when reporting any future paired result.
+The subsequent temporary-file cleanup repair avoids deleting a temp file after
+a failed exclusive open and avoids redundant unlink after successful rename.
+Four old/new pairs passed correctness but produced two speedups and two
+slowdowns; stable improvement and absence of regression remain unproven.
+See [response observation validation](docs/RESPONSE-OBSERVATION-VALIDATION.md).
+See [configuration and cleanup validation](docs/OBSERVER-COMPARISON-VALIDATION.md).
+Keep HTTP error status, saved response-body errors and local reader exceptions
+separate. A saved JSON `rate_limit_error` with HTTP 429 remains rate-limit
+evidence even if a subsequent EOF read raises `OSError`; preserve both facts.
+Usage growth and elapsed time can justify a new bounded capacity observation,
+but never establish recovery or justify replaying an existing native attempt.
+Claude's default footer without a custom statusline is supported only when the
+matching complete borders are followed by the exact permissions row. Empty
+compose and idle turn remain separate checks; preserve drafts and reject unknown
+or truncated footer structure. Complete Claude `⎿ Tip:` and goal chrome before
+the composer cannot hide a live spinner, including measured timerless activity.
+Skip only those hint rows; never skip arbitrary prose or composer content.
+The measured default permissions footer may include `· esc to interrupt` and
+the complete `◎ /goal active (duration)` annotation after the lower border.
+Match the whole observed row; unknown suffixes and truncated annotations remain
+unknown. This layout says nothing by itself about native Goal renewal or capacity.
+On initial capability refusal, preserve the exact original screens, hashes,
+parser results, read sequence, failure stage and error in the original receipt.
+Failed reads retain a missing screen; do not reread to manufacture diagnostics.
+A later successful parse cannot establish the cause of an earlier uncaptured
+refusal. Diagnostic evidence grants no input, retry or successful capability.
+The live materializer applies the same two measured parser changes to its pinned
+base controller with exact source-shape checks. Preserve the base's native Codex
+delivery and other status layouts; copying an older whole bridge is not a repair.
+Validate the generated controller itself, including draft refusal and original
+native receipt fences, before starting clients.
+See the measured rules in
+[verified delivery](references/verified-compose-delivery.md).
+See [isolated experiment runbook](docs/ISOLATED-UPGRADE-RUNBOOK.md).
+For new private campaigns, pin the actual Claude executable/version and requested
+model; installation alone does not establish adoption by an existing process.
+The R29 retry verified both processes running 2.1.303 but produced no main-task assistant output
+or successful native comparison; one executor did produce a background summary.
+Native Goal Stop checks are independent model requests. Preserve their failures
+separately from main-task and background requests; timing alone does not establish
+a request-ID binding. Preserve rate limits, empty streams and Goal
+check failures separately; do not treat Goal pause as proven termination or as
+permission to re-input. Goal checks do not validate independent long-running loop.
+See [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
+Current measured results and open live-validation gaps are recorded in the
+[r33 scheduling and output-effects validation](docs/VALIDATION-20261019-R33.md),
+[r31 terminal result and control-overhead findings](docs/VALIDATION-20261019-R31.md),
+[r30 final delivery](docs/VALIDATION-20261019-R30.md),
+[r29 final delivery](docs/VALIDATION-20261019-R29.md),
+[r28 implementation and regression](docs/VALIDATION-20261019-R28.md),
+[r27 recovery retry](docs/VALIDATION-20261019-R27.md),
+[r26 native Goal experiment](docs/VALIDATION-20261019-R26.md),
+[r25 native run checkpoint](docs/VALIDATION-20261019-R25.md),
+[r23 preparation and provider observations](docs/VALIDATION-20261019-R23.md),
+[r22 timeout and candidate improvements](docs/VALIDATION-20261019-R22.md) and
+[r21 terminal report and UUID repair](docs/VALIDATION-20261019-R21.md), with
+earlier batches in the [2026-10-18 validation report](docs/VALIDATION-20261018.md).
+
+For explicitly authorized new Goal clients, use startup-v3 with pinned duties
+for all three lanes and exact native `/goal` conditions for both Claude lanes.
+Require native SET, the actual probe and automatic hooks before adoption.
+Preserve legacy startup-v2 clients and attempts. A Goal prompt, configuration,
+SET record or later model activity alone does not prove continuous operation,
+message acceptance or efficiency; see [Goal evidence](docs/NATIVE-GOAL-OBSERVATION.md).
+The r27 native clients recorded Goal SET and a first model-stream chunk without
+any assistant record or startup probe. A later `No assistant message found`
+error belonged to a separate Stop prompt-hook request; do not attribute that
+error to the original request or call it an authentication failure. Preserve
+request types and original logs, require actual probe/results for adoption,
+and retain the original startup deadline. Coexisting configuration-write errors
+do not establish causation or authorize weakening isolation; r26 completed both
+probes after the same settings EPERM. Missing request-observation files leave
+response semantics unknown. A stalled startup
+remains missing business evidence, not a successful pressure sample.
+
+Pin client versions separately from controller versions. Verify the actual
+native process and journal version after an authorized upgrade; changing an
+entrypoint does not update existing clients. A native request's model identifies
+what was requested, not which backend successfully completed it. Revalidate
+observer coverage across client versions: LOADED with no response records cannot
+override native request evidence. Goal retry notices are not successful task
+execution, and Goal testing is not independent loop validation. Preserve original
+attempts and deadlines; see [Claude version validation](docs/CLAUDE-VERSION-VALIDATION.md).
+
+Original handshake member selectors may be a numeric `surface:<N>` or a UUID.
+Canonicalize UUID aliases and allow repeated aliases only for the same member;
+reject a UUID selector belonging to another member or any cross-member collision.
+Resolve a UI alias only from the original gate's proof under that member's exact
+original selector key, with its matching target UUID. Keep legacy UI selectors
+equal to their original proof and preserve selected workspace, caller, pane,
+provider, session and row-order checks. Never repair an old proof using current
+inventory. Include the producer's UUID-keyed proof with a UI target ref in tests;
+UI-only fixtures missed the r21 refusal. Passing that repair locally does not
+change r21's failed result or establish live handshake success.
+
+For v3, ordinary work in progress is not a reason to delay an authorized
+coordination message in either direction. Submit ready information through the
+bound supported input route; the receiving agent decides how to integrate it.
+Do not pause native `/goal` merely to create an idle communication window.
+Communication, task acceptance, write ownership and composer clearing are
+separate operations. Keep fresh identity, draft, original-attempt and native
+receipt checks; an accepted queue entry is not proof of consumption.
+Reuse a valid handshake instead of running a write-and-clear bridge probe for
+every message. Newly materialized controllers check initial capability read-only
+against the exact prepared challenge, then retain the original single send,
+nonce, ACK and native receipt. Active Claude work is allowed with two complete,
+stable empty-composer observations; Codex uses authenticated input metadata.
+Hold the original root-directory lock through receipt writes, send and ACK;
+concurrent or previously started handshakes are observe-only. Preserve root inode,
+native process/session and original transcript-prefix checks. Legacy receipts
+retain their original clear-proof requirement. Local regression and simulated
+transport pressure passed; live continuous-goal handshake remains unverified.
+New private controllers settle `TaskPackContractError` under that original root
+lock as supervisor-attributed FAIL/REJECTED after rechecking the root. Preserve
+only the sender-supplied original attempt and its stable diagnostic pin; missing
+details remain UNAVAILABLE. A pin is not controller authentication, native
+receipt, NO_INPUT evidence or retry permission. Do not poll for ACK after this
+failure. Root changes and receipt-write failures propagate; a failed write does
+not establish persisted terminal state. Frozen controllers and old attempts are
+unchanged. See [handshake settlement validation](docs/HANDSHAKE-SETTLEMENT-VALIDATION.md).
+New v3 nonpilot campaigns register 192 independent ordinary-message slots across
+six groups and four warm rounds per group: two arms of 96, four directions of 48.
+The bound native clients use their exact private helper once at each specified
+before/after business boundary. Pilot and cold runs add no samples. Refused,
+queued and missing slots remain in the denominator; do not replace samples,
+request extra ACKs or count task notices/callbacks. A short helper body still
+uses a pinned MESSAGE_REFERENCE_V2 notice because the helper adds its header.
+Notice receipt does not prove body reading. Boundary labels do not establish
+active/idle or continuous-goal state; require actual native observations.
+New freezes use metrics version 4, retaining version 3's registered ordinary-message attribution.
+Exclude only the exact original native record backed by its unique sender
+helper call, complete pinned body, original receiver binding and input fence.
+Duplicate, changed or missing evidence stays unclassified; never exempt a
+message prefix. Preserve original UUID bytes and hashes while comparing UUID
+identity semantically; ambiguous original journal locations remain UNKNOWN.
+Older metrics versions and frozen campaigns keep their original interpretation.
+Version 4 also registers `output-effects-v1`: successful, complete native Claude
+`Read` and the exact clean-shell `ls` template in the task pack do not count as
+output writes. Failed, pending and unknown calls remain potential writes; all
+business activity still counts against a no-business-input or preparation-exit
+claim. Finish output inspection before callback (or before ACCEPT for local
+Codex work). Arbitrary `functions.exec` wrappers remain UNKNOWN; if that is the
+only available Codex tool, no post-boundary read exemption is available. This
+policy does not reinterpret R32 or authorize later writes. See
+[output effects and tool limits](docs/ORCHESTRATION.md).
+New isolated clients receive a pinned `mac_upgrade_body_read.py` command that
+returns the complete verified body in their native tool result. The separate
+observer must authenticate the original receiver journal, input-intent fence,
+exact reader invocation and its complete successful matching result before
+reporting `BODY_READ_OBSERVED`. This means exposure in receiver context, not
+understanding, task acceptance or a native notice receipt. Queued notice,
+body exposure, subsequent action and business correctness remain separate.
+Truncated, yielded, duplicate, stale or unsupported tool records remain UNKNOWN;
+bounded scan coverage and original record offsets must be reported. Do not send
+extra messages or ACKs to improve the 192-sample denominator.
+See [active communication and its measured limits](docs/ASYNC-COMMUNICATION-VALIDATION.md).
+Continuous Goal requires explicit native activation and renewal evidence; r25
+did not register those steps. Use the separate read-only
+`scripts/upgrade_goal_observer.py` to inspect original Claude `goal_status`
+attachments, never prompt text or queue banners. A clear sentinel with `met:true`
+is not goal completion, and later model activity does not prove wake causation.
+Restoring a Goal can reset iteration/time/token baselines without a new SET
+record. Report discrete observations and UNKNOWN intervals; do not infer
+continuous operation, message acceptance or business correctness. The observer's
+local tests are not native pressure results. See
+[native Goal observation](docs/NATIVE-GOAL-OBSERVATION.md).
+These instructions update this experimental skill only. The designated
+surface40 owner manages shared MAC and thesis-refiner releases. Frozen campaigns
+retain their original controllers; documentation does not hot-reload clients.
+
+The surface40 replies received on 2026-10-19 confirm that file publication,
+automatic hook exposure, complete body reading, an exact mailbox reply,
+executor reading, original-controller consume, rearm and reservation release
+need separate evidence. `ANSWERED` does not mean consumed; consume does not
+release a reservation. Read the original request's pinned reply path as well
+as its inbox before reporting that a reply is missing. A file experience reply
+does not establish native delivery or business acceptance.
+Attribute coordination time by prompt-ready, input, native receipt, body read
+and acceptance, with sample counts and failed/censored samples. Request counts,
+a state file's size and the span between lock failures are not throughput,
+bytes rewritten per save or measured lock-hold time. Require paired timestamps
+before attributing delay to locks, persistence, RPC or model execution.
+Source fixes for versioned Claude executable identity and terminal handshake
+failure settlement in shared MAC PR55 are independently reviewed candidates;
+they have not been transplanted into frozen R30. Preserve existing input intents
+on contract failure and map equivalent private paths before a future isolated
+integration. See the [owner experience mapping](docs/COLLABORATION-ISSUE-LEDGER.md).
+
+R30 used the current frozen code and actual Claude 2.1.303 processes, but timed
+out before any Claude startup probe or automatic tool-hook adoption. The fixed
+FetchSession observer did run on real responses; its activation is not startup
+adoption. Pilot 0/3 and paired 0/15 provide no efficiency estimate. Preserve
+the terminal run and its 33 business / 192 planned message slots; stop markers
+prevent future experiment input without proving remote cancellation. Do not
+repeat an unchanged campaign to fill the missing samples.
+
+The r19 field audit found finalized packs referencing missing role-map and
+surface-inventory inputs. New v3 preparation now generates both with the original
+harness before task-pack finalization and verifies their pinned contents, task,
+workspace, time and assigned native identities. Packs include the original
+startup adoption proof and an explicit executor reading responsibility. Inventory
+titles are not provider authority; retain fresh live identity checks. v2 keeps
+its original preparation sequence. Report/callback outputs remain future outputs.
+This candidate passed local regression and multiprocess pressure; live callback
+and business acceptance remain unverified. Never backfill an already dispatched
+pack to conceal a missing input.
+See [task-pack field findings](references/lessons.md#r19-task-pack-input-completeness).
+
+New v3 task scopes also provide the exact frozen-controller callback command,
+including the original pack path, after the report-freeze instructions. Executors
+collect that one original invocation instead of discovering a callback CLI.
+An uncertain result or pane contention does not authorize another send. This
+addresses observed task-navigation overhead, not measured end-to-end efficiency.
+For a first callback with no prior attempt, the generated controller may wait up
+to 15 seconds on the original pane-lock inode before input. Task/target locks and
+recovery attempts retain fail-fast behavior. After acquisition, recheck the pack,
+report, availability, identity, journal and all held lock identities before
+PREPARED. Timeout or changed evidence produces no input and no extra attempt.
+This is one original invocation, never a resend or a recovery-key budget.
+Validate this transformation in the actual materialized controller, including
+concurrent processes and the unchanged native input boundary. Live pilot
+acceptance and end-to-end efficiency remain separate requirements.
+
+New bounded campaigns pin an overall deadline once at configuration; neither
+polling, a new slot nor process restart resets it. Run an independent watchdog
+against that same configuration before the driver. At expiry it must first
+publish each private runtime's stop marker, then halt scheduling and preserve
+all registered slots in the final report. Clock/boot ambiguity refuses new work.
+Do not depend solely on a driver tick that may be inside synchronous work.
+Preserve in-flight requests, original clients and leases; stopping future input
+does not prove remote cancellation or resource release. Report watchdog errors
+and observed stop time, not an unsupported hard real-time guarantee.
+
+Independent checkers receive canonical request bytes through a read-only file
+descriptor from unique private campaign scratch, removed before child execution
+and cleaned on exit. Do not use `subprocess.run(input=...)` inside the private
+Darwin audit: its anonymous write pipe has no authenticated filesystem path.
+Never bypass this by allowing arbitrary FIFOs or swallowing `EBADF`. Preserve
+checker pins, timeout, output validation and one invocation per action; a repair
+does not reopen a failed historical attempt. See
+[checker input isolation](references/lessons.md#r19-checker-stdin-isolation).
+
+For v3, automatic workflow hooks run through the pinned advisory wrapper.
+Unresolved callbacks, reservation, reask or review state do not block ordinary
+tools or Stop. Legacy gate descriptions below are explicit diagnostics, never a
+global session lock. This does not relax the sender's identity, original-attempt,
+native reception or input safeguards. Verify actual automatic invocation in
+each live client separately from configuration and manual hook tests.
+
+Pressure acceptance requires both safety and successful independent work.
+Report every attempted reservation, semantic conflict and registry-lock timeout;
+zero double owners alone is insufficient. Short registry transactions may wait
+up to five seconds. The separate v3 run-state lock waits within the original
+remaining work budget for new claims/preparation/dispatch; Stop, halt or unknown
+clock refuses new work. Historical observation, acceptance and closeout have a
+separate 300-second lock-acquisition cap, preserving their original gates.
+Node action locks, v2 and initial creation remain fail-fast. Wait only for the
+original lock inode; run the fresh action gate after acquiring it, then execute
+the transaction at most once. No dispatch or callback is retried by this wait.
+Nested acquisition follows runner → transport → coordinator → registry;
+recheck the original work budget immediately before publishing a new claim.
+Publish a new dispatch intent only after acquiring the run-state lock and
+rechecking PREPARED; keep existing intents observe-only. The two evidence writes
+are serialized, not crash-atomic. See [pressure and experience
+controls](references/lessons.md#pressure-and-field-experience).
+
+Private Darwin discovery retains paired kernel BSD snapshots and the original
+errno at each read. A complete, untruncated BSD basename or absolute kernel path
+may exclude a known unrelated row that then returns exact ESRCH/zombie. Candidate
+paths override earlier basename exclusions. Permission errors, unknown or partial
+reads, and PID/birth/parent/name drift refuse before considering a later exit;
+selected native clients retain the original strict process/argv/TTY checks.
+Stress every read boundary with real short-lived processes and preserve failed
+scan counts. A traceback without its PID/path does not prove an unrelated row, and this discovery fix alone
+does not establish successful live collaboration.
+
+The private native target lookup intersects the bound controlling TTY's Darwin
+`PROC_TTY_ONLY` inventory with the kernel `PROC_UID_ONLY` inventory. Each scope
+sample brackets the UID read with equal complete TTY PID sets; the final sample
+must preserve both the complete TTY set and its UID intersection. This excludes
+foreign root login parents by kernel scope, never by ignoring a permission error.
+Daemon client discovery retains its full-UID inventory. Pin the canonical `/dev`
+character device's path, device/inode, rdev, mode and ownership before and after
+enumeration. Darwin devfs updates ctime during ordinary terminal output; activity
+timestamps are not device identity. Retain mode/owner checks for real metadata
+changes. Verify every selected UID member's
+BSD TTY, and close its original identity. Any such member exit, permission error,
+unknown read, identity drift or observed set change refuses; there is no fallback
+scan or automatic replay. These discrete reads are not an atomic kernel snapshot.
+This establishes target uniqueness for this UID inside the exact TTY, not global
+uniqueness of environment values on other terminals. Selected clients retain complete native process, executable,
+private-root, session, UUID and transcript checks. Snapshot executable basenames
+once per lookup; never cache the selected executable's authority checks.
+
+On the measured Darwin 25.5.0/arm64 ABI, an initial TTY member whose first BSD
+read returns ESRCH may be excluded only with the independent sysctl SZOMB proof:
+fresh self calibration, four stable identity/status observations and complete
+TTY/UID closure. Reaped, live-to-exit, unknown, permission or identity-drift cases
+still refuse. This exception does not relax selected native-client authentication.
+
+Startup content checks may use at most three workers for pins declaring large
+files while the caller checks small files. Each invocation still hashes the
+complete actual contents and checks before/after descriptor and path identity.
+No digest or stat cache is permitted. Drain all parallel checks before raising,
+preserving original exceptions; small batches retain serial fail-fast behavior.
+Measure local verification speed separately from end-to-end collaboration gains.
+
+Within one Coordinator construction, the Codex reader may be reused only with
+its second original-file metadata read and both EOF-pin checks retained. Start
+may form observational status from the Coordinator just created, with a fresh
+header equality check and fresh state/ready reads. Independent status and every
+later action retain fresh authentication; this is not permission to cache a
+digest, skip an input gate or reuse authority across commands. Apply the same
+control-overhead changes to both benchmark arms and keep their original clocks.
+
+An advance invocation may share its initial fresh Coordinator between status
+and advice only before any action. Fence the run header, control files, events
+and leases across that observation; retain native snapshot checks and accepted
+output revalidation. Status may select ready nodes from the state it just
+validated instead of replaying it twice. Every action and final refresh still
+constructs a fresh Coordinator. Do not cache runtime hashes across actions.
+For equal-priority new work, order eligible recorded phases PENDING, PREPARED,
+then PREPARING: claim independent lanes, dispatch a prepared lane, then prepare
+another lane. Attempt fairness is limited to the current invocation; repeated
+single-step pre-intent refusals have no unconditional fairness guarantee.
+Preserve closeout/review/reconcile priority and all dependency, scope
+and original-attempt checks. The R31 field observation found costly repeated
+startup-pin validation and delayed second-lane preparation; fixture validation
+of this repair does not establish live throughput or 15% improvement. Frozen
+R31 clients retain their original code. See [control-overhead validation](
+docs/CONTROL-OVERHEAD-VALIDATION.md) and the [R31 native report](
+docs/VALIDATION-20261019-R31.md).
+
+A private campaign may reuse the runtime it fully validated earlier in the same
+validation invocation for its immediate adoption check and pure session binding
+comparisons. Still authenticate the adoption proof afresh. Public live gates
+retain independent complete runtime/adoption validation. Within one pure
+verification or observation, NativeReaders can share native-root authority after
+full entry validation and before full exit revalidation. Each reader still
+checks its own session, original journal and EOF fence. Bind the scope to its
+thread/task and active lifetime; invalidate copied contexts on exit, including
+exceptions. Never extend it across sending, appending events, changing leases
+or a later command. No caller-provided bypass or input gate is removed. Removing
+the redundant intermediate scan removes one transient-change observation point,
+so do not claim equivalence for every concurrent mutation interleaving. The
+measured four-pair local helper improvement is not end-to-end collaboration
+evidence; see the r22 report for method, failures and limits.
+
+Historical EVIDENCE_READY/ACCEPTED replay validates the recorded checker result
+and every original input, source, test and output pin without launching another
+checker or allocating scratch. New ACCEPT runs the independent checker exactly
+once before its terminal event. Recheck the original candidate and acceptance
+file pins after that subprocess returns, before append and lease release. A
+changed file, failed checker or mismatched result refuses acceptance. Read-only
+status and original acceptance recovery never repeat business verification.
+These controls apply equally to both comparison arms. Their local regression is
+not live collaboration or an efficiency result; record the new experiment's
+actual handshake, callback, acceptance and timing evidence separately.
+
+Preserve structured exception chains and traceback frame locations in runner
+CLI refusals, without local variables or source lines. An unexplained filesystem
+error is not a transient provider failure; record the last published artifact and
+diagnose it before a new experiment. A passing read-only reproduction does not
+retroactively repair the original attempt or authorize its replay.
+
+Private bridge probes retain the exact pre-read/final screens and each cleanup
+screen, parsed body, prefix match and screen-only busy classification. Keep the
+original ownership check, interrupted-Bash boundary and key budget unchanged.
+A later screen that parses successfully cannot explain an earlier hash-only
+refusal; preserve the failed probe and distinguish diagnosis from a root-cause fix.
+
+Native readiness is only a startup result. A later original Codex
+`event_msg/task_complete` with an error or native `event_msg/turn_aborted`
+must halt the experiment with its pinned native record, preserving sessions,
+completed measurements and every registered slot. An interrupted turn may leave
+a successful background command completion without any supervisor continuation.
+That tool completion neither cancels the interruption nor proves business start.
+Record the native reason without attributing its source to the user or provider.
+The driver observes at most 256 records per tick; unread or partial records
+hold advancement without extending the registered watchdog. A crash reuses the
+first failure evidence, never retries input. See [native failure closeout](
+docs/ISOLATED-UPGRADE-RUNBOOK.md#r8-native-provider-failure-and-bounded-closeout).
+
+v3 adoption stores UUIDs without UI refs. The original C34 task pack still uses
+a `surface:<N>` supervisor and callback target. Resolve that ref only from the
+original pinned identity gate, checking both native roles/sessions and their
+workspace, surface and pane UUIDs. Callback evidence must match the verified
+pack target. Unmapped UI refs cannot establish that a sender targeted an
+unrelated receiver. Regression fixtures must preserve the real UUID-only shape.
+
+v3 live identity and campaign-to-native receipt checks compare parsed UUIDs:
+cmux may return uppercase while frozen campaigns use lowercase. Journal lookup
+uses the pinned controller's original uppercase caller; disarm retains original
+marker paths and caller spelling. Never normalize stored evidence or reservation
+hashes. This never relaxes exact process, native session, TTY, transcript, fence,
+receipt-to-attempt or private configuration checks. Before
+starting a permitted run, inspect the top-level `status --run RUN` state;
+`NOT_STARTED` allows the original start, while `INCOMPLETE_START` preserves the
+partial attempt and forbids replay. See [r10 startup findings](
+docs/ISOLATED-UPGRADE-RUNBOOK.md#r10-uuid-case-and-unstarted-status).
 
 For zero-input identity refusals, read [native caller inventory failures](references/native-caller-inventory.md).
 Repair discovery before retrying a handshake; retain kernel/UUID authentication
@@ -74,7 +644,8 @@ because a target is unavailable. The scope narrows access and cannot permit
 cross-workspace input. Resource coordination across workspaces uses existing
 file/queue receipts, not executor-handshake transport or a STATUS-prefix exemption.
 
-Install via `scripts/manage_install.py`; it registers the guard for both clients.
+The production MAC installer registers the guard for both clients. This upgrade
+does not use that installation route; it materializes a pinned private controller.
 Run the installed hook with a cross-workspace/raw-input negative case and verify
 exit 2 and zero input before claiming enforcement. Client settings registration,
 active hook execution and imported Python modules are separate states; a process
@@ -92,7 +663,8 @@ not an OS sandbox against arbitrary self-written socket clients.
 2. Run `scripts/mac_harness.py preflight` with an explicit task id, absolute
    artifact root, and the existing executor surface. This covers setup, identity,
    visible naming, non-submitting bridge proof, handshake and validation. Do not
-   refresh a healthy handshake mid-command or stack another task behind work.
+   refresh a healthy handshake mid-command. Coordination messages may arrive
+   during work; a new formal task still needs its own scope and reservation.
 3. For formal plan consensus, record at least three non-blocking review rounds
    and require `consensus-check` PASS. Each round needs its own real artifact and
    hash. Earlier objections must be explicitly resolved, not hidden by a later
@@ -137,13 +709,13 @@ Use [efficiency and task closeout](references/efficiency-and-closeout.md) to
 choose zero, one or two executors, apply phase-specific handshake budgets,
 attribute delivery failures, and close accepted work without repeated reviews.
 
-Use [executor closeout enforcement](references/executor-closeout-enforcement.md):
-the PreToolUse guard freezes the report, task pack and original attempt after the
+The legacy [executor closeout diagnostic](references/executor-closeout-enforcement.md)
+freezes the report, task pack and original attempt after the
 bound callback returns. Strict task-bound read-only diagnostics and original-controller
-reconciliation remain available. Stop accepts an ordinary honest waiting statement
-as WAITING_SUPERVISOR (continue:false, suppressOutput:true); no exact STATUS template
-is required. It preserves task/receipt state and rejects unsupported confirmation or
-consensus claims. Missing/in-flight/changed evidence cannot use this boundary.
+reconciliation remain available. In v3 its automatic advisory wrapper permits
+ordinary tools and an honest waiting turn-end; do not apply the legacy
+continue:false output as a conversation gate. Waiting does not confirm reception,
+release resources or establish consensus.
 
 After a proven sole `attempt-0001` with `NO_INPUT` and `events=[]`, closeout also
 admits the exact synchronous original callback CLI once. The frozen pack chooses
@@ -173,13 +745,15 @@ current evidence for authorized follow-up; never ask the user to relay to a boun
   observation is a supervisor budget limitation, not executor silence. Recover a
   late genuine ACK against the original task/provider/nonce without resending.
 - **Keys and queue entries do not prove reception.** Bind the exact receiver
-  process/session/transcript and a fresh EOF fence at the original PASTE_INTENT.
+  process/session/transcript and a fresh EOF fence at the original
+  NATIVE_INPUT_INTENT (Codex) or PASTE_INTENT (Claude).
   Only a new whole native user record after that fence, exactly equal to the
   payload including whitespace, yields NATIVE_RECEIVED. Claude queued_command
-  remains pending. Paste once, wait for the full stable draft, then submit once:
-  use Tab directly for busy Codex displaying the verified tab-to-queue hint,
-  otherwise Enter in a clear supported state. All recovery paths share at most
-  one additional key under the original controller; no separate Enter/Tab budget.
+  remains pending. For Codex, use its bound native control socket once with the
+  current expected turn identity; never inspect its composer, paste or press keys.
+  For Claude, paste once, verify the full stable draft, then submit once with Enter.
+  An uncertain native input permits original-log observation only. Historical
+  terminal recovery retains only its original controller's single-key budget.
 - `submit_completion_callback` writes an exclusive attempt journal before
   input, binding task pack SHA, report SHA, nonce and live workspace identities.
   A submitted attempt refuses repeat delivery; `--reconcile-only` is the explicit
@@ -264,10 +838,11 @@ Internal `action/results` objects are not valid top-level Codex hook output.
 Validate the wire format against the official schema and then observe automatic
 execution in the active client; a manual script exit is a separate offline check.
 
-- Install guards on both clients through `scripts/manage_install.py`; `doctor`
-  checks configuration and benign execution. Installation is not proof that an
-  already-running client reloaded its configuration. Run harness `guard-check`
-  after client settings changes and at task close.
+- Materialize the pinned controller and both client configurations through
+  `scripts/upgrade_live_materialize.py` inside the explicit private context.
+  Do not run the inherited production installer. Configuration checks are separate
+  from active-client adoption: verify actual automatic hooks, kernel isolation,
+  original session identities and native input capability before business input.
 - Require semantic positive and negative tests through real hook entrypoints,
   not only helper definitions or source-string counts. Missing/null/boolean-as-
   count, stale evidence, changed pins and malformed receipts must fail closed.
@@ -288,7 +863,7 @@ execution in the active client; a manual script exit is a separate offline check
 
 ## 双向投递与高效协作维护
 
-执行[原生投递与有界等待](references/verified-compose-delivery.md)：原 PASTE_INTENT 新鲜 EOF fence 后的完整 native user 才确认收到；排队仍 pending。原次恢复共用一次补键，封口保留 task-bound 诊断与零输入核收。默认 idle Stop 不要求求派；另行保留用户明确授权的每60秒新 marker 主动求派及其配套 hook，直到主管答复、新派发或 operator stop。
+执行[原生投递与有界等待](references/verified-compose-delivery.md)：原 NATIVE_INPUT_INTENT（Codex）或 PASTE_INTENT（Claude）新鲜 EOF fence 后的完整 native user 才确认收到；排队仍 pending。当前 Codex 原生输入无重发或补键预算；只有符合原控制器条件的历史终端尝试共用一次补键。封口保留 task-bound 诊断与零输入核收。默认 idle Stop 不要求求派；另行保留用户明确授权的每60秒新 marker 主动求派及其配套 hook，直到主管答复、新派发或 operator stop。
 
 ### Stop hook reentry
 

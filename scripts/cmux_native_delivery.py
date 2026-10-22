@@ -12,6 +12,7 @@ import time
 import uuid
 from datetime import datetime
 import cmux_daemon_identity as identity
+from upgrade_claude_registration import matches_process as registration_matches_process
 
 SCHEMA = "native-delivery-v1"
 MAX_RECORD = 8 * 1024 * 1024
@@ -74,11 +75,10 @@ def _live_session(p, provider):
                 if (held.st_dev, held.st_ino, held.st_size, held.st_mtime_ns) != (
                         current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns):
                     raise NativeDeliveryError("NATIVE_REGISTRATION_CHANGED")
-            births = {time.strftime('%a %b %e %H:%M:%S %Y', clock(p["birth"][0]))
-                      for clock in (time.gmtime, time.localtime)}
-            if (not isinstance(reg, dict) or reg.get("pid") != p["pid"]
-                    or reg.get("kind") != "interactive" or reg.get("procStart") not in births):
+            if not registration_matches_process(reg, p, observed_at=time.time()):
                 raise NativeDeliveryError("NATIVE_REGISTRATION_PROCESS_MISMATCH")
+            if identity.process(p["pid"]) != p:
+                raise NativeDeliveryError("NATIVE_PROCESS_CHANGED")
             return _uuid(reg["sessionId"])
     selected = _session_argument(p)
     if provider not in ("claude", "codex") or selected is None:
