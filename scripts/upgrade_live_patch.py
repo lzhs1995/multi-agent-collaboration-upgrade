@@ -75,20 +75,39 @@ def native_readers(name, text):
             '    for line in listing.stdout.splitlines():\n'
             '        fields = line.strip().split(None, 1)')
         modern_prefix = inventory_prefix.replace('["/bin/ps", "-U",', '["/bin/ps", "-ww", "-U",')
-        if text.count(modern_prefix) == 1 and inventory_prefix not in text:
+        shell_prefix = modern_prefix.replace('    matches = []\n', '    matches, shells = [], []\n')
+        shell_diagnostics = (text.count(shell_prefix) == 1
+                             and inventory_prefix not in text and modern_prefix not in text)
+        if shell_diagnostics:
+            inventory_prefix = shell_prefix
+        elif text.count(modern_prefix) == 1 and inventory_prefix not in text:
             inventory_prefix = modern_prefix
-        text = replace_once(text,
-            inventory_prefix,
+        inventory_replacement = (
             '    candidate = private_roots.candidate_process_matcher()\n'
             '    matches = []\n    for fields in private_process.inventory_for_tty(candidate, row["tty"]):')
-        text = _terminal_reads(text)
+        if shell_diagnostics:
+            # Shell rows are diagnostics only. Agent selection below still
+            # requires the frozen executable matcher and private provider roots.
+            inventory_replacement = (
+                '    candidate = private_roots.candidate_process_matcher()\n'
+                "    diagnostic_candidate = lambda value: candidate(value) or Path(value).name in ('sh', 'bash', 'zsh', 'fish')\n"
+                '    matches, shells = [], []\n'
+                '    for fields in private_process.inventory_for_tty(diagnostic_candidate, row["tty"]):')
+        text = replace_once(text,
+            inventory_prefix, inventory_replacement)
+        text = _terminal_reads(text, shell_diagnostics=shell_diagnostics)
         provider = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_provider")
         text = edit_nodes(text, [(provider, "def _provider(p):\n    return private_roots.executable_provider(p)")])
         modern_filter = (
             '        name = Path(fields[1]).name\n'
             '        if (name not in ("codex", "claude", "claude.exe", "node")\n'
             '                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):')
-        if text.count(modern_filter) == 1:
+        if shell_diagnostics:
+            text = replace_once(text,
+                '        if (name not in ("codex", "claude", "claude.exe", "node")\n'
+                '                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):',
+                '        if not candidate(fields[1]):')
+        elif text.count(modern_filter) == 1:
             text = replace_once(text, modern_filter, '        if not candidate(fields[1]):')
         else:
             text = replace_once(text,
@@ -201,9 +220,17 @@ def standalone_identity(text):
         "daemon_pid=proof['daemon']['pid'] if proof['daemon'] is not None else None,")
 
 
-def _terminal_reads(text):
+def _terminal_reads(text, *, shell_diagnostics=False):
     edits = []
-    for node in ast.walk(ast.parse(text)):
+    tree = ast.parse(text)
+    target_nodes = set()
+    if shell_diagnostics:
+        targets = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                   and node.name == "_target_process"]
+        if len(targets) != 1:
+            raise ValueError("expected native shell diagnostic function changed")
+        target_nodes = set(ast.walk(targets[0]))
+    for node in ast.walk(tree):
         if (isinstance(node, ast.Assign) and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "tty"
                 and "/bin/ps" in ast.get_source_segment(text, node)):
@@ -215,7 +242,8 @@ def _terminal_reads(text):
             if not subjects and any(isinstance(child, ast.Name) and child.id == "candidate"
                                     for child in ast.walk(node.value)):
                 subjects = ["p"]
-            if len(subjects) != 1 or subjects[0] not in ("p", "client"):
+            allowed_shell = (subjects == ["shell"] and shell_diagnostics and node in target_nodes)
+            if len(subjects) != 1 or (subjects[0] not in ("p", "client") and not allowed_shell):
                 raise ValueError("expected native terminal process subject changed")
             edits.append((node, "tty = private_process.terminal(" + subjects[0] + ")"))
     if not edits:

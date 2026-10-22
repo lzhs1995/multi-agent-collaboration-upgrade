@@ -1,0 +1,17 @@
+{
+  "version": "0.4.61",
+  "release_tree_sha256": "d14ae7c2b757c30b9fab21bd4d9556b43f6015e2e481be4c91ea44a6e7486bb6",
+  "upstream": "https://github.com/lzhs1995/multi-agent-collaboration",
+  "license": "MIT",
+  "note": "Unchanged source fixtures only; not a complete release or installable controller.",
+  "files": {
+    "cmux_native_delivery.py": {
+      "bytes": 36048,
+      "sha256": "104a3242a3c188106dbcc8abe4d018bf43d12f8c62c21c0a1f40f636b601a955"
+    },
+    "LICENSE": {
+      "bytes": 1082,
+      "sha256": "b0905a20660a4a5ca4de3bf1e57249ee34a4fcba3d73dcd1b7c96938750c366b"
+    }
+  }
+}

@@ -78,6 +78,12 @@ preserving its current delivery and recovery semantics. Use
 source, offline counterexamples and actual generated-controller probes. Source
 fixtures are test inputs, never a complete release or a live runtime. Their
 passing tests do not establish automatic hook adoption or the native benchmark.
+The separately pinned MAC 0.4.61 source also supports private shell-return
+diagnostics without selecting a shell as an agent. Keep the original executable,
+private root, process/session and native receipt checks; unknown source shapes
+still refuse. Follow [MAC 0.4.61 private validation](docs/MAC061-PRIVATE-VALIDATION.md)
+for the actual generated public binding controls and explicit live gaps. Do not
+move an in-flight experiment to that controller or infer new session authority.
 For a new explicitly authorized continuity experiment, the materializer may opt
 in with `--register-private-continuity`. It pins the original scheduler/guardian
 CURRENT contract to that immutable private release, not the shared installation.
