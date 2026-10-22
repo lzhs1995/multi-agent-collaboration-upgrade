@@ -277,3 +277,21 @@ class StageEntryTests(unittest.TestCase):
         original.assert_not_called()
         launch.assert_not_called()
         client.assert_not_called()
+
+
+class StagePromptWireTests(unittest.TestCase):
+    """The shared sender's inline limit: one line, at most 700 UTF-8 bytes."""
+
+    def test_live_length_paths_fit_one_inline_line_for_every_lane(self):
+        controller = "/Users/lzhs/uz/controllers/B/releases/stage-a-sol-20261022-v2/source"
+        python = "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+        for lane, model in (("codex", "gpt-6.1-sol"), ("claude_a", "claude-opus-5-5"), ("claude_b", "claude-opus-5-5")):
+            text = fence.stage_prompt("stage-a-sol-20261022-v2", model, controller, python, "/opt/homebrew/bin/rtk", lane)
+            self.assertLessEqual(len(text.encode()), fence.INLINE_MAX_BYTES, lane)
+            self.assertFalse(any(c in text for c in "\r\n\t"), lane)
+            self.assertIn("stage-a-sol-20261022-v2", text)  # the receipt marker is a substring
+            self.assertIn(readiness_command(controller, python, "/opt/homebrew/bin/rtk", lane), text)
+
+    def test_overlong_stage_is_refused_before_any_record(self):
+        with self.assertRaisesRegex(ContractError, "STAGE_PROMPT_NOT_SINGLE_INLINE_LINE"):
+            fence.stage_prompt("s" * 300, "m", "/c" * 40, "/p", "/r", "codex")

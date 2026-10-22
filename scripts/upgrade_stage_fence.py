@@ -22,19 +22,26 @@ LANES = ("codex", "claude_a", "claude_b")
 HOOK_PINS = ("codex/hooks.json", "claude_a/settings.json", "claude_b/settings.json")
 
 
+# The shared MAC sender pastes only one line of at most 700 UTF-8 bytes; a
+# longer or multiline text becomes a reference notice and could never equal
+# this prompt in the native journal. The stage id doubles as receipt marker.
+INLINE_MAX_BYTES = 700
+
+
 def stage_prompt(stage_id, model, controller, python, rtk, lane):
-    """A new, distinct readiness input; never the original startup prompt or its 900s wait."""
+    """A new, distinct, single-line readiness input; never the original prompt or its 900s wait."""
     command = readiness_command(controller, python, rtk, lane)
     invocation = command
     if lane == "codex":
-        invocation = ("使用 functions.exec，完整 JavaScript 为：\ntext(await tools.exec_command(" +
+        invocation = ("用 functions.exec 执行 JavaScript：text(await tools.exec_command(" +
             json.dumps(dict(cmd=command, login=False, max_output_tokens=1200),
-                       ensure_ascii=False, separators=(",", ":")) + "));\n")
-    return ("这是用户已授权的受限验证阶段 " + stage_id + "（模型 " + model + "），你的角色是 " + lane + "。"
-            "原启动记录及其失败保留不变，不重做旧探针。先读取 " + str(Path(controller) / "SKILL.md") + "。"
-            "仅通过一个正常工具调用执行以下完整命令：\n" + invocation +
-            "\n成功后回复 STAGE_READY 并正常结束本轮。此命令只用于核验真实工具与自动 hook；"
-            "不要手动运行 hook、伪造回执或发消息。正式任务须等待阶段 adoption 核验。保留本会话，不得新建替代会话。")
+                       ensure_ascii=False, separators=(",", ":")) + "));")
+    text = ("受限验证阶段 " + stage_id + "（" + model + "，角色 " + lane + "）：原启动记录与失败保留，不重做旧探针。"
+            "仅用一个正常工具调用执行：" + invocation +
+            " 成功后回复 STAGE_READY 并结束本轮；不手动运行 hook、不发消息、不新建会话。")
+    require(len(text.encode("utf-8")) <= INLINE_MAX_BYTES and not any(c in text for c in "\r\n\t"),
+            "STAGE_PROMPT_NOT_SINGLE_INLINE_LINE")
+    return text
 
 
 def control_directory(binding, stage_id):
