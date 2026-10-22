@@ -315,7 +315,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
     models = [(ref, model) for ref, model in model_records
               if window <= ref["offset"] <= completed[0][0]["offset"]]
     require(models and len({model for _, model in models}) == 1, "STARTUP_MODEL_UNCONFIRMED_OR_CHANGED")
-    require(stage is None or models[0][1] == stage["model"], "STAGE_MODEL_CHANGED")
+    require(stage is None or models[0][1] == stage["models"][lane], "STAGE_MODEL_CHANGED")
     nested = (nested_readiness_command(execution_records, call, completed[0][0], session, command, spec)
               if lane == "codex" else None)
     matched = {"PreToolUse": [], "PostToolUse": []}

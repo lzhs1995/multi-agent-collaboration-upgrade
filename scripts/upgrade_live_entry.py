@@ -167,6 +167,18 @@ def main(argv=None):
     parser.add_argument("--lane", choices=LANES)
     args = parser.parse_args(argv)
     try:
+        source = Path(__file__).resolve().parent.parent
+        if "stage_fence" in json.loads(read_regular(source / "upgrade-binding.json")):
+            # A fenced stage only inspects the original clients; it never
+            # launches, starts or replaces a client.
+            from upgrade_stage_fence import load_stage
+            require(args.command == "experiment-inspect", "STAGE_INSPECT_ONLY")
+            ref, spec, binding, stage = load_stage(source)
+            require(str(checked_path(args.startup)) == ref["path"] and args.startup_sha256 == ref["sha256"],
+                    "STARTUP_PIN_CHANGED")
+            from upgrade_live_inspect import inspect
+            print(json.dumps(inspect(ref, spec, binding, stage=stage), ensure_ascii=False, indent=2))
+            return 0
         ref, spec, binding = load_startup(args.startup, args.startup_sha256)
         if args.command == "experiment-launch":
             value = launch(ref, spec, binding, spawn=args.spawn, spawn_authorized=args.spawn_authorized)

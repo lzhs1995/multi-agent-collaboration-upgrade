@@ -85,7 +85,11 @@ from upgrade_readiness_evidence import (command_in_tool, completed_probe, hook_m
     native_records, nested_readiness_command, readiness_evidence)
 
 
-def inspect(startup_ref, spec, binding):
+def inspect(startup_ref, spec, binding, *, stage=None):
+    """stage: a validated fence; readiness then admits only that stage's window.
+
+    The original launches, PIDs, workspace and history are unchanged inputs.
+    """
     import cmux_daemon_identity as identity
     import cmux_native_delivery as native
     from cmux_codex_rpc import DaemonRPC
@@ -134,12 +138,13 @@ def inspect(startup_ref, spec, binding):
             if boundary is not None:
                 kernels[lane]["socket_boundary"] = verify_kernel(client["pid"], boundary, writer=lane == "codex")
             sessions[lane] = session
-            evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches)
+            evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches,
+                                                stage=stage)
             session.update(model=evidence[lane]["model"], model_record=evidence[lane]["model_record"],
                            freeze_fence=session["transcript"])
         except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
             errors[lane] = str(exc)
-            if (lane == "codex" and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
+            if (stage is None and lane == "codex" and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
                     and lane in sessions and startup_continuity_enabled(binding)):
                 from upgrade_startup_continuity import startup_failure_evidence
                 try:
@@ -191,5 +196,8 @@ def inspect(startup_ref, spec, binding):
                 launch_intent=intent_ref, launch_result=result_ref, launches=launch_refs,
                 sessions=sessions, readiness=evidence, kernel=kernels, codex_capability=capability,
                 errors=errors, ready=not errors and len(evidence) == 3 and capability is not None,
-                stopped=os.path.lexists(spec["stop_path"]), input_operations=0,
-                **({"startup_failures": startup_failures} if startup_continuity_enabled(binding) else {}))
+                stopped=os.path.lexists(spec["stop_path"]) or (stage is not None and os.path.lexists(
+                    Path(stage["control"]) / "stop.json")), input_operations=0,
+                **({"startup_failures": startup_failures}
+                   if stage is None and startup_continuity_enabled(binding) else {}),
+                **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}))

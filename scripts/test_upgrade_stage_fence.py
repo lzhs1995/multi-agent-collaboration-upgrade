@@ -29,7 +29,8 @@ class StageReadinessTests(unittest.TestCase):
             clients={lane: {"native_root": str(self.root / lane)} for lane in fence.LANES})
         self.startup = write_json(self.root / "startup.json", {"offline_fixture": True})
         self.binding = dict(state_root=str(self.root))
-        self.stage = dict(stage_id="stage-a", model="sol", controller=self.controller,
+        self.models = {lane: "sol" for lane in fence.LANES}
+        self.stage = dict(stage_id="stage-a", models=self.models, controller=self.controller,
             prompts={lane: fence.stage_prompt("stage-a", "sol", self.controller, "/pinned/python", "/pinned/rtk", lane)
                      for lane in fence.LANES})
 
@@ -104,7 +105,8 @@ class StageReadinessTests(unittest.TestCase):
         for lane in ("codex", "claude_a"):
             p = 5 if lane == "codex" else 1
             cases = {
-                "wrong_stage_model": (lambda r: None, dict(self.stage, model="other"), "STAGE_MODEL_CHANGED"),
+                "wrong_stage_model": (lambda r: None, dict(self.stage, models=dict(self.models, **{lane: "other"})),
+                                      "STAGE_MODEL_CHANGED"),
                 "model_switch_in_window": (lambda r: r.insert(-1, (dict(r[-1][0], offset=r[-1][0]["offset"] - 50),
                     {"type": "turn_context", "payload": {"model": "astra"}} if lane == "codex" else
                     {"type": "assistant", "message": {"model": "astra", "content": []}})), None, "STARTUP_MODEL_UNCONFIRMED_OR_CHANGED"),
@@ -151,11 +153,12 @@ class StageReadinessTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             hooks[key] = write_json(path, {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}})
             spec["pins"][key] = dict(path=hooks[key]["path"], sha256="0" * 64, mode=0o400)  # original pin: old hash
-        stage = dict(schema=fence.SCHEMA, stage_id="stage-a", model="sol", original_startup=startup,
+        stage = dict(schema=fence.SCHEMA, stage_id="stage-a", models=self.models, original_startup=startup,
                      authority=dict(path=authority["path"], sha256=authority["sha256"]), controller=self.controller,
                      control=str(control), prompts=self.stage["prompts"], hooks=hooks)
         ref = write_json(control / "stage.json", stage)
-        binding = dict(stage_fence=dict(path=ref["path"], stage_id="stage-a", model="sol"),
+        binding = dict(stage_fence=dict(path=ref["path"], sha256=ref["sha256"], stage_id="stage-a",
+                                        models=self.models),
                        evidence_root=str(evidence_root), config_root=str(config), controller_root=self.controller)
         return ref, binding, spec, stage
 
@@ -165,7 +168,8 @@ class StageReadinessTests(unittest.TestCase):
         hook = lambda st: Path(st["hooks"]["claude_a/settings.json"]["path"])
         cases = {
             "binding_absent": lambda r, b, s, st: b.pop("stage_fence"),
-            "binding_model": lambda r, b, s, st: b["stage_fence"].update(model="other"),
+            "binding_model": lambda r, b, s, st: b["stage_fence"].update(models=dict(self.models, codex="other")),
+            "binding_record_sha": lambda r, b, s, st: b["stage_fence"].update(sha256="0" * 64),
             "record_changed": lambda r, b, s, st: r.update(sha256="0" * 64),
             "original_startup_changed": lambda r, b, s, st: Path(b["config_root"], "startup-v2.json").write_text("{}"),
             "authority_changed": lambda r, b, s, st: Path(st["authority"]["path"]).write_text("{}"),
@@ -199,6 +203,7 @@ class StageReadinessTests(unittest.TestCase):
         path.write_text(path.read_text().replace(self.controller, self.original))
         stage["hooks"][key] = file_ref(path)
         ref = write_json(Path(ref["path"]), stage)
+        binding["stage_fence"]["sha256"] = ref["sha256"]  # a correctly re-pinned record is still refused
         with self.assertRaisesRegex(ContractError, "STAGE_HOOK_CONTROLLER_CHANGED:" + key):
             fence.validate_stage(ref, binding, spec)
 
@@ -207,3 +212,40 @@ class StageReadinessTests(unittest.TestCase):
         fixture[1].insert(2, (dict(fixture[1][1][0], offset=150), {"type": "assistant", "isSidechain": True,
                                                                   "message": {"model": "other", "content": []}}))
         self.assertEqual(self.check("claude_a", fixture)["model"], "sol")
+
+
+import test_upgrade_live_startup as startup_fixtures
+import upgrade_input_gate as gate
+
+
+class StageInputGateTests(startup_fixtures.InputGateTests):
+    """The original gate fixture, with a stage fence in the client binding."""
+
+    def setUp(self):
+        super().setUp()
+        self.stage_control = self.control / "stage-a"
+        self.stage_control.mkdir()
+        self.stage_ref = write_json(self.stage_control / "stage.json", {"stage": "fixture"})
+        self.binding["stage_fence"] = dict(path=self.stage_ref["path"], sha256=self.stage_ref["sha256"],
+                                           stage_id="stage-a", models={})
+
+    def adopt(self):
+        return write_json(self.stage_control / "adoption.json", dict(schema=fence.ADOPTION_SCHEMA,
+            stage=self.stage_ref, startup=self.startup, verified=True, input_operations=0, sessions=self.sessions))
+
+    def test_stage_accepts_only_its_own_adoption_and_both_stops(self):
+        # The original adoption.json is never authority for a fenced stage.
+        write_json(self.control / "adoption.json", dict(schema="upgrade-live-adoption-v2",
+                   startup=self.startup, verified=True, sessions=self.sessions))
+        with self.assertRaises((OSError, ContractError)):
+            gate.check_input(self.proof)
+        self.adopt()
+        gate.check_input(self.proof)  # control: the stage adoption admits enrolled endpoints
+        (self.stage_control / "stop.json").write_text("stop")
+        with self.assertRaisesRegex(ContractError, "STOP_REQUESTED"):
+            gate.check_input(self.proof)
+        (self.stage_control / "stop.json").unlink()
+        self.stage_ref.update(sha256="0" * 64)
+        self.binding["stage_fence"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ContractError, "STAGE_RECORD_CHANGED"):
+            gate.check_input(self.proof)

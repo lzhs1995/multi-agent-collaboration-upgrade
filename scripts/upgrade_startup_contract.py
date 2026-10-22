@@ -206,7 +206,10 @@ def client_environment(roots, paths, lane, rtk, *, response_observation=False, c
     return result
 
 
-def validate_startup(ref, *, controller=None, verify_pins=True):
+def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller=None):
+    """stage_controller: a fenced stage's own release. Its three rewritten lane
+    hook files are checked against it and pinned by the stage, not by this
+    historical startup; every other original pin is still verified unchanged."""
     spec = json_ref(ref, "startup")
     goal_mode = spec.get("schema") == GOAL_SCHEMA
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
@@ -320,16 +323,19 @@ def validate_startup(ref, *, controller=None, verify_pins=True):
     if child_budget:
         require(str(child_socket(paths)) in binding["isolation"]["immutable"],
                 "STARTUP_CHILD_SOCKET_IMMUTABILITY_CHANGED")
-    for name in ("codex-hooks.json", "claude-settings.json", "codex/hooks.json",
-                 "claude_a/settings.json", "claude_b/settings.json"):
+    lane_hooks = ("codex/hooks.json", "claude_a/settings.json", "claude_b/settings.json")
+    require(stage_controller is None or (controller is None
+            and checked_path(stage_controller) != source), "STARTUP_STAGE_CONTROLLER_CHANGED")
+    for name in ("codex-hooks.json", "claude-settings.json", *lane_hooks):
         document = json.loads(read_regular(pins[name]["path"]))
         try:
-            validate_registered_hooks(document, pins["python"]["path"], source,
+            validate_registered_hooks(document, pins["python"]["path"],
+                Path(stage_controller) if stage_controller is not None and name in lane_hooks else source,
                 provider="codex" if name.startswith("codex") else "claude", enabled=child_budget)
         except (ValueError, KeyError, TypeError) as exc:
             require(False, "STARTUP_CHILD_HOOK_CHANGED:" + name)
     if verify_pins:
-        verify_artifacts(pins.values())
+        verify_artifacts(v for k, v in pins.items() if stage_controller is None or k not in lane_hooks)
     require(pins["claude_ps"]["mode"] == 0o555
             and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
             "STARTUP_CLAUDE_PS_CHANGED")

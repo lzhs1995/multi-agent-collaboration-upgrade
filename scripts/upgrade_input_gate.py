@@ -23,10 +23,17 @@ def canonical(value):
 def check_input(proof, *, native_binding=None):
     binding, _ = configuration()
     control = Path(binding["evidence_root"]) / "live-control"
-    require(not os.path.lexists(control / "stop.json"), "EXPERIMENT_STOP_REQUESTED")
+    from upgrade_stage_fence import stage_adoption, stop_paths
+    stops = stop_paths(binding)
+    require(not any(map(os.path.lexists, stops)), "EXPERIMENT_STOP_REQUESTED")
     startup = file_ref(Path(binding["config_root"]) / "startup-v2.json")
     startup_authority = False
-    if os.path.lexists(control / "adoption.json"):
+    if "stage_fence" in binding:
+        # A fenced stage accepts only its own external adoption, never the
+        # original adoption.json or startup-continuity authority.
+        adoption = stage_adoption(binding)
+        allowed = {"codex", "claude_a", "claude_b"}
+    elif os.path.lexists(control / "adoption.json"):
         adoption = json.loads(read_regular(control / "adoption.json"))
         require(adoption.get("schema") == "upgrade-live-adoption-v2"
                 and adoption.get("startup") == startup and adoption.get("verified") is True,
@@ -85,5 +92,5 @@ def check_input(proof, *, native_binding=None):
         fresh_allowed = set(current_ready_claude_lanes(adoption, native))
         require(by_surface[caller][0] in fresh_allowed and by_surface[target][0] in fresh_allowed,
                 "STARTUP_CONTINUITY_ENDPOINT_NOT_READY")
-    require(not os.path.lexists(control / "stop.json"), "EXPERIMENT_STOP_REQUESTED")
+    require(not any(map(os.path.lexists, stops)), "EXPERIMENT_STOP_REQUESTED")
     return adoption
