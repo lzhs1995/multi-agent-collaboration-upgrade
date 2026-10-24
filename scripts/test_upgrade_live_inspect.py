@@ -433,7 +433,7 @@ class InspectorFlowTests(unittest.TestCase):
         write_json(self.root / "startup/result.json", dict(startup=self.startup, returncode=0,
                    workspace_creation_attempts=1, stdout="OK workspace:42\n"))
 
-    def inspect_fixture(self):
+    def inspect_fixture(self, stage=None):
         import cmux_daemon_identity as identity
         import cmux_native_delivery as native
         # The RPC adapter belongs to the pinned base controller and is copied
@@ -460,7 +460,7 @@ class InspectorFlowTests(unittest.TestCase):
             client.socket_identity = {"offline_fixture": True}
             client.request.side_effect = [{"thread": {"id": sid, "path": transcript,
                 "canAcceptDirectInput": True}}, {"data": []}]
-            result = subject.inspect(self.startup, self.spec, self.binding)
+            result = subject.inspect(self.startup, self.spec, self.binding, stage=stage)
             self.assertEqual(cmux.call_count, 1)
             self.assertEqual(result["input_operations"], 0)
             self.assertTrue(all(call.args[0] in ("thread/read", "thread/turns/list")
@@ -493,6 +493,115 @@ class InspectorFlowTests(unittest.TestCase):
                                  else "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED")
                 self.assertNotIn(lane, result["sessions"])
                 self.assertNotIn(lane, lanes)
+
+    def recovered_stage(self):
+        """The same three sessions restored into a new workspace with new surfaces and processes."""
+        import upgrade_stage_fence as fence
+        self.restored = str(uuid.uuid4())
+        self.spec["clients"]["codex"]["session_id"] = str(uuid.uuid4())  # Codex's thread is not the startup's
+        sessions = {lane: self.spec["clients"][lane]["session_id"] for lane in LANES}
+        panes, clients = [], {}
+        for index, lane in enumerate(LANES):
+            surface, pane = str(uuid.uuid4()), str(uuid.uuid4())
+            provider = "codex" if lane == "codex" else "claude"
+            clients[surface] = dict(pid=600 + index, birth=[6, index], executable="/fixture/" + provider,
+                                    file_identity={}, session_id=sessions[lane], lane=lane)
+            panes.append(dict(id=pane, surfaces=[dict(id=surface, tty="ttys6" + str(index), type="terminal",
+                                                      dock_scope="workspace")]))
+        self.tree["windows"][0]["workspaces"][0]["panes"] = []  # the original surfaces are gone
+        self.tree["windows"][0]["workspaces"].append(dict(id=self.restored, ref="workspace:44", panes=panes))
+        self.clients = clients
+        control = self.root / "control"
+        control.mkdir()
+        stage = dict(schema=fence.RECOVERED_SCHEMA, control=str(control),
+                     recovery=dict(workspace_uuid=self.restored, sessions=sessions, pins={}))
+        write_json(control / "stage.json", stage)
+        return stage
+
+    def test_recovered_stage_publishes_restored_clients_before_inspecting_them(self):
+        import upgrade_stage_fence as fence
+        stage = self.recovered_stage()
+        result, lanes = self.inspect_fixture(stage)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["errors"], {"recovery": "STAGE_RECOVERY_NOT_PUBLISHED"})
+        self.assertEqual(lanes, [])  # no readiness, no RPC before publication
+        candidates = result["recovery_candidates"]
+        self.assertEqual({lane: c["pid"] for lane, c in candidates.items()}, dict(codex=600, claude_a=601, claude_b=602))
+        self.assertEqual({c["workspace_uuid"] for c in candidates.values()}, {self.restored})
+        self.assertTrue(all(c["session_id"] == stage["recovery"]["sessions"][lane] for lane, c in candidates.items()))
+        result, lanes = self.inspect_fixture()  # control: the original launches no longer resolve
+        self.assertFalse(result["ready"])
+        self.assertEqual(set(result["errors"]), set(LANES))
+        stage_ref = file_ref(Path(stage["control"]) / "stage.json")
+        recovery = write_json(fence.recovery_path(stage), dict(schema=fence.RECOVERY_SCHEMA, stage=stage_ref,
+                              startup=self.startup, input_operations=0, launches=candidates))
+        result, lanes = self.inspect_fixture(stage)
+        self.assertTrue(result["ready"], result["errors"])
+        self.assertEqual(set(lanes), set(LANES))
+        self.assertEqual(result["recovery"], recovery)
+        self.assertEqual({lane: result["launches"][lane] for lane in LANES}, {lane: recovery for lane in LANES})
+        self.assertEqual({s["workspace_uuid"] for s in result["sessions"].values()}, {self.restored})
+
+    def test_recovered_candidates_and_launches_refuse_any_other_identity(self):
+        import upgrade_stage_fence as fence
+        stage = self.recovered_stage()
+        workspace = next(ws for ws in self.tree["windows"][0]["workspaces"] if ws["id"] == self.restored)
+        claude_a = next(s for s, c in self.clients.items() if c["lane"] == "claude_a")
+        tree, clients = copy.deepcopy(self.tree), copy.deepcopy(self.clients)
+        reset = lambda: (setattr(self, "tree", copy.deepcopy(tree)), setattr(self, "clients", copy.deepcopy(clients)))
+
+        def duplicate_session():
+            surface = str(uuid.uuid4())
+            restored = next(ws for ws in self.tree["windows"][0]["workspaces"] if ws["id"] == self.restored)
+            restored["panes"].append(dict(id=str(uuid.uuid4()), surfaces=[dict(id=surface, tty="ttys69",
+                                          type="terminal", dock_scope="workspace")]))
+            self.clients[surface] = dict(self.clients[claude_a], pid=699, birth=[6, 9])
+        before = {
+            "duplicate_session": (duplicate_session, "claude_a=2"),
+            "other_codex_thread": (lambda: next(c for c in self.clients.values() if c["lane"] == "codex").update(
+                session_id=str(uuid.uuid4())), "codex=0"),
+            "other_native_root": (lambda: self.clients[claude_a].update(lane="claude_b"), "claude_a=0"),
+            "protected_surface": (lambda: self.spec["protected_surface_uuids"].append(claude_a), "claude_a=0"),
+            "other_workspace": (lambda: self.tree["windows"][0]["workspaces"][1]["panes"].append(
+                next(ws for ws in self.tree["windows"][0]["workspaces"] if ws["id"] == self.restored)["panes"].pop(1)),
+                "claude_a=0"),
+        }
+        for label, (mutate, count) in before.items():
+            with self.subTest(phase="candidates", label=label):
+                reset()
+                self.spec["protected_surface_uuids"] = []
+                mutate()
+                result, lanes = self.inspect_fixture(stage)
+                self.assertIsNone(result["recovery_candidates"])
+                self.assertIn("STAGE_RECOVERED_CLIENT_NOT_UNIQUE", result["errors"]["recovery"])
+                self.assertIn(count, result["errors"]["recovery"])
+                self.assertEqual(lanes, [])
+        reset()
+        self.spec["protected_surface_uuids"] = []
+        candidates = self.inspect_fixture(stage)[0]["recovery_candidates"]
+        self.assertEqual(len(candidates), 3)  # control
+        write_json(fence.recovery_path(stage), dict(schema=fence.RECOVERY_SCHEMA,
+                   stage=file_ref(Path(stage["control"]) / "stage.json"), startup=self.startup,
+                   input_operations=0, launches=candidates))
+        after = {
+            "pid": (lambda: self.clients[claude_a].update(pid=777), "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED"),
+            "birth": (lambda: self.clients[claude_a].update(birth=[9, 9]), "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED"),
+            "workspace": (lambda: self.tree["windows"][0]["workspaces"][1]["panes"].append(
+                next(ws for ws in self.tree["windows"][0]["workspaces"] if ws["id"] == self.restored)["panes"].pop(1)),
+                "LAUNCH_WORKSPACE_CHANGED"),
+            "claude_session": (lambda: self.clients[claude_a].update(session_id=str(uuid.uuid4())),
+                               "ORIGINAL_CLAUDE_SESSION_CHANGED"),
+        }
+        for label, (mutate, error) in after.items():
+            with self.subTest(phase="published", label=label):
+                reset()
+                mutate()
+                result, lanes = self.inspect_fixture(stage)
+                self.assertFalse(result["ready"])
+                self.assertEqual(result["errors"]["claude_a"], error)
+                self.assertNotIn("claude_a", lanes)
+        reset()
+        self.assertTrue(self.inspect_fixture(stage)[0]["ready"])  # control: the published identity passes
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from upgrade_experiment import validate_sessions
 from upgrade_live_control import external_publisher
 from upgrade_live_runtime import validate_live_runtime
 from upgrade_stage_fence import (ADOPTION_SCHEMA, RECOVERED_SCHEMA, RECOVERY_SCHEMA, load_stage, recovered_launches,
-                                 recovery_path, stop_paths)
+                                 recovery_launches, recovery_path, stop_paths)
 
 INSPECTION_SCHEMA = "upgrade-live-inspection-v2"
 
@@ -144,6 +144,8 @@ def recover(runtime_ref, stage_ref):
     require(0 <= time.time_ns() - result["observed_at_ns"] < 30 * 10**9, "INSPECTION_TOO_OLD_FOR_RECOVERY")
     record = dict(schema=RECOVERY_SCHEMA, stage=stage_ref, startup=runtime["startup"], observed_at=utc_now(),
                   inspection=ref, launches=candidates, input_operations=0)
+    # Published once and never rewritten: the exact record is validated first.
+    recovery_launches(stage, stage_ref, runtime["startup"], record)
     require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
     published = write_json(path, record, exclusive=True)
     path.chmod(0o444)

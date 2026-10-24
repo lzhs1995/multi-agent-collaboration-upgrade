@@ -207,6 +207,136 @@ class StageReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "STAGE_HOOK_CONTROLLER_CHANGED:" + key):
             fence.validate_stage(ref, binding, spec)
 
+    def recovered_record(self, base=None):
+        """A recovered stage over the same files: original Claude IDs, one Codex thread, one exact re-pin."""
+        ref, binding, spec, stage = base or self.stage_record()
+        for lane in ("claude_a", "claude_b"):
+            spec["clients"][lane]["session_id"] = str(uuid.uuid4())
+        config = self.root / "clients/codex/config.toml"
+        config.write_bytes(b"model = 'sol'\n")
+        spec["pins"]["codex/config.toml"] = dict(path=str(config), sha256=digest(b"model = 'sol'\n"), bytes=14, mode=0o444)
+        config.write_bytes(b"model = 'sol'\n" + b"\n[tui]\nscreen_reader_detection_done = true\n")
+        from upgrade_live_integrity import artifact_ref
+        stage = dict(stage, schema=fence.RECOVERED_SCHEMA, recovery=dict(workspace_uuid=str(uuid.uuid4()),
+            sessions=dict(codex=str(uuid.uuid4()), **{l: spec["clients"][l]["session_id"] for l in ("claude_a", "claude_b")}),
+            pins={"codex/config.toml": artifact_ref(config)}))
+        ref = write_json(Path(ref["path"]), stage)
+        binding["stage_fence"]["sha256"] = ref["sha256"]
+        return ref, binding, spec, stage
+
+    def fresh_recovered(self):
+        return self.recovered_record(self.fresh_stage())
+
+    def test_recovered_stage_accepts_restored_identity_and_rejects_each_change(self):
+        ref, binding, spec, stage = self.recovered_record()
+        self.assertEqual(fence.validate_stage(ref, binding, spec)["recovery"], stage["recovery"])
+        upper = lambda value: value.upper()
+        cases = {
+            "claude_session_not_original": lambda st, s: st["recovery"]["sessions"].update(claude_a=str(uuid.uuid4())),
+            "codex_equals_claude": lambda st, s: st["recovery"]["sessions"].update(codex=s["clients"]["claude_a"]["session_id"]),
+            "lane_missing": lambda st, s: st["recovery"]["sessions"].pop("codex"),
+            "workspace_not_canonical": lambda st, s: st["recovery"].update(workspace_uuid=upper(st["recovery"]["workspace_uuid"])),
+            "extra_recovery_field": lambda st, s: st["recovery"].update(pids={}),
+            "pin_not_recoverable": lambda st, s: st["recovery"]["pins"].update({"claude_a/settings.json": st["recovery"]["pins"]["codex/config.toml"]}),
+            "pin_other_location": lambda st, s: st["recovery"]["pins"]["codex/config.toml"].update(path="/elsewhere/config.toml"),
+            "pin_equals_original": lambda st, s: st["recovery"]["pins"].update({"codex/config.toml": dict(s["pins"]["codex/config.toml"])}),
+            "v1_with_recovery": lambda st, s: st.update(schema=fence.SCHEMA),
+            "v2_without_recovery": lambda st, s: st.pop("recovery"),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                ref, binding, spec, stage = self.fresh_recovered()
+                self.assertEqual(fence.validate_stage(ref, binding, spec)["schema"], fence.RECOVERED_SCHEMA)  # control
+                mutate(stage, spec)
+                ref = write_json(Path(ref["path"]), stage)
+                binding["stage_fence"]["sha256"] = ref["sha256"]  # re-pinned: the content itself is refused
+                with self.assertRaises((ContractError, ValueError)):
+                    fence.validate_stage(ref, binding, spec)
+
+    def test_recovered_view_uses_stage_hook_and_recovered_pins_only(self):
+        ref, binding, spec, stage = self.recovered_record()
+        view = fence.stage_view(spec, stage)
+        self.assertEqual(view["controller"], stage["controller"])
+        for key in fence.HOOK_PINS:
+            self.assertEqual(view["pins"][key], stage["hooks"][key])
+            self.assertNotEqual(spec["pins"][key], stage["hooks"][key])  # the original pin is untouched history
+        self.assertEqual(view["pins"]["codex/config.toml"], stage["recovery"]["pins"]["codex/config.toml"])
+        self.assertEqual(view["pins"]["python"], spec["pins"]["python"])
+        original = fence.stage_view(spec, dict(stage, schema=fence.SCHEMA))
+        self.assertIs(original["pins"], spec["pins"])  # control: an original stage keeps every original pin
+
+    def recovery_value(self, ref, stage):
+        launches = {lane: dict(schema=fence.RECOVERED_LAUNCH_SCHEMA, lane=lane,
+            provider="codex" if lane == "codex" else "claude", native_root=str(self.root / lane),
+            session_id=stage["recovery"]["sessions"][lane], pid=500 + n, birth=[5, n], surface_uuid=str(uuid.uuid4()),
+            pane_uuid=str(uuid.uuid4()), workspace_uuid=stage["recovery"]["workspace_uuid"], tty="ttys5" + str(n),
+            startup=self.startup) for n, lane in enumerate(fence.LANES)}
+        return dict(schema=fence.RECOVERY_SCHEMA, stage=ref, startup=self.startup, input_operations=0, launches=launches)
+
+    def test_recovered_launches_require_one_published_exact_record(self):
+        ref, binding, spec, stage = self.recovered_record()
+        self.assertEqual(fence.recovered_launches(dict(stage, schema=fence.SCHEMA), ref, self.startup), (None, None))
+        with self.assertRaisesRegex(ContractError, "recovery.json"):  # unpublished: never the original launches
+            fence.recovered_launches(stage, ref, self.startup)
+        value = self.recovery_value(ref, stage)
+        path = fence.recovery_path(stage)
+        published = write_json(path, value)
+        got_ref, launches = fence.recovered_launches(stage, ref, self.startup)
+        self.assertEqual((got_ref, launches), (published, value["launches"]))
+        cases = {
+            "other_stage": lambda v: v.update(stage=dict(ref, sha256="0" * 64)),
+            "other_startup": lambda v: v.update(startup=dict(self.startup, sha256="0" * 64)),
+            "input_sent": lambda v: v.update(input_operations=1),
+            "lane_missing": lambda v: v["launches"].pop("claude_b"),
+            "wrong_session": lambda v: v["launches"]["codex"].update(session_id=str(uuid.uuid4())),
+            "wrong_workspace": lambda v: v["launches"]["claude_a"].update(workspace_uuid=str(uuid.uuid4())),
+            "wrong_provider": lambda v: v["launches"]["claude_a"].update(provider="codex"),
+            "extra_field": lambda v: v["launches"]["claude_a"].update(title="claude_a"),
+            "shared_surface": lambda v: v["launches"]["claude_b"].update(surface_uuid=v["launches"]["claude_a"]["surface_uuid"]),
+            "shared_pid": lambda v: v["launches"]["claude_b"].update(pid=v["launches"]["claude_a"]["pid"]),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                changed = copy.deepcopy(value)
+                mutate(changed)
+                write_json(path, changed)
+                with self.assertRaises(ContractError):
+                    fence.recovered_launches(stage, ref, self.startup)
+        write_json(path, value)
+        self.assertEqual(fence.recovered_launches(stage, ref, self.startup)[1], value["launches"])  # control
+
+    def test_hook_observer_scope_follows_only_the_published_recovered_stage(self):
+        from upgrade_hook_observer import stage_scope
+        ref, binding, spec, stage = self.recovered_record()
+        self.assertEqual(stage_scope({}, self.startup), (None, None))
+        self.assertEqual(stage_scope(binding, self.startup), (stage, None))  # before recovery: no launch source
+        value = self.recovery_value(ref, stage)
+        write_json(fence.recovery_path(stage), value)
+        self.assertEqual(stage_scope(binding, self.startup), (stage, value["launches"]))
+        with self.assertRaisesRegex(ValueError, "STAGE_RECORD_CHANGED"):
+            stage_scope(dict(binding, stage_fence=dict(binding["stage_fence"], sha256="0" * 64)), self.startup)
+        original = write_json(Path(ref["path"]), dict(stage, schema=fence.SCHEMA))
+        self.assertEqual(stage_scope(dict(binding, stage_fence=dict(binding["stage_fence"], sha256=original["sha256"])),
+                                     self.startup), (None, None))  # an original stage keeps the original launches
+
+    def test_stage_prompt_with_any_prefix_is_not_the_stage_prompt(self):
+        prefix = "claude_a（surface " + str(uuid.uuid4()).upper() + "）：\n"
+        self.assertEqual(len(prefix.encode()), 62)  # the measured restored-input prefix shape
+        for lane in ("codex", "claude_a"):
+            with self.subTest(lane=lane):
+                fixture = self.fixture(lane)
+                self.assertEqual(self.check(lane, fixture)["model"], "sol")  # control: the exact prompt passes
+                fixture = self.fixture(lane)
+                for _, row in fixture[1]:
+                    if lane == "codex" and row.get("payload", {}).get("role") == "user":
+                        content = row["payload"]["content"][0]
+                        if content["text"] == self.stage["prompts"][lane]:
+                            content["text"] = prefix + content["text"]
+                    elif row.get("type") == "user" and row["message"]["content"] == self.stage["prompts"][lane]:
+                        row["message"]["content"] = prefix + row["message"]["content"]
+                with self.assertRaisesRegex(ContractError, "ORIGINAL_STARTUP_PROMPT_NOT_OBSERVED"):
+                    self.check(lane, fixture)
+
     def test_claude_sidechain_model_is_not_stage_evidence(self):
         fixture = self.fixture("claude_a")
         fixture[1].insert(2, (dict(fixture[1][1][0], offset=150), {"type": "assistant", "isSidechain": True,

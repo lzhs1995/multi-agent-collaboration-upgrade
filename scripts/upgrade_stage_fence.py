@@ -193,7 +193,11 @@ def recovered_launches(stage, stage_ref, startup_ref):
     if stage.get("schema") != RECOVERED_SCHEMA:
         return None, None
     ref = file_ref(recovery_path(stage))
-    value = json_ref(ref, "stage recovery")
+    return ref, recovery_launches(stage, stage_ref, startup_ref, json_ref(ref, "stage recovery"))
+
+
+def recovery_launches(stage, stage_ref, startup_ref, value):
+    """The launches of one recovery record for this stage, or refuse; checked before and after publication."""
     sessions, workspace = stage["recovery"]["sessions"], stage["recovery"]["workspace_uuid"]
     require(value.get("schema") == RECOVERY_SCHEMA and value.get("stage") == stage_ref
             and value.get("startup") == startup_ref and value.get("input_operations") == 0
@@ -208,7 +212,7 @@ def recovered_launches(stage, stage_ref, startup_ref):
     require(len({launch["surface_uuid"] for launch in value["launches"].values()}) == len(LANES)
             and len({launch["pid"] for launch in value["launches"].values()}) == len(LANES),
             "STAGE_RECOVERY_LAUNCHES_NOT_DISTINCT")
-    return ref, value["launches"]
+    return value["launches"]
 
 
 def stop_paths(binding):

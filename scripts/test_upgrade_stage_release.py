@@ -1,6 +1,7 @@
 """Offline stage release build/install/rollback; no client, model or live path."""
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import uuid
 
 from orchestration_common import ContractError, json_ref, write_json
 from upgrade_client_isolation import SANDBOX
@@ -175,3 +177,232 @@ class StageReleaseTests(unittest.TestCase):
                 release.apply(plan)
         self.assertFalse(self.backup.exists() or Path(plan["release"]).exists())
         self.assertEqual(release.FREE_FLOOR_BYTES, 0)  # control: fixture floor, the module default is 10 GB
+
+    def restore_lanes(self, plan, token):
+        """What restoring the sessions did to an installed stage: a rotated Claude secret, the Codex TUI marker."""
+        for key in ("claude_a/settings.json", "claude_b/settings.json"):
+            target = Path(plan["hooks"][key]["after"]["path"])
+            document = json.loads(target.read_bytes())
+            document["env"]["ANTHROPIC_AUTH_TOKEN"] = token
+            target.chmod(0o600)
+            target.write_text(json.dumps(document, sort_keys=True, indent=2) + "\n")
+            target.chmod(plan["hooks"][key]["after"]["mode"])
+        config = Path(plan["unchanged"]["codex/config.toml"]["path"])
+        config.chmod(0o600)
+        config.write_bytes(config.read_bytes() + release.CODEX_TUI_APPEND)
+        return config
+
+    def recovered_build(self, base, recovery=None, models=MODELS, stage_id="stage-b"):
+        recovery = recovery or dict(workspace_uuid=str(uuid.uuid4()).upper(), codex_session=str(uuid.uuid4()))
+        ref = release.build(self.runtime_ref, stage_id, models, self.authority, self.root / ("staging-" + stage_id),
+                            self.root / ("backup-" + stage_id), base_ref=base, recovery=recovery)
+        return ref, release.load_plan(ref["path"], ref["sha256"])
+
+    def test_recovered_stage_replaces_only_base_hooks_and_pins_the_tui_marker(self):
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        with self.assertRaisesRegex(ContractError, "STAGE_RECOVERED_CODEX_CONFIG_NOT_ORIGINAL_PLUS_TUI"):
+            self.recovered_build(base)  # nothing restored yet: nothing to recover
+        token = self.secret + "-rotated"
+        config = self.restore_lanes(plan, token)
+        with self.assertRaises((ContractError, ValueError)):
+            fence.load_stage(Path(plan["release"]) / "source")  # the base stage itself no longer verifies
+        recovery = dict(workspace_uuid=str(uuid.uuid4()).upper(), codex_session=str(uuid.uuid4()))
+        _, new = self.recovered_build(base, recovery)
+        self.assertEqual(release.plan_check(new)["status"], "PLAN_VERIFIED_NOT_INSTALLED")
+        for path in (self.root / "staging-stage-b").rglob("*"):
+            if path.is_file():
+                self.assertNotIn(self.secret.encode(), path.read_bytes(), path)
+        staged = json.loads((self.root / "staging-stage-b/control/stage.json").read_bytes())
+        spec = json_ref(json_ref(self.runtime_ref)["startup"])
+        self.assertEqual(staged["schema"], fence.RECOVERED_SCHEMA)
+        self.assertEqual(staged["recovery"]["workspace_uuid"], recovery["workspace_uuid"].lower())
+        self.assertEqual(staged["recovery"]["sessions"], dict(codex=recovery["codex_session"],
+                         **{lane: spec["clients"][lane]["session_id"] for lane in ("claude_a", "claude_b")}))
+        self.assertEqual(staged["recovery"]["pins"], {"codex/config.toml": release.mode_ref(config)})
+        self.assertEqual(staged["recovery"]["pins"]["codex/config.toml"]["mode"], 0o600)
+        self.assertNotIn("codex/config.toml", new["unchanged"])
+        before = {key: Path(item["before"]["path"]).read_bytes() for key, item in new["hooks"].items()}
+        self.assertEqual(json.loads(before["claude_a/settings.json"])["env"]["ANTHROPIC_AUTH_TOKEN"], token)
+        result = release.apply(new)
+        self.assertEqual(result["status"], "INSTALLED_NOT_ADOPTED", result)
+        _, _, _, installed = fence.load_stage(Path(new["release"]) / "source")
+        self.assertEqual(installed["recovery"], staged["recovery"])
+        validate_live_runtime(self.runtime_ref, stage_controller=installed["controller"])
+        for key, raw in before.items():
+            after = Path(new["hooks"][key]["after"]["path"]).read_bytes()
+            old, now = json.loads(raw), json.loads(after)
+            self.assertEqual({k: v for k, v in old.items() if k != "hooks"}, {k: v for k, v in now.items() if k != "hooks"})
+            self.assertNotIn(plan["release"] + "/source/scripts", after.decode())
+            self.assertIn(new["release"] + "/source/scripts", after.decode())
+        self.assertEqual(release.rollback(new)["status"], "HOOKS_RESTORED")
+        for key, raw in before.items():  # back to the restored base files, rotated secret included
+            self.assertEqual(Path(new["hooks"][key]["before"]["path"]).read_bytes(), raw)
+
+    def test_recovered_build_refuses_every_change_but_the_secret_and_tui_marker(self):
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        config = self.restore_lanes(plan, self.secret + "-rotated")
+        settings = Path(plan["hooks"]["claude_a/settings.json"]["after"]["path"])
+        codex_hooks = Path(plan["hooks"]["codex/hooks.json"]["after"]["path"])
+        wrapper = Path(plan["unchanged"]["claude_ps"]["path"])
+
+        def edit(path, change):
+            raw, mode = path.read_bytes(), path.stat().st_mode & 0o777
+            path.chmod(0o600)
+            path.write_bytes(change(raw))
+            path.chmod(mode)
+
+            def undo():
+                path.chmod(0o600)
+                path.write_bytes(raw)
+                path.chmod(mode)
+            return undo
+        claude = lambda change: lambda raw: (json.dumps(change(json.loads(raw)), sort_keys=True, indent=2) + "\n").encode()
+        codex = lambda change: lambda raw: (json.dumps(change(json.loads(raw)), sort_keys=True) + "\n").encode()
+        hook = [{"hooks": [{"type": "command", "command": "/bin/echo foreign"}]}]
+        tui = "STAGE_RECOVERED_CODEX_CONFIG_NOT_ORIGINAL_PLUS_TUI"
+        files = {
+            "tui_marker_twice": (config, lambda raw: raw + release.CODEX_TUI_APPEND, tui),
+            "config_other_append": (config, lambda raw: raw + b"# other\n", tui),
+            "config_original_byte": (config, lambda raw: bytes([raw[0] ^ 1]) + raw[1:], tui),
+            "settings_model": (settings, claude(lambda d: dict(d, model="other")), "STAGE_RECOVERED_LANE_FILE_CHANGED:claude_a"),
+            "settings_other_env": (settings, claude(lambda d: dict(d, env=dict(d["env"], OTHER="1"))),
+                                   "STAGE_RECOVERED_LANE_FILE_CHANGED:claude_a"),
+            "settings_secret_removed": (settings, claude(lambda d: dict(d, env={k: v for k, v in d["env"].items()
+                                        if k != "ANTHROPIC_AUTH_TOKEN"})), "STAGE_RECOVERED_SECRET_SHAPE_CHANGED"),
+            "settings_foreign_hook": (settings, claude(lambda d: dict(d, hooks=dict(d["hooks"], Notification=hook))),
+                                      "STARTUP_CHILD_HOOK_CHANGED|STAGE_RECOVERED_LANE_FILE_CHANGED"),
+            "codex_hooks_field": (codex_hooks, codex(lambda d: dict(d, extra=1)),
+                                  "STARTUP_CHILD_HOOK_CHANGED|STAGE_RECOVERED_LANE_FILE_CHANGED"),
+            "other_original_pin": (wrapper, lambda raw: raw + b"\n", "STARTUP_ARTIFACT_PIN_CHANGED"),
+        }
+        def refused(call, error):
+            with self.assertRaises((ContractError, ValueError)) as caught:
+                call()
+            # The runtime validator wraps a pin ValueError; its cause carries the exact refusal.
+            self.assertRegex(str(caught.exception) + " " + str(caught.exception.__cause__), error)
+        for label, (path, change, error) in files.items():
+            with self.subTest(label=label):
+                undo = edit(path, change)
+                try:
+                    refused(lambda: self.recovered_build(base), error)
+                finally:
+                    undo()
+                self.assertFalse((self.root / "staging-stage-b").exists())
+        claude_a = json_ref(json_ref(self.runtime_ref)["startup"])["clients"]["claude_a"]["session_id"]
+        calls = {
+            "model_changed": (lambda: self.recovered_build(base, models=dict(MODELS, codex="other")),
+                              "STAGE_RECOVERY_SCOPE_CHANGED"),
+            "base_plan_sha": (lambda: self.recovered_build(dict(base, sha256="0" * 64)), "trusted campaign hash mismatch"),
+            "codex_is_claude": (lambda: self.recovered_build(base, dict(workspace_uuid=str(uuid.uuid4()),
+                                codex_session=claude_a)), "STAGE_RECOVERY_IDENTITY_CHANGED"),
+            "codex_not_uuid": (lambda: self.recovered_build(base, dict(workspace_uuid=str(uuid.uuid4()),
+                               codex_session="codex")), "badly formed hexadecimal UUID string"),
+        }
+        for label, (call, error) in calls.items():
+            with self.subTest(label=label):
+                refused(call, error)
+                self.assertFalse((self.root / "staging-stage-b").exists())
+        self.assertEqual(self.recovered_build(base)[1]["recovery"]["pins"].keys(), {"codex/config.toml"})  # control
+
+    def test_recovered_plan_refuses_drift_an_adopted_base_and_a_second_recovery(self):
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        config = self.restore_lanes(plan, self.secret + "-rotated")
+        ref, new = self.recovered_build(base)
+        self.assertEqual(release.plan_check(new)["status"], "PLAN_VERIFIED_NOT_INSTALLED")
+        settings = Path(plan["hooks"]["claude_b/settings.json"]["after"]["path"])
+        raw, mode = settings.read_bytes(), settings.stat().st_mode & 0o777
+        settings.chmod(0o600)
+        settings.write_bytes(raw.replace(b"-rotated", b"-rotated-again"))
+        with self.assertRaisesRegex(ContractError, "STAGE_HOOK_TARGET_CHANGED:claude_b"):
+            release.plan_check(new)
+        settings.write_bytes(raw)
+        settings.chmod(mode)
+        config.write_bytes(config.read_bytes() + b"#\n")
+        with self.assertRaisesRegex(ContractError, "STAGE_RECOVERED_CODEX_CONFIG_NOT_ORIGINAL_PLUS_TUI"):
+            release.apply(new)
+        config.write_bytes(config.read_bytes()[:-2])
+        adoption = Path(plan["control"]) / "adoption.json"
+        adoption.write_text("{}")
+        with self.assertRaisesRegex(ContractError, "STAGE_PRECONDITION_PRESENT"):
+            release.plan_check(new)
+        adoption.unlink()
+        self.assertFalse(Path(new["backup"]).exists() or Path(new["release"]).exists())
+        self.assertEqual(release.apply(new)["status"], "INSTALLED_NOT_ADOPTED")  # control
+        with self.assertRaisesRegex(ContractError, "STAGE_BASE_PLAN_CHANGED"):
+            self.recovered_build(ref, stage_id="stage-c")  # a recovered stage is never itself a base
+
+    def test_recover_publishes_the_inspected_restored_launches_once(self):
+        import time
+        from orchestration_common import file_ref
+        import upgrade_stage_control as control
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        with self.assertRaisesRegex(ContractError, "STAGE_NOT_RECOVERED"):
+            control.recover(self.runtime_ref, file_ref(plan["stage"]["path"]))  # an original stage has no recovery
+        self.restore_lanes(plan, self.secret + "-rotated")
+        _, new = self.recovered_build(base)
+        self.assertEqual(release.apply(new)["status"], "INSTALLED_NOT_ADOPTED")
+        stage_ref = file_ref(new["stage"]["path"])
+        stage, startup = json_ref(stage_ref), json_ref(self.runtime_ref)["startup"]
+        candidates = {lane: dict(schema=fence.RECOVERED_LAUNCH_SCHEMA, lane=lane,
+            provider="codex" if lane == "codex" else "claude", native_root="/fixture/" + lane,
+            session_id=stage["recovery"]["sessions"][lane], pid=700 + n, birth=[7, n], surface_uuid=str(uuid.uuid4()),
+            pane_uuid=str(uuid.uuid4()), workspace_uuid=stage["recovery"]["workspace_uuid"], tty="ttys7" + str(n),
+            startup=startup) for n, lane in enumerate(fence.LANES)}
+
+        def inspection(**changes):
+            result = dict(stage=stage_ref, startup=startup, recovery_candidates=candidates, stopped=False,
+                          errors={"recovery": "STAGE_RECOVERY_NOT_PUBLISHED"}, observed_at_ns=time.time_ns(),
+                          input_operations=0)
+            return lambda *a, persist: (dict(path="/fixture/observation.json") if persist else None,
+                                        dict(returncode=0, result=dict(result, **changes)))
+        path = fence.recovery_path(stage)
+        bad = copy.deepcopy(candidates)
+        bad["claude_b"]["session_id"] = stage["recovery"]["sessions"]["claude_a"]
+        refusals = {
+            "inspector_not_waiting": (inspection(errors={}), "NOT_RECOVERED"),
+            "inspector_failed": (inspection(errors={"recovery": "STAGE_RECOVERED_CLIENT_NOT_UNIQUE:codex=0"},
+                                            recovery_candidates=None), "NOT_RECOVERED"),
+            "other_stage": (inspection(stage=dict(stage_ref, sha256="0" * 64)), "NOT_RECOVERED"),
+            "stale": (inspection(observed_at_ns=time.time_ns() - 31 * 10**9), "INSPECTION_TOO_OLD_FOR_RECOVERY"),
+            "wrong_session": (inspection(recovery_candidates=bad), "STAGE_RECOVERY_LAUNCH_CHANGED:claude_b"),
+        }
+        for label, (observe, expected) in refusals.items():
+            with self.subTest(label=label), patch.object(control, "observe", side_effect=observe):
+                try:
+                    self.assertEqual(control.recover(self.runtime_ref, stage_ref)["status"], expected)
+                except ContractError as exc:
+                    self.assertIn(expected, str(exc))
+                self.assertFalse(path.exists())  # nothing is ever published from a refused inspection
+        with patch.object(control, "observe", side_effect=inspection()) as observed:
+            result = control.recover(self.runtime_ref, stage_ref)
+        self.assertEqual(result["status"], "STAGE_RECOVERED", result)
+        self.assertEqual(observed.call_args.kwargs, {"persist": True})
+        self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o444))
+        self.assertEqual(fence.recovered_launches(stage, stage_ref, startup), (result["recovery"], candidates))
+        with patch.object(control, "observe", side_effect=AssertionError("no second inspection")):
+            self.assertEqual(control.recover(self.runtime_ref, stage_ref)["status"], "ALREADY_RECOVERED")
+        self.assertEqual(file_ref(path), result["recovery"])  # never rewritten
+
+    def test_recovered_install_failure_restores_the_restored_base_files(self):
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        self.restore_lanes(plan, self.secret + "-rotated")
+        _, new = self.recovered_build(base)
+        before = {key: Path(item["before"]["path"]).read_bytes() for key, item in new["hooks"].items()}
+        original, calls = release.replace_bytes, []
+
+        def failing(path, raw, mode):
+            calls.append(path)
+            if len(calls) == 3:
+                raise OSError("fixture write failure")
+            return original(path, raw, mode)
+        with patch.object(release, "replace_bytes", side_effect=failing):
+            result = release.apply(new)
+        self.assertEqual(result["status"], "INSTALL_FAILED_HOOKS_RESTORED", result)
+        self.assertEqual(len(result["restored"]), 2)
+        for key, raw in before.items():
+            self.assertEqual(Path(new["hooks"][key]["before"]["path"]).read_bytes(), raw)
