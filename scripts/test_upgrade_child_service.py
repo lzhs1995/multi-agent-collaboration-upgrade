@@ -94,6 +94,18 @@ class NativeChildServiceTests(unittest.TestCase):
             self.request("claude_a", dict(first_payload, agent_id="forged-root"))
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 2)
 
+    def test_reservation_after_the_hook_reply_budget_refuses_without_occupying_a_slot(self):
+        # The installed hook stops waiting after its socket timeout and denies the
+        # Agent call. A reservation made after that point would never be used.
+        payload = self.original_call("claude_a", "toolu_late")
+        peer = dict(pid=102, uid=os.getuid())
+        with self.assertRaisesRegex(ContractError, "CHILD_SERVICE_REPLY_BUDGET_EXCEEDED"):
+            handle_event(self.registration, dict(schema=SCHEMA, lane="claude_a", payload=payload), peer=peer,
+                process_reader=lambda pid: copy.deepcopy(self.processes[pid]), fixtures=True, reply_deadline=0)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+        timely = self.request("claude_a", self.original_call("claude_a", "toolu_in_time"))
+        self.assertEqual((timely["status"], timely["inflight"]), ("RESERVED", 1))
+
     def test_later_native_failure_cannot_reuse_an_old_agent_call_to_reserve_new_capacity(self):
         payload = self.original_call("claude_a", "toolu_before_failure")
         journal = self.journals["claude_a"]

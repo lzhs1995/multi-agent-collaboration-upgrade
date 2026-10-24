@@ -8,13 +8,18 @@ import os
 from pathlib import Path
 import stat
 import shlex
+import socket
 import subprocess
 import sys
+import threading
+import time
 import unittest
+from unittest import mock
 
 from orchestration_common import ContractError, file_ref, json_ref, read_regular
 import test_upgrade_live_startup as startup_fixtures
-from upgrade_child_budget_protocol import hook_command
+from upgrade_child_budget_protocol import SCHEMA, encode_packet, hook_command
+import upgrade_child_service as service
 from upgrade_startup_contract import validate_startup
 from upgrade_child_service import register_service, validate_service_registration, serve
 from upgrade_child_budget import budget_status, reserve_child
@@ -213,6 +218,141 @@ class NativeChildStartupTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "ORIGINAL_CHILD_SERVICE_SOCKET_EXISTS"):
             serve(registered, timeout_seconds=1)
         self.assertEqual(budget_status(registration["authority"])["inflight"], 2)
+
+    def registered_service(self):
+        adoption_ref, native_authorization, source = self.original_registration_inputs()
+        return register_service(self.runtime_ref, adoption_ref, task_id="original-registered-task",
+            native_authorizations=native_authorization, source=source, child_budget_authorized=True)
+
+    def serve_in_background(self, registered, timeout_seconds):
+        outcome, output = {}, io.StringIO()
+        def run():
+            with contextlib.redirect_stdout(output):
+                outcome["result"] = service.serve(registered, timeout_seconds=timeout_seconds)
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.addCleanup(worker.join, 60)
+        endpoint, deadline = Path(json_ref(registered)["socket"]), time.monotonic() + 120
+        while not endpoint.exists() and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(endpoint.exists())
+        return worker, outcome, endpoint
+
+    def hook_request(self, endpoint, payload):
+        # Mirror the installed mac_upgrade_child_hook.request(): a 10 s socket bound.
+        started = time.monotonic()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+            channel.settimeout(10)
+            channel.connect(str(endpoint))
+            channel.sendall(encode_packet(dict(schema=SCHEMA, lane="claude_a", payload=payload)))
+            channel.shutdown(socket.SHUT_WR)
+            raw = b""
+            while b"\n" not in raw:
+                chunk = channel.recv(16384)
+                if not chunk:
+                    break
+                raw += chunk
+        return json.loads(raw), time.monotonic() - started
+
+    def test_slow_full_reverification_never_delays_a_hook_reply_past_its_socket_bound(self):
+        # Live 2026-10-24: one full registration check took 8.5-11 s at load 74,
+        # so checking it inside every event let the hook time out first.
+        registered, original, calls = self.registered_service(), service.validate_service_registration, []
+        def slow(ref):
+            calls.append(time.monotonic())
+            if len(calls) > 1:
+                time.sleep(12)
+            return original(ref)
+        with mock.patch.object(service, "validate_service_registration", slow):
+            worker, outcome, endpoint = self.serve_in_background(registered, 3)
+            reply, elapsed = self.hook_request(endpoint, dict(hook_event_name="SubagentStart"))
+            worker.join(60)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reply["status"], "REFUSED")
+        self.assertLess(elapsed, 10)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(outcome["result"]["handled"], 1)
+
+    def test_failed_background_reverification_refuses_every_later_hook_event(self):
+        registered, original, calls = self.registered_service(), service.validate_service_registration, []
+        def failing(ref):
+            calls.append(1)
+            if len(calls) > 1:
+                raise ContractError("CHILD_SERVICE_REGISTRATION_CHANGED")
+            return original(ref)
+        with mock.patch.object(service, "validate_service_registration", failing), \
+                mock.patch.object(service, "REVERIFY_INTERVAL_SECONDS", 0.05):
+            worker, outcome, endpoint = self.serve_in_background(registered, 3)
+            deadline = time.monotonic() + 10
+            while len(calls) < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(0.3)
+            reply, _ = self.hook_request(endpoint, dict(hook_event_name="SubagentStart"))
+            worker.join(60)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reply["status"], "REFUSED")
+        self.assertIn("CHILD_SERVICE_REVERIFICATION_FAILED", reply["error"])
+        self.assertIn("CHILD_SERVICE_REGISTRATION_CHANGED", reply["error"])
+        self.assertEqual(len(calls), 2)
+
+    def test_each_hook_event_synchronously_rereads_the_pinned_authority_files(self):
+        registered = self.registered_service()
+        adoption = Path(json_ref(registered)["adoption"]["path"])
+        worker, outcome, endpoint = self.serve_in_background(registered, 3)
+        adoption.chmod(0o644)
+        with adoption.open("ab") as stream:
+            stream.write(b" ")
+        reply, _ = self.hook_request(endpoint, dict(hook_event_name="SubagentStart"))
+        worker.join(60)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reply["status"], "REFUSED")
+        self.assertIn("original child service adoption: file hash/size mismatch", reply["error"])
+
+    def test_successor_of_an_exited_service_continues_the_same_ledger_with_fixed_source(self):
+        # Live 2026-10-24: the first service ran from a source whose per-event
+        # check outlasted the hook. Its socket and ledger must not be reset.
+        registered = self.registered_service()
+        registration = json_ref(registered)
+        reserve_child(registration["authority"], parent="claude_a", tool_use_id="toolu_before",
+                      tool_input=dict(prompt="Offline source fixture, not a native model launch."))
+        with contextlib.redirect_stdout(io.StringIO()):
+            serve(registered, timeout_seconds=1)
+        source = tree_manifest(Path(__file__).resolve().parent.parent)
+        with self.assertRaisesRegex(ContractError, "CHILD_SERVICE_PREDECESSOR_STILL_RUNNING"):
+            service.register_successor(registered, source=source)
+        successor = service.register_successor(registered, source=source, process_present=lambda pid: False)
+        value, _ = validate_service_registration(successor)
+        self.assertEqual({k: v for k, v in value.items() if k not in ("source", "predecessor")},
+                         {k: v for k, v in registration.items() if k != "source"})
+        self.assertEqual(value["predecessor"], registered)
+        self.assertFalse(Path(registration["socket"]).exists())
+        with self.assertRaisesRegex(ContractError, "CHILD_SERVICE_SUCCESSOR_EXISTS"):
+            service.register_successor(registered, source=source, process_present=lambda pid: False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = serve(successor, timeout_seconds=1)
+        self.assertEqual((result["handled"], result["inflight"]), (0, 1))
+        intent = json_ref(file_ref(Path(successor["path"]).parent / "serve-intent.json"))
+        self.assertEqual(intent["registration"], successor)
+        self.assertEqual(budget_status(registration["authority"])["inflight"], 1)
+
+    def test_successor_refuses_while_the_predecessor_socket_still_accepts(self):
+        registered = self.registered_service()
+        worker, outcome, endpoint = self.serve_in_background(registered, 3)
+        source = tree_manifest(Path(__file__).resolve().parent.parent)
+        with self.assertRaisesRegex(ContractError, "CHILD_SERVICE_PREDECESSOR_SOCKET_ACCEPTING"):
+            service.register_successor(registered, source=source, process_present=lambda pid: False)
+        worker.join(60)
+        self.assertTrue(endpoint.exists())
+
+    def test_stale_background_reverification_refuses_hook_events(self):
+        registered = self.registered_service()
+        with mock.patch.object(service, "MAX_VERIFIED_AGE_SECONDS", 0):
+            worker, outcome, endpoint = self.serve_in_background(registered, 3)
+            reply, _ = self.hook_request(endpoint, dict(hook_event_name="SubagentStart"))
+            worker.join(60)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reply["status"], "REFUSED")
+        self.assertIn("CHILD_SERVICE_VERIFICATION_STALE", reply["error"])
 
 
 if __name__ == "__main__":

@@ -13,12 +13,13 @@ from pathlib import Path
 import socket
 import stat
 import sys
+import threading
 import time
 import uuid
 
 from cmux_prompt_reference import plan, persist
 from orchestration_common import (checked_path, contract_errors, json_ref, file_ref, object_sha,
-    parse_time, require, strict_json, tree_manifest, utc_now, verify_tree, write_json)
+    parse_time, read_ref, require, strict_json, tree_manifest, utc_now, verify_tree, write_json)
 from upgrade_body_read import read_command
 from upgrade_child_budget import (authority_value, budget_status, initialize_ledger,
     consume_child_report, record_child_report, reserve_child)
@@ -33,6 +34,12 @@ REGISTRATION_FIELDS = {"schema", "policy", "task_id", "runtime", "startup", "ado
     "native_authorizations", "sessions", "authority", "output_root", "report_root", "socket",
     "account_home", "python", "controller", "rtk", "input_operations", "child_budget_authorized"}
 MAX_SERVICE_EVENTS = 256
+MAX_SUCCESSORS = 8
+# The installed hook waits 10 s for a reply. A full registration check took
+# 8.5-11 s under live load, so it runs beside the accept loop, not inside it.
+REVERIFY_INTERVAL_SECONDS = 30
+MAX_VERIFIED_AGE_SECONDS = 120
+REPLY_BUDGET_SECONDS = 6
 
 
 def service_root(runtime):
@@ -42,7 +49,98 @@ def service_root(runtime):
     return checked_path(Path(startup["adoption_path"]).parent / "native-child-budget")
 
 
+def registration_path(root, predecessor):
+    # A successor sits beside its one predecessor and shares its ledger.
+    if predecessor is None:
+        return root / "registration.json"
+    return root / "successors" / predecessor["sha256"] / "registration.json"
+
+
+def _predecessor_chain(value, root):
+    """Every link keeps authority, ledger, task, parents and sessions."""
+    current = value
+    for _ in range(MAX_SUCCESSORS):
+        previous_ref = current.get("predecessor")
+        if previous_ref is None:
+            return
+        previous = json_ref(previous_ref, "original child service predecessor")
+        require(previous_ref["path"] == str(registration_path(root, previous.get("predecessor")))
+                and {k: v for k, v in previous.items() if k not in ("source", "predecessor")}
+                == {k: v for k, v in value.items() if k not in ("source", "predecessor")},
+                "CHILD_SERVICE_PREDECESSOR_CHANGED")
+        current = previous
+    require(current.get("predecessor") is None, "CHILD_SERVICE_SUCCESSOR_BOUND")
+
+
 @contract_errors("register original child service")
+def _process_present(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@contract_errors("register original child service successor")
+def register_successor(predecessor_ref, *, source, process_present=_process_present):
+    """Continue an exited service from a fixed source; never a new or reset ledger.
+
+    Authority, ledger, task, parents, sessions and native authorizations stay
+    those of the predecessor. Its socket is renamed, never unlinked, and only
+    after its recorded process is gone and the socket refuses connections.
+    Each predecessor has at most one successor.
+    """
+    from upgrade_live_runtime import native_authority_observation
+    previous = json_ref(predecessor_ref, "original child service predecessor")
+    with native_authority_observation():
+        _, runtime = validate_service_registration(predecessor_ref, running_source=False)
+    root = service_root(runtime)
+    here = registration_path(root, predecessor_ref).parent
+    require(not os.path.lexists(here), "CHILD_SERVICE_SUCCESSOR_EXISTS: one successor per predecessor")
+    verify_tree(source)
+    require(Path(source["path"]).resolve() == Path(__file__).resolve().parent.parent,
+            "ORIGINAL_CHILD_SERVICE_SOURCE_REQUIRED")
+    intent_ref = file_ref(Path(predecessor_ref["path"]).parent / "serve-intent.json")
+    intent = json_ref(intent_ref, "original child service predecessor intent")
+    require(intent.get("registration") == predecessor_ref and type(intent.get("pid")) is int,
+            "CHILD_SERVICE_PREDECESSOR_INTENT_CHANGED")
+    require(not process_present(intent["pid"]), "CHILD_SERVICE_PREDECESSOR_STILL_RUNNING")
+    endpoint = Path(previous["socket"])
+    socket_identity = None
+    if os.path.lexists(endpoint):
+        socket_identity = endpoint.lstat()
+        require(stat.S_ISSOCK(socket_identity.st_mode) and socket_identity.st_uid == os.getuid(),
+                "CHILD_SERVICE_SOCKET_IDENTITY_CHANGED")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(2)
+            try:
+                probe.connect(str(endpoint))
+                accepting = True
+            except ConnectionRefusedError:
+                accepting = False
+        require(not accepting, "CHILD_SERVICE_PREDECESSOR_SOCKET_ACCEPTING")
+    value = dict(previous, source=source, predecessor=predecessor_ref)
+    here.mkdir(parents=True, mode=0o700, exist_ok=False)
+    retired = None
+    if socket_identity is not None:
+        retired = endpoint.with_name(endpoint.name + ".retired-" + predecessor_ref["sha256"][:16])
+        require(not os.path.lexists(retired), "CHILD_SERVICE_RETIRED_SOCKET_EXISTS")
+        current = endpoint.lstat()
+        require((current.st_dev, current.st_ino) == (socket_identity.st_dev, socket_identity.st_ino),
+                "CHILD_SERVICE_SOCKET_REPLACED")
+        os.rename(endpoint, retired)
+    exit_ref = write_json(here / "predecessor-exit.json", dict(schema="upgrade-original-child-service-predecessor-exit-v1",
+        predecessor=predecessor_ref, intent=intent_ref, process_absent=intent["pid"],
+        socket_refused=socket_identity is not None, retired_socket=str(retired) if retired else None,
+        observed_at=utc_now(), input_operations=0), exclusive=True)
+    Path(exit_ref["path"]).chmod(0o444)
+    ref = write_json(here / "registration.json", value, exclusive=True)
+    Path(ref["path"]).chmod(0o444)
+    return ref
+
+
 def register_service(runtime_ref, adoption_ref, *, task_id, native_authorizations, source,
                      child_budget_authorized):
     from orchestration_freeze_v3 import authorize
@@ -98,13 +196,16 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
 
 
 @contract_errors("original child service registration")
-def validate_service_registration(ref):
+def validate_service_registration(ref, *, running_source=True):
+    # running_source=False checks an exited predecessor's own pinned tree, not
+    # that it is this running source; every other authority check is unchanged.
     from orchestration_freeze_v3 import authorize
     from orchestration_native import NativeReader
     from upgrade_live_runtime import identity_matches, session_authority, session_controller
     from upgrade_startup_contract import child_budget_enabled
     value = json_ref(ref, "original native child service registration")
-    require(set(value) == REGISTRATION_FIELDS and value["schema"] == REGISTRATION_SCHEMA
+    require(set(value) in (REGISTRATION_FIELDS, REGISTRATION_FIELDS | {"predecessor"})
+            and value["schema"] == REGISTRATION_SCHEMA
             and value["policy"] == POLICY and value["child_budget_authorized"] is True
             and type(value["input_operations"]) is int and value["input_operations"] == 0,
             "CHILD_SERVICE_REGISTRATION_FIELDS_CHANGED")
@@ -114,7 +215,8 @@ def validate_service_registration(ref):
     binding = json_ref(file_ref(Path(controller) / "upgrade-binding.json"))
     require(child_budget_enabled(binding), "CHILD_NATIVE_HOOK_NOT_REGISTERED")
     root = service_root(runtime)
-    require(ref["path"] == str(root / "registration.json") and value["output_root"] == str(root)
+    _predecessor_chain(value, root)
+    require(ref["path"] == str(registration_path(root, value.get("predecessor"))) and value["output_root"] == str(root)
             and value["report_root"] == str(root / "reports") and value["startup"] == runtime["startup"]
             and value["controller"] == controller
             and value["python"] == runtime["python"]["path"]
@@ -122,7 +224,7 @@ def validate_service_registration(ref):
             and value["socket"] == str(child_socket({"tmp": binding["tmp_root"]}))
             and value["account_home"] == str(Path.home().resolve()), "CHILD_SERVICE_SCOPE_CHANGED")
     verify_tree(value["source"])
-    require(Path(value["source"]["path"]).resolve() == Path(__file__).resolve().parent.parent,
+    require(not running_source or Path(value["source"]["path"]).resolve() == Path(__file__).resolve().parent.parent,
             "CHILD_SERVICE_SOURCE_CHANGED")
     require(set(value["sessions"]) == {"codex", "claude_a", "claude_b"}, "CHILD_SERVICE_ORIGINAL_LANES_CHANGED")
     for lane, session in value["sessions"].items():
@@ -149,12 +251,17 @@ def validate_service_registration(ref):
 
 
 @contract_errors("native child hook transaction")
-def handle_event(registration, packet, *, peer, process_reader=None, fixtures=False):
+def handle_event(registration, packet, *, peer, process_reader=None, fixtures=False, reply_deadline=None):
     """Python-only transaction boundary; live service authenticates registration.
 
     Offline fixtures use an explicit seam here. Production never accepts a
-    supplied registration or process reader from the client packet.
+    supplied registration or process reader from the client packet. After
+    reply_deadline the waiting hook has already denied its tool call, so no
+    reservation or consumption may still be recorded for it.
     """
+    def in_reply_budget():
+        require(reply_deadline is None or time.monotonic() < reply_deadline,
+                "CHILD_SERVICE_REPLY_BUDGET_EXCEEDED: the hook stopped waiting; no slot changed")
     require(set(packet) == {"schema", "lane", "payload"} and packet["schema"] == SCHEMA,
             "CHILD_NATIVE_IPC_FIELDS_CHANGED")
     lane, payload = packet["lane"], packet["payload"]
@@ -183,6 +290,7 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
                 "CHILD_REPORT_NOT_READY_FOR_ORIGINAL_PARENT")
         reader_command = read_command(registration["python"], registration["controller"],
                                       claim["report"]["notice"], registration["rtk"])
+        in_reply_budget()
         result = consume_child_report(authority, claim_id, parent=lane, parent_session=session,
             command=reader_command, reply_sha256=consumption["reply_sha256"],
             consumption_call=call_record, fixtures=fixtures)
@@ -209,6 +317,7 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
         require(payload.get("tool_input", {}).get("run_in_background", False) is False,
                 "CHILD_NATIVE_BACKGROUND_UNSUPPORTED: completion binding is not proven")
         call = current_original_agent_call(session, payload, fixtures=fixtures)
+        in_reply_budget()
         reservation = reserve_child(authority, parent=lane, tool_use_id=call["tool_use_id"], tool_input=call["tool_input"])
         require(reservation["status"] == "RESERVED",
                 "ORIGINAL_CHILD_RESERVATION_ALREADY_ISSUED: preserve it; never replay Agent")
@@ -270,6 +379,46 @@ def read_packet(channel):
     return value
 
 
+class _Reverifier:
+    """Repeat the full registration check beside the accept loop.
+
+    The first failure latches and refuses every later event. Each event still
+    rereads the pinned registration bytes and its own ledger authority.
+    """
+
+    def __init__(self, registration_ref, registration, stopped):
+        self.ref, self.registration, self.stopped = registration_ref, registration, stopped
+        self.lock, self.done = threading.Lock(), threading.Event()
+        self.verified_at, self.failure = time.monotonic(), None
+        self.thread = threading.Thread(target=self.run, name="child-service-reverifier", daemon=True)
+
+    def run(self):
+        from upgrade_live_runtime import native_authority_observation
+        while not self.done.wait(REVERIFY_INTERVAL_SECONDS):
+            try:
+                with native_authority_observation():
+                    latest, _ = validate_service_registration(self.ref)
+                require(latest == self.registration, "CHILD_SERVICE_REGISTRATION_CHANGED")
+                require(not self.stopped(), "EXPERIMENT_STOP_REQUESTED")
+                with self.lock:
+                    self.verified_at = time.monotonic()
+            except Exception as exc:  # any failure must close the service, never pass silently
+                with self.lock:
+                    self.failure = str(exc) or type(exc).__name__
+                return
+
+    def require_current(self):
+        with self.lock:
+            failure, verified_at = self.failure, self.verified_at
+        require(failure is None, "CHILD_SERVICE_REVERIFICATION_FAILED: " + str(failure))
+        require(time.monotonic() - verified_at < MAX_VERIFIED_AGE_SECONDS, "CHILD_SERVICE_VERIFICATION_STALE")
+        require(json_ref(self.ref, "original native child service registration") == self.registration,
+                "CHILD_SERVICE_REGISTRATION_CHANGED")
+        # Pinned authority files are small; reread them for every grant.
+        for key in ("runtime", "startup", "adoption", "authority"):
+            read_ref(self.registration[key], "original child service " + key)
+
+
 def serve(registration_ref, *, timeout_seconds):
     """One bounded external allocator invocation; no automatic restart/reset.
 
@@ -293,7 +442,9 @@ def serve(registration_ref, *, timeout_seconds):
     require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
     endpoint = checked_path(registration["socket"])
     require(not os.path.lexists(endpoint), "ORIGINAL_CHILD_SERVICE_SOCKET_EXISTS: do not replace it")
-    root = Path(registration["output_root"])
+    # Intent and events sit beside this registration; a successor keeps its
+    # predecessor's records unchanged.
+    root = Path(registration_ref["path"]).parent
     intent = write_json(root / "serve-intent.json", dict(schema="upgrade-original-child-service-intent-v1",
         registration=registration_ref, pid=os.getpid(), started_at=utc_now(), input_operations=0,
         timeout_seconds=timeout_seconds), exclusive=True)
@@ -310,45 +461,52 @@ def serve(registration_ref, *, timeout_seconds):
         listener.settimeout(0.5)
         print(json.dumps(dict(status="CHILD_SERVICE_READY_NOT_ADOPTED", registration=registration_ref,
                               socket=str(endpoint), pid=os.getpid(), model_requests=0, input_operations=0)), flush=True)
-        while (time.monotonic() < deadline and handled < MAX_SERVICE_EVENTS
-               and not stopped()):
-            current = endpoint.lstat()
-            require((current.st_dev, current.st_ino, current.st_mode, current.st_uid) == (
-                socket_identity.st_dev, socket_identity.st_ino, socket_identity.st_mode, socket_identity.st_uid),
-                "CHILD_SERVICE_SOCKET_REPLACED")
-            try:
-                channel, _ = listener.accept()
-            except TimeoutError:
-                continue
-            with channel:
-                channel.settimeout(min(8, max(0.001, deadline - time.monotonic())))
-                peer, packet, result = None, None, None
+        reverifier = _Reverifier(registration_ref, registration, stopped)
+        reverifier.thread.start()
+        try:
+            while (time.monotonic() < deadline and handled < MAX_SERVICE_EVENTS
+                   and not stopped()):
+                current = endpoint.lstat()
+                require((current.st_dev, current.st_ino, current.st_mode, current.st_uid) == (
+                    socket_identity.st_dev, socket_identity.st_ino, socket_identity.st_mode, socket_identity.st_uid),
+                    "CHILD_SERVICE_SOCKET_REPLACED")
                 try:
-                    peer = kernel_peer(channel)
-                    packet = read_packet(channel)
-                    with native_authority_observation():
-                        latest, _ = validate_service_registration(registration_ref)
-                        require(latest == registration, "CHILD_SERVICE_REGISTRATION_CHANGED")
-                    # The verification cache is read-only. Native permission
-                    # decisions and ledger writes must independently reread
-                    # their original authority outside that scope.
-                    require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
-                    require(time.monotonic() < deadline, "CHILD_SERVICE_DURATION_EXPIRED")
-                    result = handle_event(registration, packet, peer=peer)
-                except (ValueError, KeyError, OSError, RuntimeError) as exc:
-                    result = dict(status="REFUSED", error=str(exc), model_requests=0, input_operations=0)
-                handled += 1
-                observation = dict(schema="upgrade-native-child-service-event-v1", registration=registration_ref,
-                    peer=peer, payload_sha256=object_sha(packet) if packet is not None else None,
-                    result=result, observed_at=utc_now(), input_operations=0)
-                ref = write_json(root / "events" / (f"{handled:06d}-" + uuid.uuid4().hex + ".json"),
-                                 observation, exclusive=True)
-                Path(ref["path"]).chmod(0o444)
-                try:
-                    channel.sendall(encode_packet(result))
-                except (OSError, ValueError):
-                    # The reservation remains even when its response is lost.
-                    pass
+                    channel, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                accepted = time.monotonic()
+                with channel:
+                    channel.settimeout(min(8, max(0.001, deadline - time.monotonic())))
+                    peer, packet, result = None, None, None
+                    try:
+                        peer = kernel_peer(channel)
+                        packet = read_packet(channel)
+                        # The full registration check runs in the reverifier;
+                        # each event rereads the pinned registration bytes.
+                        # Native permission decisions and ledger writes still
+                        # independently reread their original authority.
+                        reverifier.require_current()
+                        require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
+                        require(time.monotonic() < deadline, "CHILD_SERVICE_DURATION_EXPIRED")
+                        result = handle_event(registration, packet, peer=peer,
+                                              reply_deadline=accepted + REPLY_BUDGET_SECONDS)
+                    except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                        result = dict(status="REFUSED", error=str(exc), model_requests=0, input_operations=0)
+                    handled += 1
+                    observation = dict(schema="upgrade-native-child-service-event-v1", registration=registration_ref,
+                        peer=peer, payload_sha256=object_sha(packet) if packet is not None else None,
+                        result=result, observed_at=utc_now(), input_operations=0)
+                    ref = write_json(root / "events" / (f"{handled:06d}-" + uuid.uuid4().hex + ".json"),
+                                     observation, exclusive=True)
+                    Path(ref["path"]).chmod(0o444)
+                    try:
+                        channel.sendall(encode_packet(result))
+                    except (OSError, ValueError):
+                        # The reservation remains even when its response is lost.
+                        pass
+        finally:
+            reverifier.done.set()
+            reverifier.thread.join()
     # Never unlink the create-only endpoint or reset intent/ledger on exit.
     return dict(status="CHILD_SERVICE_STOPPED_PRESERVED", handled=handled,
                 registration=registration_ref, input_operations=0, model_requests=0,
@@ -362,6 +520,9 @@ def main(argv=None):
     register = commands.add_parser("register", allow_abbrev=False)
     register.add_argument("--request", required=True)
     register.add_argument("--request-sha256", required=True)
+    successor = commands.add_parser("register-successor", allow_abbrev=False)
+    successor.add_argument("--predecessor", required=True)
+    successor.add_argument("--predecessor-sha256", required=True)
     for action in ("serve", "status"):
         command = commands.add_parser(action, allow_abbrev=False)
         command.add_argument("--registration", required=True)
@@ -380,6 +541,10 @@ def main(argv=None):
                 native_authorizations=request["native_authorizations"], child_budget_authorized=request["child_budget_authorized"],
                 source=tree_manifest(Path(__file__).resolve().parent.parent))
             value = dict(status="CHILD_SERVICE_REGISTERED_NOT_STARTED", registration=ref, input_operations=0)
+        elif args.command == "register-successor":
+            ref = register_successor(anchored_ref(args.predecessor, args.predecessor_sha256),
+                                     source=tree_manifest(Path(__file__).resolve().parent.parent))
+            value = dict(status="CHILD_SERVICE_SUCCESSOR_REGISTERED_NOT_STARTED", registration=ref, input_operations=0)
         else:
             ref = anchored_ref(args.registration, args.registration_sha256)
             if args.command == "serve":
