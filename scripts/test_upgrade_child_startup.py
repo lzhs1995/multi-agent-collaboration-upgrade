@@ -206,6 +206,10 @@ class NativeChildStartupTests(unittest.TestCase):
         ready = json.loads(output.getvalue())
         self.assertEqual(ready["status"], "CHILD_SERVICE_READY_NOT_ADOPTED")
         self.assertEqual((ready["model_requests"], ready["input_operations"]), (0, 0))
+        # Startup recovery publishes only native-bound reports; these fixture
+        # claims have no original call record, so none is published.
+        self.assertEqual(ready["recovery"]["recovered"], [])
+        self.assertEqual(len(ready["recovery"]["pending"]), 2)
         self.assertEqual(result["status"], "CHILD_SERVICE_STOPPED_PRESERVED")
         self.assertEqual((result["handled"], result["inflight"]), (0, 2))
         endpoint = Path(registration["socket"])

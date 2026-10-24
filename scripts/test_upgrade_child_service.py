@@ -11,16 +11,16 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 import uuid
 
-from orchestration_common import ContractError, canonical, file_ref, write_json
+from orchestration_common import ContractError, canonical, write_json
 from test_orchestration_native import NativeFixture
-from upgrade_child_budget import budget_status, initialize_ledger, record_child_report
+from upgrade_child_budget import budget_status, initialize_ledger
 from upgrade_child_budget_protocol import SCHEMA, child_prompt, hook_command, consume_command
-from cmux_prompt_reference import plan, persist
 from upgrade_body_read import read_command, read_result
-from upgrade_child_service import handle_event
+from upgrade_child_service import handle_event, recover_child_reports
 
 
 class NativeChildServiceTests(unittest.TestCase):
@@ -77,6 +77,58 @@ class NativeChildServiceTests(unittest.TestCase):
         journal.append(call)
         return dict(hook_event_name="PreToolUse", session_id=journal.session["session_id"],
                     transcript_path=str(journal.path), tool_name="Agent", tool_use_id=tool_id, tool_input=tool_input)
+
+    def native_child(self, lane, payload, claim_id, body, *, agent_id="a123456789abcdef0", root_at=None):
+        """The child's own transcript, complete before its parent's PostToolUse."""
+        journal = self.journals[lane]
+        child_path = journal.path.parent / journal.session["session_id"] / "subagents" / ("agent-" + agent_id + ".jsonl")
+        child_path.parent.mkdir(parents=True, exist_ok=True)
+        root_id = str(uuid.uuid4())
+        records = [dict(type="user", sessionId=journal.session["session_id"], agentId=agent_id,
+            isSidechain=True, uuid=root_id, parentUuid=None,
+            timestamp=(root_at or datetime.now(timezone.utc)).isoformat(),
+            message=dict(role="user", content=child_prompt(claim_id, payload["tool_input"]["prompt"]))),
+            dict(type="assistant", sessionId=journal.session["session_id"], agentId=agent_id,
+            isSidechain=True, uuid=str(uuid.uuid4()), parentUuid=root_id, timestamp=datetime.now(timezone.utc).isoformat(),
+            message=dict(role="assistant", content=[dict(type="text", text=body)], stop_reason="end_turn"))]
+        child_path.write_bytes(b"".join(canonical(record) for record in records))
+        return dict(status="completed", agentId=agent_id, content=[dict(type="text", text=body)])
+
+    def parent_result(self, lane, payload, response, *, at=None):
+        """The parent result as Claude Code 2.1.303 persists it, after PostToolUse.
+
+        Its block carries a harness hand-back frame; toolUseResult the bare report.
+        """
+        journal = self.journals[lane]
+        text = response["content"][0]["text"] if response["content"] else ""
+        frame = ("[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n"
+                 + "\n".join("  " + line for line in text.splitlines())
+                 + "\nagentId: " + response["agentId"] + "\n<usage>tool_uses: 1</usage>")
+        result = journal.message("user", "unused", at=(at or datetime.now(timezone.utc)).isoformat())
+        result["message"]["content"] = [dict(type="tool_result", tool_use_id=payload["tool_use_id"],
+                                              content=[dict(type="text", text=frame)])]
+        result["toolUseResult"] = dict(response, agentType="general-purpose", totalTokens=1)
+        journal.append(result)
+
+    def read_and_consume(self, lane, payload, claim_id, suffix):
+        """The original parent's full body read, then its exact-SHA consume call."""
+        journal, report = self.journals[lane], budget_status(self.authority_ref)["claims"][claim_id]["report"]
+        read = read_command(self.python, self.controller, report["notice"], "/original/rtk")
+        call = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat())
+        call["message"]["content"] = [dict(type="tool_use", id="toolu_read_" + suffix, name="Bash", input=dict(command=read))]
+        journal.append(call)
+        result = journal.message("user", "unused", at=datetime.now(timezone.utc).isoformat())
+        result["message"]["content"] = [dict(type="tool_result", tool_use_id="toolu_read_" + suffix, is_error=False,
+                                              content=json.dumps(read_result(report["notice"])))]
+        journal.append(result)
+        command = consume_command(self.python, self.controller, claim_id, report["reference"]["sha256"], "/original/rtk")
+        consume_payload = dict(payload, tool_name="Bash", tool_use_id="toolu_consume_" + suffix,
+                               tool_input=dict(command=command))
+        consume = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat())
+        consume["message"]["content"] = [dict(type="tool_use", id=consume_payload["tool_use_id"], name="Bash",
+                                              input=consume_payload["tool_input"])]
+        journal.append(consume)
+        return consume_payload
 
     def test_two_original_parents_share_capacity_and_caller_status_cannot_authorize_a_third(self):
         first_payload = self.original_call("claude_a", "toolu_first")
@@ -345,20 +397,11 @@ class NativeChildServiceTests(unittest.TestCase):
     def test_native_completion_must_follow_its_call_and_the_actual_child_terminal_without_future_evidence(self):
         payload = self.original_call("claude_a", "toolu_completion_order")
         claim_id = self.request("claude_a", payload)["claim_id"]
-        journal, agent_id = self.journals["claude_a"], "a123456789abcdef0"
+        journal = self.journals["claude_a"]
         call_time = datetime.fromisoformat(json.loads(journal.path.read_bytes().splitlines()[-1])["timestamp"])
-        child_path = journal.path.parent / journal.session["session_id"] / "subagents" / ("agent-" + agent_id + ".jsonl")
-        child_path.parent.mkdir(parents=True)
-        root_id, body = str(uuid.uuid4()), "Complete original chronological result."
-        terminal_time = datetime.now(timezone.utc)
-        records = [dict(type="user", sessionId=journal.session["session_id"], agentId=agent_id,
-            isSidechain=True, uuid=root_id, parentUuid=None, timestamp=call_time.isoformat(),
-            message=dict(role="user", content=child_prompt(claim_id, payload["tool_input"]["prompt"]))),
-            dict(type="assistant", sessionId=journal.session["session_id"], agentId=agent_id,
-            isSidechain=True, uuid=str(uuid.uuid4()), parentUuid=root_id, timestamp=terminal_time.isoformat(),
-            message=dict(role="assistant", content=[dict(type="text", text=body)], stop_reason="end_turn"))]
-        child_path.write_bytes(b"".join(canonical(record) for record in records))
-        response = dict(status="completed", agentId=agent_id, content=[dict(type="text", text=body)])
+        response = self.native_child("claude_a", payload, claim_id, "Complete original chronological result.",
+                                     root_at=call_time)
+        self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
         base = journal.path.read_bytes()
         changed_times = {
             "before_original_call": call_time - timedelta(seconds=1),
@@ -368,34 +411,26 @@ class NativeChildServiceTests(unittest.TestCase):
         for shape, stamp in changed_times.items():
             with self.subTest(shape=shape):
                 journal.path.write_bytes(base)
-                result = journal.message("user", "unused", at=stamp.isoformat())
-                result["message"]["content"] = [dict(type="tool_result", tool_use_id=payload["tool_use_id"],
-                                                      is_error=False, content=response["content"])]
-                result["toolUseResult"] = response
-                journal.append(result)
+                self.parent_result("claude_a", payload, response, at=stamp)
+                consume = self.read_and_consume("claude_a", payload, claim_id, shape)
                 with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_COMPLETION_CHRONOLOGY_CHANGED"):
-                    self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
+                    self.request("claude_a", consume)
                 state = budget_status(self.authority_ref)
                 self.assertEqual(state["inflight"], 1)
-                self.assertNotIn("report", state["claims"][claim_id])
-                self.assertFalse((self.root / "reports" / (claim_id + "-native.json")).exists())
+                self.assertEqual(state["claims"][claim_id]["state"], "RESULT_READY")
+                self.assertFalse((self.root / "reports" / (claim_id + "-consumed.json")).exists())
         journal.path.write_bytes(base)
-        valid = journal.message("user", "unused", at=datetime.now(timezone.utc).isoformat())
-        valid["message"]["content"] = [dict(type="tool_result", tool_use_id=payload["tool_use_id"],
-                                              is_error=False, content=response["content"])]
-        valid["toolUseResult"] = response
-        journal.append(valid)
-        observed = self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
-        self.assertEqual((observed["status"], observed["inflight"]), ("OBSERVED", 1))
-        self.assertIn("report", budget_status(self.authority_ref)["claims"][claim_id])
+        self.parent_result("claude_a", payload, response)
+        accepted = self.request("claude_a", self.read_and_consume("claude_a", payload, claim_id, "valid"))
+        self.assertEqual((accepted["consumption_status"], accepted["inflight"]), ("CONSUMED", 0))
 
     def test_post_hook_may_carry_the_exact_registered_updated_input_not_a_changed_task(self):
         payload = self.original_call("claude_a", "toolu_updated")
         reserved = self.request("claude_a", payload)
         updated = reserved["hook_output"]["hookSpecificOutput"]["updatedInput"]
-        # The native completion is absent. An exact injected prompt must reach
-        # that missing-completion check, never fail parent-call/input binding.
-        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED"):
+        # The child's own transcript is absent. An exact injected prompt must
+        # reach that missing-report check, never fail parent-call/input binding.
+        with self.assertRaisesRegex(ContractError, "original native child report"):
             self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_input=updated,
                 tool_response=dict(status="completed", agentId="a123456789abcdef0", content=[])))
         with self.assertRaisesRegex(ContractError, "ORIGINAL_CHILD_POST_INPUT_CHANGED"):
@@ -404,55 +439,123 @@ class NativeChildServiceTests(unittest.TestCase):
                 tool_response=dict(status="completed", agentId="a123456789abcdef0", content=[])))
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
 
-    def test_hook_claim_of_completed_status_without_native_result_remains_unconsumed(self):
+    def test_hook_claim_of_completed_status_without_native_child_report_remains_unreported(self):
         payload = self.original_call("claude_a", "toolu_pending")
-        self.request("claude_a", payload)
-        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED"):
+        claim_id = self.request("claude_a", payload)["claim_id"]
+        with self.assertRaisesRegex(ContractError, "original native child report"):
             self.request("claude_a", dict(payload, hook_event_name="PostToolUse",
                 tool_response=dict(status="completed", agentId="a123456789abcdef0",
                                    content=[dict(type="text", text="Caller-authored report.")])))
+        for response in (None, dict(status="running", agentId="a123456789abcdef0", content=[])):
+            with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED"):
+                self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
+        self.assertNotIn("report", budget_status(self.authority_ref)["claims"][claim_id])
 
     def test_original_parent_consumes_via_actual_native_bash_request_after_full_body_read(self):
         payload = self.original_call("claude_a", "toolu_consume")
-        reserved = self.request("claude_a", payload)
-        claim_id = reserved["claim_id"]
-        body = "STATUS: original-complete-result\nWhole original child report.\n"
-        prepared = plan(body, "original-complete-result", self.root / "reports")
-        persist(prepared["reference"], body)
-        record_child_report(self.authority_ref, claim_id, parent="claude_a", notice=prepared["text"])
-        journal = self.journals["claude_a"]
-        command = consume_command(self.python, self.controller, claim_id, prepared["reference"]["sha256"], "/original/rtk")
-        consume_payload = dict(payload, tool_name="Bash", tool_use_id="toolu_consume_original",
-                               tool_input=dict(command=command))
+        claim_id = self.request("claude_a", payload)["claim_id"]
+        response = self.native_child("claude_a", payload, claim_id, "Whole original child report.")
+        self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
+        self.parent_result("claude_a", payload, response)
+        report = budget_status(self.authority_ref)["claims"][claim_id]["report"]
+        command = consume_command(self.python, self.controller, claim_id, report["reference"]["sha256"], "/original/rtk")
+        unread = dict(payload, tool_name="Bash", tool_use_id="toolu_consume_unread", tool_input=dict(command=command))
         with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_CONSUMPTION_REQUIRED"):
-            self.request("claude_a", consume_payload)
-        read = read_command(self.python, self.controller, prepared["text"], "/original/rtk")
-        call = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat())
-        call["message"]["content"] = [dict(type="tool_use", id="toolu_read_body", name="Bash", input=dict(command=read))]
-        journal.append(call)
-        result = journal.message("user", "unused", at=datetime.now(timezone.utc).isoformat())
-        result["message"]["content"] = [dict(type="tool_result", tool_use_id="toolu_read_body", is_error=False,
-                                               content=json.dumps(read_result(prepared["text"]))) ]
-        journal.append(result)
-        consume = journal.message("assistant", "unused", at=datetime.now(timezone.utc).isoformat())
-        consume["message"]["content"] = [dict(type="tool_use", id=consume_payload["tool_use_id"], name="Bash",
-                                               input=consume_payload["tool_input"])]
-        journal.append(consume)
-        accepted = self.request("claude_a", consume_payload)
+            self.request("claude_a", unread)
+        accepted = self.request("claude_a", self.read_and_consume("claude_a", payload, claim_id, "original"))
         self.assertEqual(accepted["status"], "OBSERVED")
         self.assertEqual(accepted["consumption_status"], "CONSUMED")
         self.assertEqual(accepted["inflight"], 0)
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
-        self.assertTrue((self.root / "reports" / (claim_id + "-consumed.json")).is_file())
+        receipt = json.loads((self.root / "reports" / (claim_id + "-consumed.json")).read_text())
+        self.assertEqual(receipt["completion"]["agent_id"], response["agentId"])
+
+    def test_postuse_runs_before_its_parent_result_exists_and_consumption_binds_it_later(self):
+        # Live 2026-10-24 (live-4 C1/C2): PostToolUse ran 4.1 s before Claude Code
+        # persisted the parent result, whose block is a hand-back frame around
+        # the report. Requiring that result inside the hook stranded both slots.
+        payload = self.original_call("claude_a", "toolu_live_order")
+        claim_id = self.request("claude_a", payload)["claim_id"]
+        response = self.native_child("claude_a", payload, claim_id, "executor_reask.py 6adf13bd")
+        observed = self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
+        self.assertEqual((observed["status"], observed["inflight"]), ("OBSERVED", 1))
+        context = observed["hook_output"]["hookSpecificOutput"]["additionalContext"]
+        report = budget_status(self.authority_ref)["claims"][claim_id]["report"]
+        self.assertIn(report["reference"]["sha256"], context)
+        early = self.read_and_consume("claude_a", payload, claim_id, "before_result")
+        with self.assertRaisesRegex(ContractError, "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED"):
+            self.request("claude_a", early)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
+        self.parent_result("claude_a", payload, response)
+        accepted = self.request("claude_a", self.read_and_consume("claude_a", payload, claim_id, "after_result"))
+        self.assertEqual((accepted["consumption_status"], accepted["inflight"]), ("CONSUMED", 0))
+
+    def test_child_tree_written_out_of_order_binds_but_a_detached_or_earlier_record_does_not(self):
+        # Live 2026-10-24 (live-4 C1/C2): a child's first startup attachment
+        # names a later-written attachment as parent and is stamped after it.
+        payload = self.original_call("claude_a", "toolu_tree")
+        claim_id = self.request("claude_a", payload)["claim_id"]
+        journal = self.journals["claude_a"]
+        call_time = datetime.fromisoformat(json.loads(journal.path.read_bytes().splitlines()[-1])["timestamp"])
+        response = self.native_child("claude_a", payload, claim_id, "Tree-bound report.", root_at=call_time)
+        child_path = journal.path.parent / journal.session["session_id"] / "subagents" / ("agent-" + response["agentId"] + ".jsonl")
+        root, terminal = [json.loads(line) for line in child_path.read_bytes().splitlines()]
+        time.sleep(0.05)
+        span = datetime.now(timezone.utc) - call_time
+        at = lambda share: (call_time + span * share).isoformat()
+        def attachment(key, parent, stamp):
+            return dict(type="attachment", sessionId=root["sessionId"], agentId=root["agentId"], isSidechain=True,
+                        uuid=key, parentUuid=parent, timestamp=stamp, attachment=dict(type="fixture"))
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+        shapes = {
+            "detached_parent": [attachment(first, str(uuid.uuid4()), at(0.6)), attachment(second, root["uuid"], at(0.3))],
+            "cycle": [attachment(first, second, at(0.6)), attachment(second, first, at(0.3))],
+            "earlier_than_its_parent": [attachment(first, second, at(0.2)), attachment(second, root["uuid"], at(0.3))],
+            "live_order": [attachment(first, second, at(0.6)), attachment(second, root["uuid"], at(0.3))],
+        }
+        expected = dict(detached_parent="PARENT_CHAIN_CHANGED", cycle="PARENT_CHAIN_CHANGED",
+                        earlier_than_its_parent="CHILD_NATIVE_CHRONOLOGY_CHANGED")
+        for shape, middle in shapes.items():
+            with self.subTest(shape=shape):
+                final = dict(terminal, parentUuid=first, timestamp=at(0.9))
+                child_path.write_bytes(b"".join(canonical(record) for record in [root, *middle, final]))
+                post = dict(payload, hook_event_name="PostToolUse", tool_response=response)
+                if shape in expected:
+                    with self.assertRaisesRegex(ContractError, expected[shape]):
+                        self.request("claude_a", post)
+                    self.assertNotIn("report", budget_status(self.authority_ref)["claims"][claim_id])
+                else:
+                    self.assertEqual(self.request("claude_a", post)["status"], "OBSERVED")
+                    self.assertIn("report", budget_status(self.authority_ref)["claims"][claim_id])
+
+    def test_parent_result_naming_another_child_or_body_releases_nothing(self):
+        for shape in ("other_body", "other_agent"):
+            with self.subTest(shape=shape):
+                payload = self.original_call("claude_a", "toolu_mismatch_" + shape)
+                claim_id = self.request("claude_a", payload)["claim_id"]
+                response = self.native_child("claude_a", payload, claim_id, "The actual child report.")
+                self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
+                if shape == "other_body":
+                    changed = dict(response, content=[dict(type="text", text="A different report.")])
+                    expected = "ORIGINAL_CHILD_REPORT_BODY_DIFFERENT"
+                else:
+                    changed = dict(response, agentId="a0000000000000000")
+                    expected = "original native child report"
+                self.parent_result("claude_a", payload, changed)
+                with self.assertRaisesRegex(ContractError, expected):
+                    self.request("claude_a", self.read_and_consume("claude_a", payload, claim_id, shape))
+                self.assertEqual(budget_status(self.authority_ref)["claims"][claim_id]["state"], "RESULT_READY")
+                self.assertFalse((self.root / "reports" / (claim_id + "-consumed.json")).exists())
 
     def test_read_after_the_original_consume_call_cannot_release_a_slot_even_with_the_right_sha(self):
         payload = self.original_call("claude_a", "toolu_early_consume")
         claim_id = self.request("claude_a", payload)["claim_id"]
-        body = "STATUS: child-consume-order\nComplete original result.\n"
-        prepared = plan(body, "child-consume-order", self.root / "reports")
-        persist(prepared["reference"], body)
-        record_child_report(self.authority_ref, claim_id, parent="claude_a", notice=prepared["text"])
+        response = self.native_child("claude_a", payload, claim_id, "Complete original result.")
+        self.request("claude_a", dict(payload, hook_event_name="PostToolUse", tool_response=response))
+        self.parent_result("claude_a", payload, response)
+        report = budget_status(self.authority_ref)["claims"][claim_id]["report"]
+        prepared = dict(text=report["notice"], reference=report["reference"])
         journal = self.journals["claude_a"]
         command = consume_command(self.python, self.controller, claim_id, prepared["reference"]["sha256"], "/original/rtk")
         consume_payload = dict(payload, tool_name="Bash", tool_use_id="toolu_early_consume_command",
@@ -479,6 +582,29 @@ class NativeChildServiceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, "ORIGINAL_PARENT_FULL_READ_REQUIRED"):
                     self.request("claude_a", consume_payload)
                 self.assertEqual(budget_status(self.authority_ref)["inflight"], 1)
+
+    def test_claim_refused_before_its_parent_result_is_recovered_without_releasing_its_slot(self):
+        # Live 2026-10-24: live-4 C1 and C2 were RESERVED, their PostToolUse
+        # refused, and no read/consume command ever reached either parent.
+        payloads, claims, responses = {}, {}, {}
+        for lane, tool_id in (("claude_a", "toolu_stranded_a"), ("claude_b", "toolu_stranded_b")):
+            payloads[lane] = self.original_call(lane, tool_id)
+            claims[lane] = self.request(lane, payloads[lane])["claim_id"]
+            responses[lane] = self.native_child(lane, payloads[lane], claims[lane], "Stranded report " + lane + ".")
+        first = recover_child_reports(self.registration, fixtures=True)
+        self.assertEqual((first["recovered"], set(first["pending"])), ([], set(claims.values())))
+        self.parent_result("claude_a", payloads["claude_a"], responses["claude_a"])
+        second = recover_child_reports(self.registration, fixtures=True)
+        self.assertEqual([item["claim_id"] for item in second["recovered"]], [claims["claude_a"]])
+        self.assertEqual(set(second["pending"]), {claims["claude_b"]})
+        state = budget_status(self.authority_ref)
+        self.assertEqual((state["inflight"], state["claims"][claims["claude_a"]]["state"]), (2, "RESULT_READY"))
+        late = json.loads(Path(second["recovered"][0]["late_report"]).read_text())
+        self.assertIn(state["claims"][claims["claude_a"]]["report"]["reference"]["sha256"], late["context"])
+        accepted = self.request("claude_a", self.read_and_consume("claude_a", payloads["claude_a"], claims["claude_a"], "late"))
+        self.assertEqual((accepted["consumption_status"], accepted["inflight"]), ("CONSUMED", 1))
+        third = recover_child_reports(self.registration, fixtures=True)
+        self.assertEqual((third["recovered"], set(third["pending"])), ([], {claims["claude_b"]}))
 
     def test_background_launch_is_refused_before_reservation_until_completion_binding_exists(self):
         payload = self.original_call("claude_a", "toolu_background")

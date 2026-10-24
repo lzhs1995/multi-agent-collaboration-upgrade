@@ -170,24 +170,38 @@ def child_report(session, call, *, claim_id, agent_id, transcript_path, fixtures
     call_time = parse_time(parent.record(call["call_record"])["timestamp"]).timestamp()
     require(parse_time(first["timestamp"]).timestamp() >= call_time,
             "ORIGINAL_CHILD_NATIVE_CHRONOLOGY_CHANGED")
-    linked, candidates, last_message = {}, [], None
-    tool_calls, pending_tools = set(), set()
-    previous_time = call_time
-    for ref, record in records:
-        # Non-conversation telemetry cannot establish a parent link or a result.
-        if record.get("type") not in {"assistant", "user", "system", "attachment"}:
-            continue
+    # Non-conversation telemetry cannot establish a parent link or a result.
+    conversation = [(ref, record) for ref, record in records
+                    if record.get("type") in {"assistant", "user", "system", "attachment"}]
+    # Live 2026-10-24 (Claude Code 2.1.303): a child's startup attachment can be
+    # written before the attachment it names as parent, with a later timestamp
+    # than the record after it. Bind the tree, not the write order: every record
+    # descends from the one root and none is earlier than its own parent.
+    linked = {}
+    for ref, record in conversation:
         require(record.get("sessionId") == session["session_id"]
                 and record.get("agentId") == agent_id and record.get("isSidechain") is True,
                 "ORIGINAL_CHILD_NATIVE_IDENTITY_CHANGED")
-        key, parent_key = record.get("uuid"), record.get("parentUuid")
-        require(isinstance(key, str) and key and key not in linked
-                and (ref == first_ref or parent_key in linked),
-                "ORIGINAL_CHILD_NATIVE_PARENT_CHAIN_CHANGED")
-        stamp = parse_time(record["timestamp"]).timestamp()
-        require(previous_time <= stamp <= time.time(), "ORIGINAL_CHILD_NATIVE_CHRONOLOGY_CHANGED")
-        previous_time = stamp
-        linked[key] = ref
+        key = record.get("uuid")
+        require(isinstance(key, str) and key and key not in linked, "ORIGINAL_CHILD_NATIVE_PARENT_CHAIN_CHANGED")
+        linked[key] = (ref, record, parse_time(record["timestamp"]).timestamp())
+    rooted = {first["uuid"]}
+    for key in linked:
+        path = []
+        while key not in rooted:
+            require(len(path) < len(linked) and key not in path and key in linked,
+                    "ORIGINAL_CHILD_NATIVE_PARENT_CHAIN_CHANGED")
+            path.append(key)
+            key = linked[key][1].get("parentUuid")
+        rooted.update(path)
+    for key, (ref, record, stamp) in linked.items():
+        parent_key = record.get("parentUuid")
+        floor = call_time if ref == first_ref else linked[parent_key][2]
+        require(call_time <= floor <= stamp <= time.time(), "ORIGINAL_CHILD_NATIVE_CHRONOLOGY_CHANGED")
+    candidates, last_message = [], None
+    tool_calls, pending_tools = set(), set()
+    for ref, record in conversation:
+        key = record["uuid"]
         if record["type"] in {"assistant", "user"}:
             last_message = key
             message = record.get("message", {})
@@ -236,16 +250,15 @@ def child_report(session, call, *, claim_id, agent_id, transcript_path, fixtures
 
 
 @contract_errors("original native Agent completion")
-def native_agent_completion(session, call, response, *, fixtures=False):
-    """Bind a foreground completed response to its unique actual parent result.
+def native_agent_completion(session, call, *, fixtures=False):
+    """Bind a foreground Agent call to its unique actual parent result.
 
-    A background launch, a hook payload or a quoted result cannot prove native
-    completion. Exact source equality and a completed structured native result
-    are mandatory even when the tool block omits the optional is_error flag.
+    Live 2026-10-24 (Claude Code 2.1.303): the parent result is persisted about
+    4 s after PostToolUse returns, so a hook can never see its own result, and
+    its tool_result block carries a harness "[Subagent hand-back]" frame around
+    the report. The structured native toolUseResult is the completion: status,
+    agent and bare content. A hook payload or a quoted result is not.
     """
-    require(isinstance(response, dict) and response.get("status") == "completed"
-            and re.fullmatch(r"a[0-9a-f]{16}", response.get("agentId", "")) is not None,
-            "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED")
     reader = NativeReader(session, fixtures=fixtures)
     start, end = reader.verify_pin(session["freeze_fence"]), reader.snapshot()
     call_time = parse_time(reader.record(call["call_record"])["timestamp"]).timestamp()
@@ -265,9 +278,12 @@ def native_agent_completion(session, call, response, *, fixtures=False):
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_result" or block.get("tool_use_id") != call["tool_use_id"]:
                 continue
+            response = record.get("toolUseResult")
             require(ref["offset"] >= call["call_record"]["offset"] + call["call_record"]["length"]
-                    and block.get("is_error") is not True and record.get("toolUseResult") == response
-                    and block.get("content") == response.get("content") and record.get("sessionId") == session["session_id"],
+                    and block.get("is_error") is not True and record.get("sessionId") == session["session_id"]
+                    and isinstance(response, dict) and response.get("status") == "completed"
+                    and re.fullmatch(r"a[0-9a-f]{16}", response.get("agentId", "")) is not None
+                    and isinstance(response.get("content"), list),
                     "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED: native result differs")
             require(call_time <= parse_time(record["timestamp"]).timestamp() <= time.time(),
                     "ORIGINAL_NATIVE_CHILD_COMPLETION_CHRONOLOGY_CHANGED")
@@ -276,8 +292,9 @@ def native_agent_completion(session, call, response, *, fixtures=False):
     result = reader.record(results[0])
     reader.verify_pin(session["freeze_fence"])
     reader.verify_pin(end)
+    response = result["toolUseResult"]
     return dict(result_record=results[0], completion_timestamp=result["timestamp"],
-                agent_id=response["agentId"], input_operations=0)
+                agent_id=response["agentId"], content=response["content"], input_operations=0)
 
 
 @contract_errors("original native child consumption call")

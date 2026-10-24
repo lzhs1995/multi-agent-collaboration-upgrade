@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import stat
 import sys
@@ -18,7 +19,7 @@ import time
 import uuid
 
 from cmux_prompt_reference import plan, persist
-from orchestration_common import (checked_path, contract_errors, json_ref, file_ref, object_sha,
+from orchestration_common import (checked_path, contract_errors, digest, json_ref, file_ref, object_sha,
     parse_time, read_ref, require, strict_json, tree_manifest, utc_now, verify_tree, write_json)
 from upgrade_body_read import read_command
 from upgrade_child_budget import (authority_value, budget_status, initialize_ledger,
@@ -252,6 +253,87 @@ def validate_service_registration(ref, *, running_source=True):
     return value, runtime
 
 
+def _completed_child_report(session, call, claim_id, agent_id, *, fixtures=False):
+    child_path = (Path(session["transcript"]["path"]).parent / session["session_id"] / "subagents"
+                  / ("agent-" + agent_id + ".jsonl"))
+    return child_report(session, call, claim_id=claim_id, agent_id=agent_id,
+                        transcript_path=str(child_path), fixtures=fixtures)
+
+
+def _report_context(registration, claim_id, prepared):
+    command = read_command(registration["python"], registration["controller"], prepared["text"], registration["rtk"])
+    return ("Original child report is available but its slot remains occupied. Read its complete body with: "
+            + command + "\nThen consume this exact SHA only after the original parent native read: "
+            + consume_command(registration["python"], registration["controller"], claim_id,
+                              prepared["reference"]["sha256"], registration["rtk"]))
+
+
+def _publish_child_report(registration, lane, call, claim_id, report):
+    """Pin one complete child body; availability never releases its slot."""
+    body = "STATUS: child-" + claim_id + "\n" + report["body"]
+    prepared = plan(body, "child-" + claim_id, Path(registration["report_root"]))
+    persist(prepared["reference"], body)
+    result = record_child_report(registration["authority"], claim_id, parent=lane, notice=prepared["text"])
+    evidence_path = Path(registration["report_root"]) / (claim_id + "-native.json")
+    evidence = dict(schema="upgrade-original-native-child-report-v2", claim_id=claim_id, parent=lane,
+        call=call, report=report, reference=prepared["reference"], input_operations=0)
+    if not evidence_path.exists():
+        write_json(evidence_path, evidence, exclusive=True)
+        evidence_path.chmod(0o444)
+    return prepared, result
+
+
+def _bound_completion(completion, report):
+    """The parent's own native result names this child and carries its report."""
+    require(completion["agent_id"] == report["agent_id"]
+            and completion["content"] == [{"type": "text", "text": report["body"]}],
+            "ORIGINAL_CHILD_REPORT_BODY_DIFFERENT: note is not the complete child result")
+    require(parse_time(report["terminal_timestamp"]) <= parse_time(completion["completion_timestamp"]),
+            "ORIGINAL_NATIVE_CHILD_COMPLETION_CHRONOLOGY_CHANGED")
+    return completion
+
+
+@contract_errors("recover original child reports")
+def recover_child_reports(registration, *, fixtures=False):
+    """Publish reports whose PostToolUse ran before the parent result existed.
+
+    Only a RESERVED claim with its original call record, a completed native
+    parent result and the child's own terminal report is published. Capacity is
+    not released; a late-report file names the same read and consume commands.
+    """
+    recovered, pending = [], {}
+    for claim_id, claim in sorted(budget_status(registration["authority"])["claims"].items()):
+        if claim["state"] != "RESERVED" or "report" in claim:
+            continue
+        lane = claim["parent"]
+        session = registration["sessions"][lane]
+        try:
+            call = json_ref(file_ref(Path(registration["report_root"]) / (claim_id + "-call.json")),
+                            "original native child call")
+            require(claim_id == object_sha(dict(session_id=session["session_id"], tool_use_id=call["tool_use_id"]))
+                    and claim["tool_input_sha256"] == object_sha(call["tool_input"]),
+                    "ORIGINAL_CHILD_RESERVATION_REQUIRED")
+            payload = dict(hook_event_name="PreToolUse", session_id=session["session_id"],
+                           transcript_path=session["transcript"]["path"], tool_name="Agent",
+                           tool_use_id=call["tool_use_id"], tool_input=call["tool_input"])
+            require(original_agent_call(session, payload, fixtures=fixtures) == call, "ORIGINAL_CHILD_NATIVE_CALL_CHANGED")
+            completion = native_agent_completion(session, call, fixtures=fixtures)
+            report = _completed_child_report(session, call, claim_id, completion["agent_id"], fixtures=fixtures)
+            _bound_completion(completion, report)
+            prepared, _ = _publish_child_report(registration, lane, call, claim_id, report)
+        except (ValueError, KeyError, OSError) as exc:
+            pending[claim_id] = str(exc)
+            continue
+        late_path = Path(registration["report_root"]) / (claim_id + "-late-report.json")
+        if not late_path.exists():
+            write_json(late_path, dict(schema="upgrade-original-child-late-report-v1", claim_id=claim_id,
+                parent=lane, reference=prepared["reference"], completion=completion,
+                context=_report_context(registration, claim_id, prepared), input_operations=0), exclusive=True)
+            late_path.chmod(0o444)
+        recovered.append(dict(claim_id=claim_id, parent=lane, late_report=str(late_path)))
+    return dict(recovered=recovered, pending=pending)
+
+
 @contract_errors("native child hook transaction")
 def handle_event(registration, packet, *, peer, process_reader=None, fixtures=False, reply_deadline=None,
                  native_python=None):
@@ -292,6 +374,16 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
         claim = state["claims"].get(claim_id)
         require(claim is not None and claim["parent"] == lane and "report" in claim,
                 "CHILD_REPORT_NOT_READY_FOR_ORIGINAL_PARENT")
+        # The parent's native result exists only after its PostToolUse returned;
+        # no slot is released before it names this child and carries this body.
+        call = json_ref(file_ref(Path(registration["report_root"]) / (claim_id + "-call.json")),
+                        "original native child call")
+        completion = native_agent_completion(session, call, fixtures=fixtures)
+        report = _completed_child_report(session, call, claim_id, completion["agent_id"], fixtures=fixtures)
+        _bound_completion(completion, report)
+        require(digest(("STATUS: child-" + claim_id + "\n" + report["body"]).encode())
+                == claim["report"]["reference"]["sha256"],
+                "ORIGINAL_CHILD_REPORT_BODY_DIFFERENT: note is not the complete child result")
         reader_command = read_command(registration["python"], registration["controller"],
                                       claim["report"]["notice"], registration["rtk"])
         in_reply_budget()
@@ -300,7 +392,7 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
             consumption_call=call_record, fixtures=fixtures)
         receipt_path = Path(registration["report_root"]) / (claim_id + "-consumed.json")
         receipt = dict(schema="upgrade-original-child-consumed-v1", claim_id=claim_id, parent=lane,
-            reply_sha256=consumption["reply_sha256"], consumption_call=call_record,
+            reply_sha256=consumption["reply_sha256"], consumption_call=call_record, completion=completion,
             full_read=budget_status(authority)["claims"][claim_id]["consumption"], input_operations=0)
         if not receipt_path.exists():
             write_json(receipt_path, receipt, exclusive=True)
@@ -337,33 +429,18 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
     claim = state["claims"].get(claim_id)
     require(claim is not None and claim["parent"] == lane and claim["tool_input_sha256"] == object_sha(call["tool_input"]),
             "ORIGINAL_CHILD_RESERVATION_REQUIRED")
-    completion = native_agent_completion(session, call, payload.get("tool_response"), fixtures=fixtures)
-    child_path = (Path(session["transcript"]["path"]).parent / session["session_id"] / "subagents"
-                  / ("agent-" + completion["agent_id"] + ".jsonl"))
-    report = child_report(session, call, claim_id=claim_id, agent_id=completion["agent_id"],
-                          transcript_path=str(child_path), fixtures=fixtures)
-    require(parse_time(report["terminal_timestamp"]) <= parse_time(completion["completion_timestamp"]),
-            "ORIGINAL_NATIVE_CHILD_COMPLETION_CHRONOLOGY_CHANGED")
-    response = payload["tool_response"]
-    require(response.get("content") == [{"type": "text", "text": report["body"]}],
-            "ORIGINAL_CHILD_REPORT_BODY_DIFFERENT: note is not the complete child result")
-    body = "STATUS: child-" + claim_id + "\n" + report["body"]
-    prepared = plan(body, "child-" + claim_id, Path(registration["report_root"]))
-    persist(prepared["reference"], body)
-    result = record_child_report(authority, claim_id, parent=lane, notice=prepared["text"])
-    evidence_path = Path(registration["report_root"]) / (claim_id + "-native.json")
-    evidence = dict(schema="upgrade-original-native-child-report-v1", claim_id=claim_id,
-        parent=lane, call=call, completion=completion, report=report, reference=prepared["reference"], input_operations=0)
-    if not evidence_path.exists():
-        write_json(evidence_path, evidence, exclusive=True)
-        evidence_path.chmod(0o444)
-    command = read_command(registration["python"], registration["controller"], prepared["text"], registration["rtk"])
-    context = ("Original child report is available but its slot remains occupied. Read its complete body with: "
-               + command + "\nThen consume this exact SHA only after the original parent native read: "
-               + consume_command(registration["python"], registration["controller"], claim_id,
-                                 prepared["reference"]["sha256"], registration["rtk"]))
+    # The parent's native result is not persisted until this hook returns. The
+    # hook response only names the child; its own transcript is the report, and
+    # consumption later binds the parent result before any slot is released.
+    response = payload.get("tool_response")
+    require(isinstance(response, dict) and response.get("status") == "completed"
+            and re.fullmatch(r"a[0-9a-f]{16}", response.get("agentId", "")) is not None,
+            "ORIGINAL_NATIVE_CHILD_COMPLETION_REQUIRED")
+    report = _completed_child_report(session, call, claim_id, response["agentId"], fixtures=fixtures)
+    prepared, result = _publish_child_report(registration, lane, call, claim_id, report)
     return dict(status="OBSERVED", claim_id=claim_id, inflight=result["inflight"],
-                hook_output=dict(hookSpecificOutput=dict(hookEventName=event, additionalContext=context)))
+                hook_output=dict(hookSpecificOutput=dict(hookEventName=event,
+                    additionalContext=_report_context(registration, claim_id, prepared))))
 
 
 @contract_errors("native child IPC packet")
@@ -450,6 +527,10 @@ def serve(registration_ref, *, timeout_seconds):
     # Hooks are started as the pinned Python; record what the kernel reports.
     native_python = measured_python_executable(registration["python"])
     require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
+    # Reports whose PostToolUse ran before the parent result existed; this
+    # publishes availability only and releases no slot.
+    with verified_native_authority(published[0]):
+        recovery = recover_child_reports(registration)
     endpoint = checked_path(registration["socket"])
     require(not os.path.lexists(endpoint), "ORIGINAL_CHILD_SERVICE_SOCKET_EXISTS: do not replace it")
     # Intent and events sit beside this registration; a successor keeps its
@@ -470,7 +551,8 @@ def serve(registration_ref, *, timeout_seconds):
         listener.listen(16)
         listener.settimeout(0.5)
         print(json.dumps(dict(status="CHILD_SERVICE_READY_NOT_ADOPTED", registration=registration_ref,
-                              socket=str(endpoint), pid=os.getpid(), model_requests=0, input_operations=0)), flush=True)
+                              socket=str(endpoint), pid=os.getpid(), recovery=recovery,
+                              model_requests=0, input_operations=0)), flush=True)
         reverifier = _Reverifier(registration_ref, registration, stopped, published[0])
         reverifier.thread.start()
         try:
