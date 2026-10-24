@@ -93,7 +93,7 @@ def _observed_native_authority(authority):
 
 
 @contract_errors("live runtime")
-def validate_live_runtime(ref, *, context_ref=None, stage_controller=None):
+def validate_live_runtime(ref, *, context_ref=None, stage_controller=None, recovered=None):
     runtime = json_ref(ref, "live runtime")
     require(set(runtime) == RUNTIME_FIELDS and runtime["version"] == 2
             and runtime["skill"] == NAME and runtime["execution_mode"] == "live-isolated-v2"
@@ -127,7 +127,7 @@ def validate_live_runtime(ref, *, context_ref=None, stage_controller=None):
     # are they checked against the stage release instead of their old pins.
     spec, _ = (validate_startup(runtime["startup"], controller=runtime["controller"]["path"])
                if stage_controller is None else
-               validate_startup(runtime["startup"], stage_controller=stage_controller))
+               validate_startup(runtime["startup"], stage_controller=stage_controller, recovered=recovered))
     require(spec["context"] == runtime["context"] and spec["arm"] == runtime["arm"]
             and spec["controller"] == runtime["controller"]["path"], "LIVE_STARTUP_RUNTIME_CHANGED")
     return context, runtime

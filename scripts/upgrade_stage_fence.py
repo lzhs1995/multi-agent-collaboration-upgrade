@@ -16,10 +16,46 @@ from orchestration_common import checked_path, digest, file_ref, json_ref, read_
 from upgrade_startup_contract import readiness_command
 
 SCHEMA = "upgrade-stage-fence-v1"
+# A recovered stage: the same three original sessions, restored by the user's
+# authority into one new workspace, with a few original files exactly re-pinned.
+RECOVERED_SCHEMA = "upgrade-stage-fence-v2"
 ADOPTION_SCHEMA = "upgrade-stage-adoption-v1"
+RECOVERY_SCHEMA = "upgrade-stage-recovery-v1"
 FIELDS = {"schema", "stage_id", "models", "original_startup", "authority", "controller", "control", "prompts", "hooks"}
 LANES = ("codex", "claude_a", "claude_b")
 HOOK_PINS = ("codex/hooks.json", "claude_a/settings.json", "claude_b/settings.json")
+# Only these original pins may be superseded, each by one exact file reference
+# frozen in the stage record. Never a tolerance for other configuration.
+RECOVERABLE_PINS = ("codex/config.toml",)
+RECOVERY_FIELDS = {"workspace_uuid", "sessions", "pins"}
+RECOVERED_LAUNCH_SCHEMA = "upgrade-stage-recovered-launch-v1"
+LAUNCH_FIELDS = {"schema", "lane", "provider", "native_root", "session_id", "pid", "birth", "surface_uuid",
+                 "pane_uuid", "workspace_uuid", "tty", "startup"}
+
+
+def stage_record_fields(stage):
+    return FIELDS | ({"recovery"} if stage.get("schema") == RECOVERED_SCHEMA else set())
+
+
+def recovered_pins(stage):
+    """The exact replacements a recovered stage freezes; {} for an original stage."""
+    if stage.get("schema") != RECOVERED_SCHEMA:
+        return {}
+    pins = stage["recovery"]["pins"]
+    require(isinstance(pins, dict) and set(pins) <= set(RECOVERABLE_PINS)
+            and all(isinstance(v, dict) and set(v) == {"path", "sha256", "bytes", "mode"} for v in pins.values()),
+            "STAGE_RECOVERED_PIN_SET_CHANGED")
+    return pins
+
+
+def stage_pins_for_controller(controller):
+    """Recovered pins named by a stage release's own binding, read without validating the stage."""
+    binding = json.loads(read_regular(Path(controller) / "upgrade-binding.json"))
+    fence = binding.get("stage_fence")
+    require(isinstance(fence, dict), "STAGE_BINDING_REQUIRED")
+    raw = read_regular(Path(fence["path"]))
+    require(digest(raw) == fence["sha256"], "STAGE_RECORD_CHANGED")
+    return recovered_pins(json.loads(raw))
 
 
 # The shared MAC sender pastes only one line of at most 700 UTF-8 bytes; a
@@ -55,7 +91,8 @@ def validate_stage(ref, binding, spec):
             "STAGE_BINDING_REQUIRED")
     require(ref["sha256"] == fence["sha256"], "STAGE_RECORD_CHANGED")
     stage = json_ref(ref, "validation stage")
-    require(set(stage) == FIELDS and stage["schema"] == SCHEMA, "STAGE_FIELDS_CHANGED")
+    require(stage.get("schema") in (SCHEMA, RECOVERED_SCHEMA) and set(stage) == stage_record_fields(stage),
+            "STAGE_FIELDS_CHANGED")
     stage_id, models = stage["stage_id"], stage["models"]
     # Each lane keeps its own provider; a stage pins the one model per lane.
     require(isinstance(stage_id, str) and stage_id and "/" not in stage_id and not stage_id.startswith(".")
@@ -89,13 +126,37 @@ def validate_stage(ref, binding, spec):
         require(str(Path(spec["controller"]) / "scripts") not in text
                 and str(Path(stage["controller"]) / "scripts/cmux_workflow_advisory.py") in text,
                 "STAGE_HOOK_CONTROLLER_CHANGED:" + key)
+    if stage["schema"] == RECOVERED_SCHEMA:
+        validate_recovery(stage, spec)
     return stage
 
 
+def validate_recovery(stage, spec):
+    """The restored identity: one workspace, the three original session IDs, exact re-pins."""
+    import uuid
+    recovery = stage["recovery"]
+    require(isinstance(recovery, dict) and set(recovery) == RECOVERY_FIELDS, "STAGE_RECOVERY_FIELDS_CHANGED")
+    canonical = lambda value: str(uuid.UUID(value))
+    sessions = recovery["sessions"]
+    require(recovery["workspace_uuid"] == canonical(recovery["workspace_uuid"])
+            and isinstance(sessions, dict) and set(sessions) == set(LANES)
+            and all(sessions[lane] == canonical(sessions[lane]) for lane in LANES)
+            and len(set(sessions.values())) == len(LANES), "STAGE_RECOVERY_IDENTITY_CHANGED")
+    # Claude IDs are frozen in the original startup; Codex's thread came from its launch.
+    require(all(sessions[lane] == canonical(spec["clients"][lane]["session_id"]) for lane in ("claude_a", "claude_b")),
+            "STAGE_RECOVERY_SESSION_NOT_ORIGINAL")
+    for key, pin in recovered_pins(stage).items():
+        require(pin["path"] == spec["pins"][key]["path"] and pin != {k: spec["pins"][key].get(k) for k in pin},
+                "STAGE_RECOVERED_PIN_LOCATION_CHANGED:" + key)
+
+
 def stage_view(spec, stage):
-    """The original startup with only the controller replaced, for readiness matching."""
+    """The original startup with the controller replaced and the stage's own file pins, for readiness matching."""
     view = copy.copy(spec)
     view["controller"] = stage["controller"]
+    if stage.get("schema") == RECOVERED_SCHEMA:
+        # The hook observer records the stage's hook pins; readiness compares the same reference.
+        view["pins"] = dict(spec["pins"], **stage["hooks"], **recovered_pins(stage))
     return view
 
 
@@ -117,6 +178,37 @@ def load_stage(source):
             and "stage_fence" not in original, "STAGE_BINDING_CHANGED")
     stage = validate_stage(file_ref(fence["path"]), binding, spec)
     return startup_ref, spec, binding, stage
+
+
+def recovery_path(stage):
+    return Path(stage["control"]) / "recovery.json"
+
+
+def recovered_launches(stage, stage_ref, startup_ref):
+    """The restored clients' launch identities, published once outside every client.
+
+    None when the stage is not a recovered stage. Raises until the external
+    publisher has frozen them; the original launch records are never rewritten.
+    """
+    if stage.get("schema") != RECOVERED_SCHEMA:
+        return None, None
+    ref = file_ref(recovery_path(stage))
+    value = json_ref(ref, "stage recovery")
+    sessions, workspace = stage["recovery"]["sessions"], stage["recovery"]["workspace_uuid"]
+    require(value.get("schema") == RECOVERY_SCHEMA and value.get("stage") == stage_ref
+            and value.get("startup") == startup_ref and value.get("input_operations") == 0
+            and isinstance(value.get("launches"), dict) and set(value["launches"]) == set(LANES),
+            "STAGE_RECOVERY_RECORD_CHANGED")
+    for lane, launch in value["launches"].items():
+        require(set(launch) == LAUNCH_FIELDS and launch["schema"] == RECOVERED_LAUNCH_SCHEMA
+                and launch["lane"] == lane and launch["startup"] == startup_ref
+                and launch["provider"] == ("codex" if lane == "codex" else "claude")
+                and launch["session_id"] == sessions[lane] and launch["workspace_uuid"] == workspace,
+                "STAGE_RECOVERY_LAUNCH_CHANGED:" + lane)
+    require(len({launch["surface_uuid"] for launch in value["launches"].values()}) == len(LANES)
+            and len({launch["pid"] for launch in value["launches"].values()}) == len(LANES),
+            "STAGE_RECOVERY_LAUNCHES_NOT_DISTINCT")
+    return ref, value["launches"]
 
 
 def stop_paths(binding):

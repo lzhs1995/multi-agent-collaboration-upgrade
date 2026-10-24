@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import uuid
 
 from orchestration_common import (ContractError, canonical, checked_path, digest, exclusive_lock, file_ref,
                                   json_ref, read_regular, require, tree_manifest, utc_now, write_bytes_once)
@@ -29,7 +30,8 @@ from upgrade_live_materialize import immutable_bytes, render_private_support
 from upgrade_live_patch import transform_live
 from upgrade_live_runtime import validate_live_runtime
 from upgrade_materialize import hook_config, rendered_helper
-from upgrade_stage_fence import ADOPTION_SCHEMA, HOOK_PINS, LANES, SCHEMA, control_directory, stage_prompt
+from upgrade_stage_fence import (ADOPTION_SCHEMA, HOOK_PINS, LANES, RECOVERED_SCHEMA, SCHEMA, control_directory,
+                                 stage_prompt, validate_recovery)
 from upgrade_startup_contract import child_budget_enabled
 
 PLAN_SCHEMA = "upgrade-stage-install-plan-v1"
@@ -73,6 +75,41 @@ def stage_paths(paths, release):
     return dict(paths, bin=release / "bin", config=release / "config")
 
 
+# The only recovered change admitted to the Codex configuration: the client's
+# own one-time TUI marker appended after the exact original bytes.
+CODEX_TUI_APPEND = b"\n[tui]\nscreen_reader_detection_done = true\n"
+
+
+def recovered_codex_config(spec):
+    """Exact original bytes plus exactly the TUI marker; anything else refuses."""
+    pin = spec["pins"]["codex/config.toml"]
+    raw = read_regular(pin["path"])
+    require(len(raw) == pin["bytes"] + len(CODEX_TUI_APPEND) and digest(raw[:pin["bytes"]]) == pin["sha256"]
+            and raw[pin["bytes"]:] == CODEX_TUI_APPEND, "STAGE_RECOVERED_CODEX_CONFIG_NOT_ORIGINAL_PLUS_TUI")
+    return mode_ref(pin["path"])
+
+
+def base_scope(runtime_ref, base_ref):
+    """A recovered build: the installed base stage, its lane files and the recovered config.
+
+    The base stage's hook files are current (the restore changed only credentials);
+    their hooks must still be exactly the base controller's wiring.
+    """
+    base = json_ref(base_ref, "base validation stage")
+    base_binding = json.loads(read_regular(Path(base["controller"]) / "upgrade-binding.json"))
+    require(base.get("schema") == SCHEMA and base_ref["path"] == str(Path(base["control"]) / "stage.json")
+            and isinstance(base_binding.get("stage_fence"), dict)
+            and base_binding["stage_fence"]["sha256"] == base_ref["sha256"], "STAGE_BASE_RECORD_CHANGED")
+    # The recovered pin is derived first; the runtime is then validated with it.
+    spec = json_ref(json_ref(runtime_ref, "original runtime")["startup"], "original startup")
+    recovered = {"codex/config.toml": recovered_codex_config(spec)}
+    context, runtime = validate_live_runtime(runtime_ref, stage_controller=base["controller"], recovered=recovered)
+    source = Path(runtime["controller"]["path"])
+    binding = json.loads(read_regular(source / "upgrade-binding.json"))
+    require("stage_fence" not in binding and base["original_startup"] == runtime["startup"], "STAGE_BASE_SCOPE_CHANGED")
+    return context, runtime, spec, binding, base, recovered
+
+
 def original_scope(runtime_ref):
     """The original runtime, still exactly as frozen; the stage never edits it."""
     context, runtime = validate_live_runtime(runtime_ref)
@@ -83,17 +120,23 @@ def original_scope(runtime_ref):
     return context, runtime, spec, binding
 
 
-def new_hook_bytes(runtime, spec, binding, controller):
-    """Recompute the three new lane files from the current, pinned originals."""
+def new_hook_bytes(runtime, spec, binding, controller, base=None):
+    """Recompute the three new lane files from the current files.
+
+    Original build: the files must be the startup's exact pins. Recovered build:
+    the files are the base stage's (credentials may differ); their hooks must be
+    the base controller's wiring and only the hooks field is replaced.
+    """
     source = Path(runtime["source_controller"]["path"])
     python = spec["pins"]["python"]["path"]
-    original = provider_hooks(source, Path(spec["controller"]), python, binding)
+    original = provider_hooks(source, Path(spec["controller"] if base is None else base["controller"]), python, binding)
     staged = provider_hooks(source, Path(controller), python, binding)
     result = {}
     for key in HOOK_PINS:
         pin = spec["pins"][key]
         raw = read_regular(pin["path"])
-        require(digest(raw) == pin["sha256"], "STAGE_LANE_FILE_NOT_ORIGINAL:" + key)
+        if base is None:
+            require(digest(raw) == pin["sha256"], "STAGE_LANE_FILE_NOT_ORIGINAL:" + key)
         result[key] = rewritten_hook_file(key, raw, original, staged)
     return result
 
@@ -107,9 +150,20 @@ STAGE_SCOPE = ("# Fenced validation stage {stage_id} for multi-agent-collaborati
     "sessions or change models.\n\n")
 
 
-def build(runtime_ref, stage_id, models, authority_ref, staging, backup):
-    """Write a new staging directory and its PLAN.json; no live path is written."""
-    context, runtime, spec, binding = original_scope(runtime_ref)
+def build(runtime_ref, stage_id, models, authority_ref, staging, backup, base_ref=None, recovery=None):
+    """Write a new staging directory and its PLAN.json; no live path is written.
+
+    base_ref/recovery: a recovered stage replacing the installed base stage for
+    the same three original sessions, restored into one workspace. recovery
+    names that workspace and Codex's original thread (Claude IDs are frozen).
+    """
+    require((base_ref is None) == (recovery is None), "STAGE_RECOVERY_ARGUMENTS_REQUIRED")
+    if base_ref is None:
+        (context, runtime, spec, binding), base, recovered = original_scope(runtime_ref), None, {}
+    else:
+        context, runtime, spec, binding, base, recovered = base_scope(runtime_ref, base_ref)
+        require(models == base["models"] and set(recovery) == {"workspace_uuid", "codex_session"},
+                "STAGE_RECOVERY_SCOPE_CHANGED")
     require(isinstance(stage_id, str) and stage_id and "/" not in stage_id and not stage_id.startswith(".")
             and isinstance(models, dict) and set(models) == set(LANES)
             and all(isinstance(m, str) and m for m in models.values()), "STAGE_IDENTITY_REQUIRED")
@@ -139,15 +193,21 @@ def build(runtime_ref, stage_id, models, authority_ref, staging, backup):
     require(not set(private) & set(buffers), "STAGE_SOURCE_COLLISION")
     buffers.update(private)
     python, rtk = spec["pins"]["python"]["path"], spec["pins"]["rtk"]["path"]
-    hooks = new_hook_bytes(runtime, spec, binding, controller)
+    hooks = new_hook_bytes(runtime, spec, binding, controller, base=base)
     authority_raw = read_regular(authority_ref["path"])
     require(digest(authority_raw) == authority_ref["sha256"], "STAGE_AUTHORITY_CHANGED")
-    record = dict(schema=SCHEMA, stage_id=stage_id, models=models, original_startup=runtime["startup"],
+    record = dict(schema=SCHEMA if base is None else RECOVERED_SCHEMA, stage_id=stage_id, models=models,
+        original_startup=runtime["startup"],
         authority=dict(path=str(control / "AUTHORITY.json"), sha256=digest(authority_raw)),
         controller=str(controller), control=str(control),
         prompts={lane: stage_prompt(stage_id, models[lane], str(controller), python, rtk, lane) for lane in LANES},
         hooks={key: dict(path=spec["pins"][key]["path"], sha256=digest(raw), bytes=len(raw))
                for key, raw in hooks.items()})
+    if base is not None:
+        record["recovery"] = dict(workspace_uuid=str(uuid.UUID(recovery["workspace_uuid"])), pins=recovered,
+            sessions=dict(codex=str(uuid.UUID(recovery["codex_session"])),
+                          **{lane: spec["clients"][lane]["session_id"] for lane in ("claude_a", "claude_b")}))
+        validate_recovery(record, spec)
     record_raw = canonical(record)
     staged = dict(binding, controller_root=str(controller), stage_fence=dict(path=str(control / "stage.json"),
                   sha256=digest(record_raw), stage_id=stage_id, models=models))
@@ -184,12 +244,17 @@ def build(runtime_ref, stage_id, models, authority_ref, staging, backup):
         control_tree=dict(tree_manifest(ctl, kind="output"), path=str(control)),
         stage=ref(control / "stage.json", record_raw), binding=ref(controller / "upgrade-binding.json", binding_raw),
         manifest=ref(release / "MANIFEST.json", manifest_raw), authority=authority_ref,
-        hooks={key: dict(before=spec["pins"][key], after=dict(path=spec["pins"][key]["path"],
-               sha256=digest(raw), bytes=len(raw), mode=spec["pins"][key]["mode"])) for key, raw in hooks.items()},
-        unchanged=dict({k: v for k, v in spec["pins"].items() if k not in HOOK_PINS}, startup=runtime["startup"],
-                       runtime=runtime_ref, release_manifest=runtime["release_manifest"], patches=runtime["patches"]),
-        absent=[spec["adoption_path"], spec["stop_path"]], free_floor_bytes=FREE_FLOOR_BYTES,
-        adoption_schema=ADOPTION_SCHEMA, input_operations=0, clients_started=0)
+        # A recovered build swaps the base stage's current files (exact CAS on today's bytes).
+        hooks={key: dict(before=spec["pins"][key] if base is None else mode_ref(spec["pins"][key]["path"]),
+               after=dict(path=spec["pins"][key]["path"], sha256=digest(raw), bytes=len(raw),
+                          mode=spec["pins"][key]["mode"])) for key, raw in hooks.items()},
+        unchanged=dict({k: v for k, v in spec["pins"].items() if k not in HOOK_PINS and k not in recovered},
+                       startup=runtime["startup"], runtime=runtime_ref, release_manifest=runtime["release_manifest"],
+                       patches=runtime["patches"]),
+        absent=[spec["adoption_path"], spec["stop_path"]] + ([] if base is None else [
+            str(Path(base["control"]) / "adoption.json"), str(Path(base["control"]) / "stop.json")]),
+        free_floor_bytes=FREE_FLOOR_BYTES, adoption_schema=ADOPTION_SCHEMA, input_operations=0, clients_started=0,
+        **({} if base is None else dict(base=base_ref, recovered=recovered, recovery=record["recovery"])))
     immutable_bytes(staging / "PLAN.json", canonical(plan))
     return file_ref(staging / "PLAN.json")
 
@@ -212,7 +277,11 @@ def mode_ref(path):
 
 def check_original(plan):
     """Every precondition before any write; returns the recomputed new hook bytes."""
-    _, runtime, spec, binding = original_scope(plan["runtime"])
+    if "base" in plan:
+        _, runtime, spec, binding, base, recovered = base_scope(plan["runtime"], plan["base"])
+        require(recovered == plan["recovered"], "STAGE_RECOVERED_PIN_CHANGED")
+    else:
+        (_, runtime, spec, binding), base = original_scope(plan["runtime"]), None
     require(runtime["startup"] == plan["startup"], "STAGE_ORIGINAL_STARTUP_CHANGED")
     for key, value in plan["unchanged"].items():
         if "mode" in value:
@@ -224,7 +293,7 @@ def check_original(plan):
         before = item["before"]
         require(mode_ref(before["path"]) == {k: before[k] for k in ("path", "sha256", "bytes", "mode")},
                 "STAGE_HOOK_TARGET_CHANGED:" + key)
-    hooks = new_hook_bytes(runtime, spec, binding, Path(plan["release"]) / "source")
+    hooks = new_hook_bytes(runtime, spec, binding, Path(plan["release"]) / "source", base=base)
     for key, raw in hooks.items():
         require(digest(raw) == plan["hooks"][key]["after"]["sha256"], "STAGE_NEW_HOOK_BYTES_CHANGED:" + key)
     for path in plan["absent"]:
@@ -401,18 +470,30 @@ def main(argv=None):
     parser.add_argument("--backup")
     parser.add_argument("--plan")
     parser.add_argument("--plan-sha256")
+    # A recovered build: the installed base stage and the restored identity.
+    parser.add_argument("--base-stage")
+    parser.add_argument("--base-stage-sha256")
+    parser.add_argument("--recovery-workspace")
+    parser.add_argument("--codex-session")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             models = {lane: getattr(args, "model_" + lane) for lane in LANES}
+            recovering = (args.base_stage, args.base_stage_sha256, args.recovery_workspace, args.codex_session)
             require(all((args.runtime, args.runtime_sha256, args.stage_id, args.authority, args.authority_sha256,
-                         args.staging, args.backup, *models.values())) and not (args.plan or args.plan_sha256),
-                    "STAGE_BUILD_ARGUMENTS_REQUIRED")
+                         args.staging, args.backup, *models.values())) and not (args.plan or args.plan_sha256)
+                    and (all(recovering) or not any(recovering)), "STAGE_BUILD_ARGUMENTS_REQUIRED")
+            base_ref, recovery = None, None
+            if all(recovering):
+                base_ref = anchored_ref(args.base_stage, args.base_stage_sha256)
+                recovery = dict(workspace_uuid=args.recovery_workspace, codex_session=args.codex_session)
             ref = build(anchored_ref(args.runtime, args.runtime_sha256), args.stage_id, models,
-                        anchored_ref(args.authority, args.authority_sha256), args.staging, args.backup)
+                        anchored_ref(args.authority, args.authority_sha256), args.staging, args.backup,
+                        base_ref=base_ref, recovery=recovery)
             value = dict(status="STAGED_NOT_INSTALLED", plan=ref, input_operations=0)
         else:
-            require(args.plan and args.plan_sha256 and not any((args.runtime, args.stage_id, args.staging)),
+            require(args.plan and args.plan_sha256 and not any((args.runtime, args.stage_id, args.staging,
+                                                                args.base_stage, args.recovery_workspace)),
                     "STAGE_PLAN_ARGUMENTS_REQUIRED")
             plan = load_plan(args.plan, args.plan_sha256)
             value = {"plan": plan_check, "apply": apply, "rollback": rollback}[args.command](plan)

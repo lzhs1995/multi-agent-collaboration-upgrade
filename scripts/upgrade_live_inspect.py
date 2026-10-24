@@ -85,6 +85,43 @@ from upgrade_readiness_evidence import (command_in_tool, completed_probe, hook_m
     native_records, nested_readiness_command, readiness_evidence)
 
 
+def recovered_candidates(bridge, native, identity, spec, stage, startup_ref):
+    """Each original session's restored client in the stage workspace, by native identity only.
+
+    Titles, focus and remembered refs are never selectors: a surface counts only
+    when its live process is the lane's provider, native root and original session.
+    """
+    from upgrade_stage_fence import LANES as STAGE_LANES, RECOVERED_LAUNCH_SCHEMA
+    workspace = stage["recovery"]["workspace_uuid"]
+    tree = strict_json(bridge._run("tree", "--all", "--json", "--id-format", "both"), "live cmux tree")
+    rows = [ws for window in tree["windows"] for ws in window["workspaces"] if str(uuid.UUID(ws["id"])) == workspace]
+    require(len(rows) == 1, "STAGE_RECOVERY_WORKSPACE_NOT_UNIQUE")
+    found = {lane: [] for lane in STAGE_LANES}
+    for pane in rows[0].get("panes", []):
+        for surface in pane.get("surfaces", []):
+            target = str(uuid.UUID(surface["id"]))
+            if surface.get("type") != "terminal" or target in spec["protected_surface_uuids"]:
+                continue
+            try:
+                row = native._tree_row(bridge, target)
+                client = native._target_process(row)
+                provider = native._provider(client)
+                root = str(process_root(provider, client))
+                sid = native._live_session(client, provider)
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError):
+                continue
+            for lane in STAGE_LANES:
+                if (provider == ("codex" if lane == "codex" else "claude") and root == spec["clients"][lane]["native_root"]
+                        and sid == stage["recovery"]["sessions"][lane]):
+                    found[lane].append(dict(schema=RECOVERED_LAUNCH_SCHEMA, lane=lane, provider=provider,
+                        native_root=root, session_id=sid, pid=client["pid"], birth=client["birth"],
+                        surface_uuid=target, pane_uuid=str(uuid.UUID(row["target_pane_uuid"])),
+                        workspace_uuid=workspace, tty=row["tty"], startup=startup_ref))
+    require(all(len(rows_) == 1 for rows_ in found.values()), "STAGE_RECOVERED_CLIENT_NOT_UNIQUE:" + ",".join(
+        f"{lane}={len(rows_)}" for lane, rows_ in found.items()))
+    return {lane: rows_[0] for lane, rows_ in found.items()}
+
+
 def inspect(startup_ref, spec, binding, *, stage=None):
     """stage: a validated fence; readiness then admits only that stage's window.
 
@@ -106,6 +143,26 @@ def inspect(startup_ref, spec, binding, *, stage=None):
         launch_refs[lane] = file_ref(control / (lane + ".json"))
         launches[lane] = json_ref(launch_refs[lane])
         require(launches[lane]["startup"] == startup_ref, "LAUNCH_STARTUP_CHANGED")
+    recovery_ref, stage_ref = None, None
+    if stage is not None and stage.get("schema") == "upgrade-stage-fence-v2":
+        from upgrade_stage_fence import recovered_launches, recovery_path
+        stage_ref = file_ref(Path(stage["control"]) / "stage.json")
+        if not os.path.lexists(recovery_path(stage)):
+            # Before publication: report the authenticated restored clients only.
+            try:
+                candidates, failure = recovered_candidates(bridge, native, identity, spec, stage, startup_ref), None
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+                candidates, failure = None, str(exc)
+            return dict(schema="upgrade-live-inspection-v2", startup=startup_ref, observed_at=utc_now(),
+                        observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),
+                        stage=stage_ref, recovery_candidates=candidates,
+                        errors=dict(recovery="STAGE_RECOVERY_NOT_PUBLISHED" if failure is None else failure),
+                        ready=False, stopped=os.path.lexists(spec["stop_path"])
+                        or os.path.lexists(Path(stage["control"]) / "stop.json"), input_operations=0)
+        recovery_ref, recovered = recovered_launches(stage, stage_ref, startup_ref)
+        # Only the three restored clients; the original daemon keeps its original launch.
+        launches.update(recovered)
+        launch_refs.update({lane: recovery_ref for lane in recovered})
     sessions, evidence, kernels, errors = {}, {}, {}, {}
     startup_failures = {}
     for lane in LANES:
@@ -118,8 +175,10 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             require(client["pid"] == launch["pid"] and client["birth"] == launch["birth"],
                     "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED")
             workspace = str(uuid.UUID(row["workspace_uuid"]))
+            # A restored client lives in the stage's frozen workspace, not the original create response.
             require(workspace == str(uuid.UUID(launch["workspace_uuid"]))
-                    == launch_workspace(result["stdout"], bridge), "LAUNCH_WORKSPACE_CHANGED")
+                    == (stage["recovery"]["workspace_uuid"] if recovery_ref is not None
+                        else launch_workspace(result["stdout"], bridge)), "LAUNCH_WORKSPACE_CHANGED")
             provider = "codex" if lane == "codex" else "claude"
             require(native._provider(client) == provider
                     and str(process_root(provider, client)) == spec["clients"][lane]["native_root"],
@@ -127,6 +186,9 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             sid = native._live_session(client, provider)
             if provider == "claude":
                 require(sid == spec["clients"][lane]["session_id"], "ORIGINAL_CLAUDE_SESSION_CHANGED")
+            if recovery_ref is not None:
+                require(sid == launch["session_id"] == stage["recovery"]["sessions"][lane],
+                        "RECOVERED_SESSION_CHANGED")
             path = native._transcript_path(provider, sid, client)
             session = dict(provider=provider, session_id=sid, workspace_uuid=workspace,
                 surface_uuid=target, pane_uuid=str(uuid.UUID(row["target_pane_uuid"])), tty=row["tty"],
@@ -200,4 +262,5 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                     Path(stage["control"]) / "stop.json")), input_operations=0,
                 **({"startup_failures": startup_failures}
                    if stage is None and startup_continuity_enabled(binding) else {}),
-                **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}))
+                **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}),
+                **({"recovery": recovery_ref} if recovery_ref is not None else {}))

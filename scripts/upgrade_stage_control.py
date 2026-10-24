@@ -23,7 +23,8 @@ from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
 from upgrade_experiment import validate_sessions
 from upgrade_live_control import external_publisher
 from upgrade_live_runtime import validate_live_runtime
-from upgrade_stage_fence import ADOPTION_SCHEMA, load_stage, stop_paths
+from upgrade_stage_fence import (ADOPTION_SCHEMA, RECOVERED_SCHEMA, RECOVERY_SCHEMA, load_stage, recovered_launches,
+                                 recovery_path, stop_paths)
 
 INSPECTION_SCHEMA = "upgrade-live-inspection-v2"
 
@@ -94,6 +95,10 @@ def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stag
             "STAGE_INSPECTION_NOT_READY")
     require(value["inspector"]["path"] == str(Path(stage["controller"]) / "scripts/mac_upgrade_live_inspect.py")
             and file_ref(value["inspector"]["path"]) == value["inspector"], "STAGE_INSPECTOR_CHANGED")
+    if stage["schema"] == RECOVERED_SCHEMA:
+        # Adoption is over the published restored clients, never the original launches.
+        recovery, _ = recovered_launches(stage, stage_ref, runtime["startup"])
+        require(value.get("recovery") == recovery, "STAGE_RECOVERY_NOT_INSPECTED")
     validate_sessions(proof["sessions"], protected=spec["protected_surface_uuids"])
     require(set(value["readiness"]) == set(LANES) and set(value["kernel"]) == {*LANES, "codex-server"},
             "STAGE_CLIENT_PROOF_MISSING")
@@ -113,6 +118,37 @@ def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stag
                 and value["kernel"][lane]["kernel_checked"] is True, "STAGE_READINESS_OR_KERNEL_CHANGED")
     require(value["kernel"]["codex-server"]["kernel_checked"] is True, "STAGE_SERVER_KERNEL_UNVERIFIED")
     return proof
+
+
+def recover(runtime_ref, stage_ref):
+    """Publish once the restored clients' launch identities, authenticated by the stage inspector.
+
+    Run after the original sessions were restored into the stage workspace and
+    before any stage prompt. Never sends input or edits the original launches.
+    """
+    runtime, spec, binding, stage = scope(runtime_ref, stage_ref)
+    require(stage["schema"] == RECOVERED_SCHEMA, "STAGE_NOT_RECOVERED")
+    path = recovery_path(stage)
+    external_publisher(dict(spec, controller=stage["controller"]))
+    if os.path.lexists(path):
+        recovered_launches(stage, stage_ref, runtime["startup"])
+        return dict(status="ALREADY_RECOVERED", recovery=file_ref(path), input_operations=0)
+    require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
+    ref, value = observe(runtime_ref, stage_ref, runtime, spec, stage, persist=True)
+    result = value["result"]
+    candidates = result.get("recovery_candidates") if isinstance(result, dict) else None
+    if (value["returncode"] != 0 or not isinstance(candidates, dict) or result.get("stage") != stage_ref
+            or result.get("startup") != runtime["startup"] or result.get("errors") != {"recovery": "STAGE_RECOVERY_NOT_PUBLISHED"}
+            or result.get("stopped") or result.get("input_operations") != 0):
+        return dict(status="NOT_RECOVERED", evidence=ref, observation=value, input_operations=0)
+    require(0 <= time.time_ns() - result["observed_at_ns"] < 30 * 10**9, "INSPECTION_TOO_OLD_FOR_RECOVERY")
+    record = dict(schema=RECOVERY_SCHEMA, stage=stage_ref, startup=runtime["startup"], observed_at=utc_now(),
+                  inspection=ref, launches=candidates, input_operations=0)
+    require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
+    published = write_json(path, record, exclusive=True)
+    path.chmod(0o444)
+    recovered_launches(stage, stage_ref, runtime["startup"])
+    return dict(status="STAGE_RECOVERED", recovery=published, launches=candidates, input_operations=0)
 
 
 def adopt(runtime_ref, stage_ref):
@@ -157,7 +193,7 @@ def stop(stage_ref):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("adopt", "status", "stop"))
+    parser.add_argument("command", choices=("recover", "adopt", "status", "stop"))
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--runtime-sha256", required=True)
     parser.add_argument("--stage", required=True)
@@ -170,6 +206,8 @@ def main(argv=None):
             value = stop(stage_ref)
         elif args.command == "adopt":
             value = adopt(runtime_ref, stage_ref)
+        elif args.command == "recover":
+            value = recover(runtime_ref, stage_ref)
         else:
             runtime, spec, binding, stage = scope(runtime_ref, stage_ref)
             _, observation = observe(runtime_ref, stage_ref, runtime, spec, stage, persist=False)

@@ -47,6 +47,27 @@ def hook_parents(expected_command, launches):
     return parents, None
 
 
+def stage_scope(binding, startup_ref):
+    """A recovered stage and, once published, its restored launches; (None, None) otherwise.
+
+    Cheap enough for every hook: the stage record is checked against its binding
+    pin, never fully validated here; the inspector validates everything later.
+    """
+    fence = binding.get("stage_fence")
+    if not isinstance(fence, dict):
+        return None, None
+    from upgrade_stage_fence import RECOVERED_SCHEMA, recovered_launches, recovery_path
+    stage_ref = file_ref(fence["path"])
+    if stage_ref["sha256"] != fence["sha256"]:
+        raise ValueError("STAGE_RECORD_CHANGED")
+    stage = json.loads(read_regular(Path(fence["path"])))
+    if stage.get("schema") != RECOVERED_SCHEMA:
+        return None, None
+    if not os.path.lexists(recovery_path(stage)):
+        return stage, None
+    return stage, recovered_launches(stage, stage_ref, startup_ref)[1]
+
+
 def record(payload, *, original_hook, scope_status=None):
     """Called inside the original automatically registered advisory hook."""
     event = payload.get("hook_event_name")
@@ -67,7 +88,12 @@ def record(payload, *, original_hook, scope_status=None):
             or sys.argv[1:] != ["--hook", original_hook]):
         return
     expected = shlex.join([context["python"]["path"], "-I", "-B", str(main), "--hook", original_hook])
-    hooks_ref = spec["pins"]["codex/hooks.json" if lane == "codex" else lane + "/settings.json"]
+    key = "codex/hooks.json" if lane == "codex" else lane + "/settings.json"
+    hooks_ref = spec["pins"][key]
+    stage, recovered = stage_scope(binding, startup_ref)
+    if stage is not None:
+        # A recovered stage pins the hook file it installed; the original pin is history.
+        hooks_ref = stage["hooks"][key]
     hooks = json.loads(read_regular(Path(hooks_ref["path"]))).get("hooks", {})
     commands = [hook.get("command") for group in hooks.get(payload["hook_event_name"], [])
                 for hook in group.get("hooks", []) if hook.get("type") == "command"]
@@ -78,6 +104,9 @@ def record(payload, *, original_hook, scope_status=None):
         path = Path(binding["state_root"]) / "startup" / (name + ".json")
         if path.exists():
             launches[name] = json.loads(read_regular(path))
+    if recovered is not None:
+        # The restored client replaces only its own lane; the original daemon keeps its launch.
+        launches[lane] = recovered[lane]
     parents, client = hook_parents(expected, launches)
     selected = {key: payload[key] for key in (
         "session_id", "sessionId", "transcript_path", "transcriptPath", "hook_event_name",

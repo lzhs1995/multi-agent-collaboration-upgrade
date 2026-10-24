@@ -206,10 +206,14 @@ def client_environment(roots, paths, lane, rtk, *, response_observation=False, c
     return result
 
 
-def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller=None):
+def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller=None, recovered=None):
     """stage_controller: a fenced stage's own release. Its three rewritten lane
     hook files are checked against it and pinned by the stage, not by this
-    historical startup; every other original pin is still verified unchanged."""
+    historical startup; every other original pin is still verified unchanged.
+
+    recovered: exact file references that supersede named original pins. By
+    default a recovered stage's own frozen pins; a builder passes the pins it is
+    about to freeze. Each must name the original path and match exactly."""
     spec = json_ref(ref, "startup")
     goal_mode = spec.get("schema") == GOAL_SCHEMA
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
@@ -334,8 +338,18 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 provider="codex" if name.startswith("codex") else "claude", enabled=child_budget)
         except (ValueError, KeyError, TypeError) as exc:
             require(False, "STARTUP_CHILD_HOOK_CHANGED:" + name)
+    if recovered is None and stage_controller is not None:
+        from upgrade_stage_fence import stage_pins_for_controller
+        recovered = stage_pins_for_controller(stage_controller)
+    recovered = recovered or {}
+    from upgrade_stage_fence import RECOVERABLE_PINS
+    require(set(recovered) <= set(RECOVERABLE_PINS)
+            and all(recovered[k]["path"] == pins[k]["path"] for k in recovered), "STARTUP_RECOVERED_PIN_CHANGED")
     if verify_pins:
-        verify_artifacts(v for k, v in pins.items() if stage_controller is None or k not in lane_hooks)
+        verify_artifacts(v for k, v in pins.items()
+                         if (stage_controller is None or k not in lane_hooks) and k not in recovered)
+        # A recovered file is verified as exactly as the pin it supersedes.
+        verify_artifacts(recovered.values())
     require(pins["claude_ps"]["mode"] == 0o555
             and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
             "STARTUP_CLAUDE_PS_CHANGED")
