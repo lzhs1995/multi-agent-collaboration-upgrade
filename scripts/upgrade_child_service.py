@@ -37,6 +37,8 @@ MAX_SERVICE_EVENTS = 256
 MAX_SUCCESSORS = 8
 # The installed hook waits 10 s for a reply. A full registration check took
 # 8.5-11 s under live load, so it runs beside the accept loop, not inside it.
+# One private native-root authentication took 2.8-6.7 s at load 160-200 and an
+# Agent hook needs two, so events reuse the reverifier's completed one.
 REVERIFY_INTERVAL_SECONDS = 30
 MAX_VERIFIED_AGE_SECONDS = 120
 REPLY_BUDGET_SECONDS = 6
@@ -385,25 +387,27 @@ class _Reverifier:
     """Repeat the full registration check beside the accept loop.
 
     The first failure latches and refuses every later event. Each event still
-    rereads the pinned registration bytes and its own ledger authority.
+    rereads the pinned registration bytes and its own ledger authority, and
+    authenticates native roots only from the latest completed check.
     """
 
-    def __init__(self, registration_ref, registration, stopped):
+    def __init__(self, registration_ref, registration, stopped, snapshot):
         self.ref, self.registration, self.stopped = registration_ref, registration, stopped
         self.lock, self.done = threading.Lock(), threading.Event()
-        self.verified_at, self.failure = time.monotonic(), None
+        self.verified_at, self.failure, self.snapshot = time.monotonic(), None, snapshot
         self.thread = threading.Thread(target=self.run, name="child-service-reverifier", daemon=True)
 
     def run(self):
         from upgrade_live_runtime import native_authority_observation
         while not self.done.wait(REVERIFY_INTERVAL_SECONDS):
             try:
-                with native_authority_observation():
+                published = []
+                with native_authority_observation(publish=published.append):
                     latest, _ = validate_service_registration(self.ref)
                 require(latest == self.registration, "CHILD_SERVICE_REGISTRATION_CHANGED")
                 require(not self.stopped(), "EXPERIMENT_STOP_REQUESTED")
                 with self.lock:
-                    self.verified_at = time.monotonic()
+                    self.verified_at, self.snapshot = time.monotonic(), published[0]
             except Exception as exc:  # any failure must close the service, never pass silently
                 with self.lock:
                     self.failure = str(exc) or type(exc).__name__
@@ -411,7 +415,7 @@ class _Reverifier:
 
     def require_current(self):
         with self.lock:
-            failure, verified_at = self.failure, self.verified_at
+            failure, verified_at, snapshot = self.failure, self.verified_at, self.snapshot
         require(failure is None, "CHILD_SERVICE_REVERIFICATION_FAILED: " + str(failure))
         require(time.monotonic() - verified_at < MAX_VERIFIED_AGE_SECONDS, "CHILD_SERVICE_VERIFICATION_STALE")
         require(json_ref(self.ref, "original native child service registration") == self.registration,
@@ -419,6 +423,7 @@ class _Reverifier:
         # Pinned authority files are small; reread them for every grant.
         for key in ("runtime", "startup", "adoption", "authority"):
             read_ref(self.registration[key], "original child service " + key)
+        return snapshot
 
 
 def serve(registration_ref, *, timeout_seconds):
@@ -428,11 +433,12 @@ def serve(registration_ref, *, timeout_seconds):
     original occupied ledger for diagnosis; it never authorizes a replacement
     service or new native child. Stop/timeout closes IPC without releasing slots.
     """
-    from upgrade_live_runtime import native_authority_observation
+    from upgrade_live_runtime import native_authority_observation, verified_native_authority
     from upgrade_live_control import external_publisher
     require(type(timeout_seconds) is int and 1 <= timeout_seconds <= 3600,
             "CHILD_SERVICE_BOUNDED_DURATION_REQUIRED")
-    with native_authority_observation():
+    published = []
+    with native_authority_observation(publish=published.append):
         registration, runtime = validate_service_registration(registration_ref)
     startup = json_ref(runtime["startup"])
     external_publisher(startup)
@@ -465,7 +471,7 @@ def serve(registration_ref, *, timeout_seconds):
         listener.settimeout(0.5)
         print(json.dumps(dict(status="CHILD_SERVICE_READY_NOT_ADOPTED", registration=registration_ref,
                               socket=str(endpoint), pid=os.getpid(), model_requests=0, input_operations=0)), flush=True)
-        reverifier = _Reverifier(registration_ref, registration, stopped)
+        reverifier = _Reverifier(registration_ref, registration, stopped, published[0])
         reverifier.thread.start()
         try:
             while (time.monotonic() < deadline and handled < MAX_SERVICE_EVENTS
@@ -487,13 +493,14 @@ def serve(registration_ref, *, timeout_seconds):
                         packet = read_packet(channel)
                         # The full registration check runs in the reverifier;
                         # each event rereads the pinned registration bytes.
-                        # Native permission decisions and ledger writes still
-                        # independently reread their original authority.
-                        reverifier.require_current()
+                        # Native roots are authenticated from its latest
+                        # completed check; ledger writes reread their authority.
+                        snapshot = reverifier.require_current()
                         require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
                         require(time.monotonic() < deadline, "CHILD_SERVICE_DURATION_EXPIRED")
-                        result = handle_event(registration, packet, peer=peer, native_python=native_python,
-                                              reply_deadline=accepted + REPLY_BUDGET_SECONDS)
+                        with verified_native_authority(snapshot):
+                            result = handle_event(registration, packet, peer=peer, native_python=native_python,
+                                                  reply_deadline=accepted + REPLY_BUDGET_SECONDS)
                     except (ValueError, KeyError, OSError, RuntimeError) as exc:
                         result = dict(status="REFUSED", error=str(exc), model_requests=0, input_operations=0)
                     handled += 1

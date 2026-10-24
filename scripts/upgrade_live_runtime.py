@@ -29,7 +29,13 @@ TRANSCRIPT_FIELDS = ("path", "device", "inode")
 
 # This is an invocation-local verification batch, not a process-wide cache.
 # Input gates never use it: validate_live_runtime/live_gate_v2 remain fresh.
+# A long-running service may instead install one completed re-verification
+# (verified_native_authority); that snapshot is never extended.
 _native_authorities = ContextVar("upgrade_native_authority_observation", default=None)
+
+
+class _VerifiedAuthorities(dict):
+    """Authorities whose entry read and exit recheck both completed."""
 
 
 def _native_observation_state():
@@ -80,7 +86,7 @@ def session_controller(runtime, proof):
 
 
 @contextmanager
-def native_authority_observation():
+def native_authority_observation(publish=None):
     """Bound repeated native-root authentication to a single proof operation.
 
     Only authenticated_native_root shares these results. Every native reader
@@ -88,9 +94,13 @@ def native_authority_observation():
     reread the complete runtime/adoption authority, including source and startup
     pins. Discard everything even on an exception. Never wrap send, append, lease
     or permission-gate operations in this scope.
+
+    publish, when given, receives a copy of the authorities only after that
+    exit recheck succeeded; a nested scope has no own recheck to publish.
     """
     owner, active = _native_observation_state()
     if active is not None:
+        require(publish is None, "PRIVATE_NATIVE_AUTHORITY_PUBLISH_NESTED")
         yield
         return
     observed = {}
@@ -101,11 +111,37 @@ def native_authority_observation():
         for authority, original in observed.values():
             require(_read_native_authority(authority) == original,
                     "PRIVATE_NATIVE_AUTHORITY_CHANGED_DURING_VERIFICATION")
+        if publish is not None:
+            publish(_VerifiedAuthorities(copy.deepcopy(observed)))
     finally:
         # copy_context() retains the same value after reset in this context.
         # Invalidate that shared lifetime before it can be entered again.
         state["active"] = False
         observed.clear()
+        _native_authorities.reset(token)
+
+
+@contextmanager
+def verified_native_authority(snapshot):
+    """Answer native-root authentication from one completed re-verification.
+
+    For a service whose hook replies are bounded: at live load one private-root
+    authentication took 2.8-6.7 s and an Agent hook needed two. snapshot comes
+    only from native_authority_observation(publish=...), after its exit recheck.
+    The caller bounds its age, latches failures and rereads its pinned files.
+    This scope never reads or adds an authority: one outside the snapshot is
+    refused. Every native reader still checks its enrolled identity and journal.
+    """
+    require(type(snapshot) is _VerifiedAuthorities, "PRIVATE_NATIVE_AUTHORITY_NOT_REVERIFIED")
+    owner, active = _native_observation_state()
+    require(active is None, "PRIVATE_NATIVE_AUTHORITY_SCOPE_NESTED")
+    state = dict(owner=owner, observed=_VerifiedAuthorities(copy.deepcopy(snapshot)), active=True)
+    token = _native_authorities.set(state)
+    try:
+        yield
+    finally:
+        state["active"] = False
+        state["observed"].clear()
         _native_authorities.reset(token)
 
 
@@ -115,6 +151,7 @@ def _observed_native_authority(authority):
         return _read_native_authority(authority)
     key = canonical(authority)
     if key not in observed:
+        require(type(observed) is not _VerifiedAuthorities, "PRIVATE_NATIVE_AUTHORITY_NOT_REVERIFIED")
         original = _read_native_authority(authority)
         observed[key] = (copy.deepcopy(authority), copy.deepcopy(original))
     # The immutable comparison snapshot is never exposed to a caller.

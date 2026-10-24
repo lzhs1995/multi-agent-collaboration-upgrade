@@ -354,6 +354,38 @@ class NativeChildStartupTests(unittest.TestCase):
         self.assertEqual(reply["status"], "REFUSED")
         self.assertIn("CHILD_SERVICE_VERIFICATION_STALE", reply["error"])
 
+    def test_agent_hook_reuses_the_reverified_native_root_instead_of_reauthenticating(self):
+        # Live 2026-10-24 (live-3 C1): one private native-root authentication
+        # took 2.8-6.7 s at load 160-200; the Agent hook constructed two native
+        # readers, so the 6 s reply budget expired before any reservation.
+        import upgrade_live_runtime as runtime
+        registered = self.registered_service()
+        session = json_ref(registered)["sessions"]["claude_a"]
+        original, reads = runtime._read_native_authority, []
+        def slow(authority):
+            reads.append(time.monotonic())
+            if len(reads) > 2:  # the serve start check reads at entry and exit
+                time.sleep(12)
+            return original(authority)
+        payload = dict(hook_event_name="PreToolUse", session_id=session["session_id"],
+                       transcript_path=session["transcript"]["path"], tool_name="Agent",
+                       tool_use_id="toolu_not_in_the_original_journal",
+                       tool_input=dict(description="d", prompt="p", subagent_type="general-purpose"))
+        # Peer ancestry is covered by its own real-process tests; this one
+        # measures only the native-root path behind it.
+        with mock.patch.object(runtime, "_read_native_authority", slow), \
+                mock.patch.object(service, "authenticate_hook_peer", lambda *a, **k: None):
+            worker, outcome, endpoint = self.serve_in_background(registered, 3)
+            reply, elapsed = self.hook_request(endpoint, payload)
+            worker.join(60)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(reply["status"], "REFUSED")
+        # The reader was built and scanned the original journal: past root auth.
+        self.assertIn("missing or duplicate native invocation", reply["error"])
+        self.assertLess(elapsed, service.REPLY_BUDGET_SECONDS)
+        self.assertEqual(len(reads), 2)
+        self.assertEqual(budget_status(json_ref(registered)["authority"])["inflight"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

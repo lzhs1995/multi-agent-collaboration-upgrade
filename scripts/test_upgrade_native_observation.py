@@ -144,6 +144,72 @@ class ObservationScopeTests(unittest.TestCase):
             asyncio.run(parent())
             self.assertEqual(read.call_count, 4)
 
+    def test_published_reverification_answers_later_reads_without_reading_again(self):
+        # Live 2026-10-24: one private-root check took 2.8-6.7 s and an Agent
+        # hook needed two, so a 6 s reply budget ran out before reserving.
+        published = []
+        with patch.object(runtime, "_read_native_authority", return_value=self.value) as read:
+            with runtime.native_authority_observation(publish=published.append):
+                self.read()
+            self.assertEqual((read.call_count, len(published)), (2, 1))
+            with runtime.verified_native_authority(published[0]):
+                self.assertEqual(self.read(), self.value)
+                self.read()
+                with runtime.native_authority_observation():
+                    self.read()
+            self.assertEqual(read.call_count, 2)
+            self.read()
+            self.assertEqual(read.call_count, 3)
+        self.assertIsNone(runtime._native_authorities.get())
+
+    def test_verified_scope_refuses_an_authority_outside_its_reverification(self):
+        published = []
+        with patch.object(runtime, "_read_native_authority", return_value=self.value) as read:
+            with runtime.native_authority_observation(publish=published.append):
+                self.read()
+            other = copy.deepcopy(self.authority)
+            other["adoption"]["path"] += "-different"
+            with runtime.verified_native_authority(published[0]):
+                with self.assertRaisesRegex(ContractError, "NOT_REVERIFIED"):
+                    runtime._observed_native_authority(other)
+            self.assertEqual(read.call_count, 2)
+
+    def test_only_a_completed_exit_recheck_can_be_published(self):
+        changed = copy.deepcopy(self.value)
+        changed[2]["sessions"]["claude_a"]["model"] = "two"
+        published = []
+        with patch.object(runtime, "_read_native_authority", side_effect=[self.value, changed]):
+            with self.assertRaisesRegex(ContractError, "CHANGED_DURING_VERIFICATION"):
+                with runtime.native_authority_observation(publish=published.append):
+                    self.read()
+        self.assertEqual(published, [])
+        key = json.dumps(self.authority, sort_keys=True)
+        for forged in ({}, {key: (self.authority, self.value)}):
+            with self.subTest(forged=bool(forged)):
+                with self.assertRaisesRegex(ContractError, "NOT_REVERIFIED"):
+                    with runtime.verified_native_authority(forged):
+                        pass
+        with runtime.native_authority_observation():
+            with self.assertRaisesRegex(ContractError, "PUBLISH_NESTED"):
+                with runtime.native_authority_observation(publish=published.append):
+                    pass
+        self.assertEqual(published, [])
+
+    def test_verified_snapshot_does_not_answer_another_thread_or_a_nested_install(self):
+        published = []
+        with patch.object(runtime, "_read_native_authority", return_value=self.value) as read:
+            with runtime.native_authority_observation(publish=published.append):
+                self.read()
+            with runtime.verified_native_authority(published[0]):
+                context = copy_context()
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(context.run, self.read).result(timeout=10)
+                self.assertEqual(read.call_count, 3)
+                with self.assertRaisesRegex(ContractError, "SCOPE_NESTED"):
+                    with runtime.verified_native_authority(published[0]):
+                        pass
+        self.assertIsNone(runtime._native_authorities.get())
+
 
 @unittest.skipUnless(startup_fixtures.SOURCE.is_dir() and startup_fixtures.WRAPPERS.is_dir(),
                      "requires fixed MAC and cmux wrappers")
