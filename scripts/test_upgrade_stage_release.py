@@ -334,6 +334,70 @@ class StageReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "STAGE_BASE_PLAN_CHANGED"):
             self.recovered_build(ref, stage_id="stage-c")  # a recovered stage is never itself a base
 
+    def launched_settings(self, stage, launches, document=None):
+        """What the wrapper generated at each restored launch: the lane file plus cmux's own hooks."""
+        processes = {}
+        for lane in ("claude_a", "claude_b"):
+            value = document(lane) if document else json.loads(Path(stage["hooks"][lane + "/settings.json"]["path"]).read_bytes())
+            value = dict(value, hooks=dict(value["hooks"], SessionStart=[{"hooks": [
+                {"type": "command", "command": "cmux hooks feed --source claude"}]}]))
+            flag = write_json(self.root / "cmux-wrapper" / (lane + ".json"), value)
+            launch = launches[lane]
+            processes[launch["pid"]] = dict(pid=launch["pid"], birth=launch["birth"], argv=[
+                "/fixture/claude", "--settings", flag["path"], "--resume", launch["session_id"], "--setting-sources", ""])
+        return processes
+
+    def test_launch_settings_admit_only_this_stage_controller_hooks(self):
+        import upgrade_stage_control as control
+        base, plan = self.build()
+        self.assertEqual(release.apply(plan)["status"], "INSTALLED_NOT_ADOPTED")
+        self.restore_lanes(plan, self.secret + "-rotated")
+        _, new = self.recovered_build(base)
+        self.assertEqual(release.apply(new)["status"], "INSTALLED_NOT_ADOPTED")
+        stage, old = json_ref(new["stage"]), json_ref(plan["stage"])
+        launches = {lane: dict(pid=800 + n, birth=[8, n], session_id=stage["recovery"]["sessions"][lane])
+                    for n, lane in enumerate(("claude_a", "claude_b"))}
+        lane_file = lambda st, lane: json.loads(Path(st["hooks"][lane + "/settings.json"]["path"]).read_bytes())
+        backup = lambda lane: json.loads((Path(new["backup"]) / release.backup_name(lane + "/settings.json")).read_bytes())
+
+        def both(lane):
+            current, previous = lane_file(stage, lane), backup(lane)
+            return dict(current, hooks={event: current["hooks"][event] + previous["hooks"].get(event, [])
+                                        for event in current["hooks"]})
+        check = lambda processes: patch("cmux_daemon_identity.process", side_effect=lambda pid, **k: processes[pid])
+        with check(self.launched_settings(stage, launches)):
+            result = control.launch_settings(stage, launches)
+        controller_commands = lambda lane: sum(stage["controller"] + "/" in hook.get("command", "")
+            for groups in lane_file(stage, lane)["hooks"].values() for group in groups for hook in group["hooks"])
+        self.assertEqual({lane: item["stage_commands"] for lane, item in result.items()},
+                         {lane: controller_commands(lane) for lane in ("claude_a", "claude_b")})
+        self.assertTrue(all(item["stage_commands"] > 0 for item in result.values()))
+        self.assertNotIn(self.secret.encode(), json.dumps(result).encode())
+        cases = {
+            "base_hooks_only": (lambda: self.launched_settings(stage, launches, backup), "NOT_STAGE_ONLY:claude_a"),
+            "base_and_stage": (lambda: self.launched_settings(stage, launches, both), "NOT_STAGE_ONLY:claude_a"),
+            "original_hooks": (lambda: self.launched_settings(stage, launches, lambda lane: json.loads(
+                Path(plan["backup"], release.backup_name(lane + "/settings.json")).read_bytes())), "NOT_STAGE_ONLY:claude_a"),
+            "no_release_hooks": (lambda: self.launched_settings(stage, launches, lambda lane: {"hooks": {}}),
+                                 "NOT_STAGE_ONLY:claude_a"),
+        }
+        for label, (processes, error) in cases.items():
+            with self.subTest(label=label), check(processes()), self.assertRaisesRegex(ContractError, error):
+                control.launch_settings(stage, launches)
+        processes = self.launched_settings(stage, launches)
+        argv = processes[800]["argv"]
+        for label, change, error in (
+                ("other_birth", lambda p: p[800].update(birth=[9, 9]), "STAGE_RECOVERED_CLIENT_CHANGED:claude_a"),
+                ("no_flag", lambda p: p[800].update(argv=argv[:1] + argv[3:]), "SETTINGS_FLAG_NOT_UNIQUE:claude_a"),
+                ("two_flags", lambda p: p[800].update(argv=argv + ["--settings=" + argv[2]]), "SETTINGS_FLAG_NOT_UNIQUE:claude_a"),
+                ("relative_flag", lambda p: p[800].update(argv=[argv[0], "--settings", "x.json"] + argv[3:]),
+                 "SETTINGS_FLAG_NOT_UNIQUE:claude_a")):
+            changed = copy.deepcopy(processes)
+            change(changed)
+            with self.subTest(label=label), check(changed), self.assertRaisesRegex(ContractError, error):
+                control.launch_settings(stage, launches)
+        self.assertNotEqual(old["controller"], stage["controller"])  # control: the base controller is the rejected one
+
     def test_recover_publishes_the_inspected_restored_launches_once(self):
         import time
         from orchestration_common import file_ref
@@ -377,9 +441,12 @@ class StageReleaseTests(unittest.TestCase):
                 except ContractError as exc:
                     self.assertIn(expected, str(exc))
                 self.assertFalse(path.exists())  # nothing is ever published from a refused inspection
-        with patch.object(control, "observe", side_effect=inspection()) as observed:
+        processes = self.launched_settings(stage, candidates)
+        with patch.object(control, "observe", side_effect=inspection()) as observed, \
+                patch("cmux_daemon_identity.process", side_effect=lambda pid, **k: processes[pid]):
             result = control.recover(self.runtime_ref, stage_ref)
         self.assertEqual(result["status"], "STAGE_RECOVERED", result)
+        self.assertEqual(set(json_ref(result["recovery"])["launch_settings"]), {"claude_a", "claude_b"})
         self.assertEqual(observed.call_args.kwargs, {"persist": True})
         self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o444))
         self.assertEqual(fence.recovered_launches(stage, stage_ref, startup), (result["recovery"], candidates))

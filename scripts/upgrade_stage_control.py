@@ -16,8 +16,8 @@ import subprocess
 import time
 import uuid
 
-from orchestration_common import (ContractError, file_ref, json_ref, require, strict_json, utc_now, within,
-                                  write_json)
+from orchestration_common import (ContractError, file_ref, json_ref, read_regular, require, strict_json, utc_now,
+                                  within, write_json)
 from orchestration_campaign import anchored_ref
 from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
 from upgrade_experiment import validate_sessions
@@ -99,6 +99,10 @@ def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stag
         # Adoption is over the published restored clients, never the original launches.
         recovery, _ = recovered_launches(stage, stage_ref, runtime["startup"])
         require(value.get("recovery") == recovery, "STAGE_RECOVERY_NOT_INSPECTED")
+        settings = json_ref(recovery, "stage recovery")["launch_settings"]
+        require(set(settings) == {"claude_a", "claude_b"} and all(
+            file_ref(item["path"]) == {k: item[k] for k in ("path", "sha256", "bytes")} for item in settings.values()),
+            "STAGE_RECOVERED_LAUNCH_SETTINGS_CHANGED")
     validate_sessions(proof["sessions"], protected=spec["protected_surface_uuids"])
     require(set(value["readiness"]) == set(LANES) and set(value["kernel"]) == {*LANES, "codex-server"},
             "STAGE_CLIENT_PROOF_MISSING")
@@ -118,6 +122,38 @@ def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stag
                 and value["kernel"][lane]["kernel_checked"] is True, "STAGE_READINESS_OR_KERNEL_CHANGED")
     require(value["kernel"]["codex-server"]["kernel_checked"] is True, "STAGE_SERVER_KERNEL_UNVERIFIED")
     return proof
+
+
+def launch_settings(stage, launches):
+    """Each restored Claude's launch settings carry exactly this stage's controller hooks.
+
+    The original argv reads no setting sources: hooks come only from the one
+    path-valued --settings the wrapper generates at launch and never reloads. After
+    the restore it must name every lane-file controller command and no other
+    release (never the base and this stage together). Only its reference is kept.
+    """
+    import cmux_daemon_identity as identity
+    releases, controller = str(Path(stage["controller"]).parents[1]) + "/", stage["controller"] + "/"
+
+    def commands(document):
+        return sorted(hook.get("command", "") for groups in document.get("hooks", {}).values() for group in groups
+                      for hook in group.get("hooks", []) if hook.get("type") == "command"
+                      and releases in hook.get("command", ""))
+    result = {}
+    for lane in ("claude_a", "claude_b"):
+        launch = launches[lane]
+        row = identity.process(launch["pid"], validate_argv=False)
+        require(row["pid"] == launch["pid"] and row["birth"] == launch["birth"], "STAGE_RECOVERED_CLIENT_CHANGED:" + lane)
+        argv = row["argv"]
+        values = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--settings"] + [
+            arg.split("=", 1)[1] for arg in argv if arg.startswith("--settings=")]
+        require(len(values) == 1 and Path(values[0]).is_absolute(), "STAGE_RECOVERED_SETTINGS_FLAG_NOT_UNIQUE:" + lane)
+        launched = commands(json.loads(read_regular(Path(values[0]))))
+        expected = commands(json.loads(read_regular(Path(stage["hooks"][lane + "/settings.json"]["path"]))))
+        require(expected and launched == expected and all(controller in command for command in launched),
+                "STAGE_RECOVERED_LAUNCH_HOOKS_NOT_STAGE_ONLY:" + lane)
+        result[lane] = dict(file_ref(Path(values[0])), stage_commands=len(launched))
+    return result
 
 
 def recover(runtime_ref, stage_ref):
@@ -146,6 +182,7 @@ def recover(runtime_ref, stage_ref):
                   inspection=ref, launches=candidates, input_operations=0)
     # Published once and never rewritten: the exact record is validated first.
     recovery_launches(stage, stage_ref, runtime["startup"], record)
+    record["launch_settings"] = launch_settings(stage, candidates)
     require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
     published = write_json(path, record, exclusive=True)
     path.chmod(0o444)

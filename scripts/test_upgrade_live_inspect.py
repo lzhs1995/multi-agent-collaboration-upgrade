@@ -545,7 +545,6 @@ class InspectorFlowTests(unittest.TestCase):
     def test_recovered_candidates_and_launches_refuse_any_other_identity(self):
         import upgrade_stage_fence as fence
         stage = self.recovered_stage()
-        workspace = next(ws for ws in self.tree["windows"][0]["workspaces"] if ws["id"] == self.restored)
         claude_a = next(s for s, c in self.clients.items() if c["lane"] == "claude_a")
         tree, clients = copy.deepcopy(self.tree), copy.deepcopy(self.clients)
         reset = lambda: (setattr(self, "tree", copy.deepcopy(tree)), setattr(self, "clients", copy.deepcopy(clients)))
