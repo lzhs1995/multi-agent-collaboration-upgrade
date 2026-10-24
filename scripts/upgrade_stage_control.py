@@ -75,10 +75,11 @@ def observe(runtime_ref, stage_ref, runtime, spec, stage, *, persist):
     return ref, value
 
 
-def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stage, proof):
+def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stage, proof, *, allow_stopped=False):
     """All inspection evidence for this stage, before or after publication."""
     control = Path(stage["control"])
-    require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
+    if not allow_stopped:
+        require(not any(map(os.path.lexists, stop_paths(binding))), "EXPERIMENT_STOP_REQUESTED")
     require(proof.get("schema") == ADOPTION_SCHEMA and proof.get("runtime") == runtime_ref
             and proof.get("stage") == stage_ref and proof.get("startup") == runtime["startup"]
             and proof.get("verified") is True and proof.get("input_operations") == 0, "STAGE_ADOPTION_UNVERIFIED")
@@ -122,6 +123,24 @@ def validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stag
                 and value["kernel"][lane]["kernel_checked"] is True, "STAGE_READINESS_OR_KERNEL_CHANGED")
     require(value["kernel"]["codex-server"]["kernel_checked"] is True, "STAGE_SERVER_KERNEL_UNVERIFIED")
     return proof
+
+
+def stage_authority(runtime_ref, proof_ref, *, allow_stopped=False):
+    """A published stage adoption as session authority for external readers.
+
+    The stage comes only from the adoption's own record, and scope() accepts
+    it only when the installed lane files carry exactly that stage's hooks; a
+    stage record elsewhere cannot vouch for itself. Read-only evidence stays
+    inspectable after a stop; input gates check both stops separately.
+    """
+    proof = json_ref(proof_ref, "stage adoption")
+    stage_ref = proof.get("stage")
+    require(proof.get("schema") == ADOPTION_SCHEMA and isinstance(stage_ref, dict), "STAGE_ADOPTION_REQUIRED")
+    runtime, spec, binding, stage = scope(runtime_ref, stage_ref)
+    require(proof_ref["path"] == str(Path(stage["control"]) / "adoption.json"), "STAGE_ADOPTION_PATH_CHANGED")
+    validate_stage_adoption(runtime_ref, stage_ref, runtime, spec, binding, stage, proof,
+                            allow_stopped=allow_stopped)
+    return runtime, binding, stage, proof
 
 
 def launch_settings(stage, launches):

@@ -183,7 +183,7 @@ print(json.dumps(dict(plan=result, module=dict(path=str(Path(original.__file__).
 
 @contract_errors("original continuity evaluation")
 def invoke_original_plan(controller, python, sessions, collection, authorization, *, output, now,
-                         fixtures=False, runtime_ref=None):
+                         fixtures=False, runtime_ref=None, adoption_ref=None):
     """Run the pinned original evaluator with rederived observations, not labels.
 
     This low-level verifier never grants task scope or fallback permission. The
@@ -210,9 +210,11 @@ def invoke_original_plan(controller, python, sessions, collection, authorization
     read_ref(authorization, "original continuity authorization")
     prefix, environment, work_root = [], None, None
     if runtime_ref is not None:
-        from upgrade_live_runtime import validate_live_runtime
+        from upgrade_live_runtime import session_authority, validate_live_runtime
         from upgrade_client_isolation import SANDBOX, clean_child_environment
-        _, runtime = validate_live_runtime(runtime_ref)
+        # After a stage install only the registered adoption can validate the runtime.
+        _, runtime = (validate_live_runtime(runtime_ref) if adoption_ref is None
+                      else session_authority(runtime_ref, adoption_ref, allow_stopped=True)[:2])
         spec = json_ref(runtime["startup"])
         require(runtime["controller"] == controller and runtime["python"] == python,
                 "original evaluator runtime binding changed")
@@ -292,19 +294,18 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
     """Publish one scoped read-only episode, never launch or adopt new clients."""
     from orchestration_freeze_v3 import authorize
     from upgrade_live_control import external_publisher
-    from upgrade_live_runtime import validate_live_runtime, validate_session_authority
+    from upgrade_live_runtime import session_authority, session_controller, validate_session_authority
     from upgrade_startup_contract import continuity_registration_enabled
     require(automatic_fallback_authorized is True, "explicit original task fallback authorization required")
     require(isinstance(native_authorizations, list) and 0 < len(native_authorizations) <= 8,
             "bounded original native user authorization required")
-    _, runtime = validate_live_runtime(runtime_ref)
+    _, runtime, proof = session_authority(runtime_ref, adoption_ref)
     spec = json_ref(runtime["startup"])
-    binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
+    binding = json_ref(file_ref(Path(session_controller(runtime, proof)) / "upgrade-binding.json"))
     require(continuity_registration_enabled(binding), "private continuity registration was not enabled")
     external_publisher(spec)
     root = registration_root(runtime, task_id)
     require(not root.exists(), "original native continuity registration exists; do not reset its fences")
-    proof = validate_session_authority(runtime_ref, adoption_ref)
     if proof.get("schema") == "upgrade-startup-continuity-v1":
         require(task_id == proof["task_id"] and native_authorizations == proof["native_authorizations"],
                 "STARTUP_CONTINUITY_OBSERVER_AUTHORIZATION_CHANGED")
@@ -317,7 +318,7 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
         automatic_fallback_authorized=True, max_subagents=2, child_budget_scope="WHOLE_TASK",
         session_ids={lane: sessions[lane]["session_id"] for lane in LANES}, native_records=records,
         advisory_only=True, takeover_authorized=False, input_operations=0, resource_releases=0)
-    _, current = validate_live_runtime(runtime_ref)
+    _, current, _ = session_authority(runtime_ref, adoption_ref, allow_stopped=True)
     require(current == runtime, "native registration runtime changed before publication")
     if proof.get("schema") == "upgrade-startup-continuity-v1":
         require(validate_session_authority(runtime_ref, adoption_ref) == proof, "STARTUP_CONTINUITY_CHANGED")
@@ -338,23 +339,22 @@ def register_native_continuity(runtime_ref, adoption_ref, *, task_id, native_aut
 @contract_errors("registered native continuity")
 def validate_native_registration(ref):
     from orchestration_freeze_v3 import authorize
-    from upgrade_live_runtime import validate_session_authority, validate_live_runtime, identity_matches
+    from upgrade_live_runtime import identity_matches, session_authority, session_controller
     from upgrade_startup_contract import continuity_registration_enabled
     value = json_ref(ref, "original native registration")
     require(set(value) == REGISTRATION_FIELDS and value["schema"] == REGISTRATION_SCHEMA
             and type(value["input_operations"]) is int and value["input_operations"] == 0
             and type(value["resource_releases"]) is int and value["resource_releases"] == 0,
             "original native continuity registration fields changed")
-    _, runtime = validate_live_runtime(value["runtime"])
+    _, runtime, proof = session_authority(value["runtime"], value["adoption"], allow_stopped=True)
     spec = json_ref(runtime["startup"])
-    binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
+    binding = json_ref(file_ref(Path(session_controller(runtime, proof)) / "upgrade-binding.json"))
     require(continuity_registration_enabled(binding), "private continuity registration was not enabled")
     root = registration_root(runtime, value["task_id"])
     require(value["startup"] == runtime["startup"] and value["output_root"] == str(root)
             and ref["path"] == str(root / "registration.json")
             and value["authorization"]["path"] == str(root / "authorization.json"),
             "native continuity registration scope changed")
-    proof = validate_session_authority(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
     validate_sessions(value["sessions"], protected=spec["protected_surface_uuids"])
     for lane, session in value["sessions"].items():
         require(identity_matches(session, proof["sessions"][lane])
@@ -408,7 +408,8 @@ def observe_registered_native(registration_ref, *, now, max_records=256):
             child_budget_enforced=False, input_operations=0, resource_releases=0)
     output = within(Path(value["output_root"]) / "observations" / str(uuid.uuid4()), value["output_root"])
     original = invoke_original_plan(runtime["controller"], runtime["python"], value["sessions"],
-        collection, value["authorization"], output=output, now=now, runtime_ref=value["runtime"])
+        collection, value["authorization"], output=output, now=now, runtime_ref=value["runtime"],
+        adoption_ref=value["adoption"])
     require(validate_native_registration(registration_ref) == (value, runtime),
             "original native continuity authority changed during evaluation")
     result = dict(schema="upgrade-original-native-continuity-result-v1", status="ORIGINAL_ADVISORY_VERIFIED",

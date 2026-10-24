@@ -48,17 +48,17 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
     from orchestration_freeze_v3 import authorize
     from upgrade_continuity_native import registered_sessions
     from upgrade_live_control import external_publisher
-    from upgrade_live_runtime import validate_live_runtime, validate_session_authority
+    from upgrade_live_runtime import session_authority, session_controller, validate_session_authority
     from upgrade_startup_contract import child_budget_enabled
     require(child_budget_authorized is True, "ORIGINAL_NATIVE_CHILD_AUTHORIZATION_REQUIRED")
-    _, runtime = validate_live_runtime(runtime_ref)
+    _, runtime, proof = session_authority(runtime_ref, adoption_ref)
     startup = json_ref(runtime["startup"])
-    binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
+    controller = session_controller(runtime, proof)
+    binding = json_ref(file_ref(Path(controller) / "upgrade-binding.json"))
     require(child_budget_enabled(binding), "CHILD_NATIVE_HOOK_NOT_REGISTERED")
     external_publisher(startup)
     root = service_root(runtime)
     require(not os.path.lexists(root), "ORIGINAL_CHILD_SERVICE_REGISTRATION_EXISTS: do not reset it")
-    proof = validate_session_authority(runtime_ref, adoption_ref)
     records = proof["native_authorizations"] if proof.get("schema") == "upgrade-startup-continuity-v1" else authorize(native_authorizations)
     if proof.get("schema") == "upgrade-startup-continuity-v1":
         require(task_id == proof["task_id"] and native_authorizations == records,
@@ -90,7 +90,7 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
         startup=runtime["startup"], adoption=adoption_ref, source=source, native_authorizations=records,
         sessions=sessions, authority=authority_ref, output_root=str(root), report_root=str(root / "reports"),
         socket=str(child_socket({"tmp": binding["tmp_root"]})), account_home=str(Path.home().resolve()),
-        python=runtime["python"]["path"], controller=runtime["controller"]["path"],
+        python=runtime["python"]["path"], controller=controller,
         rtk=startup["pins"]["rtk"]["path"], input_operations=0, child_budget_authorized=True)
     ref = write_json(root / "registration.json", value, exclusive=True)
     Path(ref["path"]).chmod(0o444)
@@ -101,21 +101,22 @@ def register_service(runtime_ref, adoption_ref, *, task_id, native_authorization
 def validate_service_registration(ref):
     from orchestration_freeze_v3 import authorize
     from orchestration_native import NativeReader
-    from upgrade_live_runtime import identity_matches, validate_session_authority, validate_live_runtime
+    from upgrade_live_runtime import identity_matches, session_authority, session_controller
     from upgrade_startup_contract import child_budget_enabled
     value = json_ref(ref, "original native child service registration")
     require(set(value) == REGISTRATION_FIELDS and value["schema"] == REGISTRATION_SCHEMA
             and value["policy"] == POLICY and value["child_budget_authorized"] is True
             and type(value["input_operations"]) is int and value["input_operations"] == 0,
             "CHILD_SERVICE_REGISTRATION_FIELDS_CHANGED")
-    _, runtime = validate_live_runtime(value["runtime"])
+    _, runtime, proof = session_authority(value["runtime"], value["adoption"], allow_stopped=True)
     startup = json_ref(runtime["startup"])
-    binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
+    controller = session_controller(runtime, proof)
+    binding = json_ref(file_ref(Path(controller) / "upgrade-binding.json"))
     require(child_budget_enabled(binding), "CHILD_NATIVE_HOOK_NOT_REGISTERED")
     root = service_root(runtime)
     require(ref["path"] == str(root / "registration.json") and value["output_root"] == str(root)
             and value["report_root"] == str(root / "reports") and value["startup"] == runtime["startup"]
-            and value["controller"] == runtime["controller"]["path"]
+            and value["controller"] == controller
             and value["python"] == runtime["python"]["path"]
             and value["rtk"] == startup["pins"]["rtk"]["path"]
             and value["socket"] == str(child_socket({"tmp": binding["tmp_root"]}))
@@ -123,7 +124,6 @@ def validate_service_registration(ref):
     verify_tree(value["source"])
     require(Path(value["source"]["path"]).resolve() == Path(__file__).resolve().parent.parent,
             "CHILD_SERVICE_SOURCE_CHANGED")
-    proof = validate_session_authority(value["runtime"], value["adoption"], runtime=runtime, allow_stopped=True)
     require(set(value["sessions"]) == {"codex", "claude_a", "claude_b"}, "CHILD_SERVICE_ORIGINAL_LANES_CHANGED")
     for lane, session in value["sessions"].items():
         require(identity_matches(session, proof["sessions"][lane])
@@ -285,7 +285,12 @@ def serve(registration_ref, *, timeout_seconds):
         registration, runtime = validate_service_registration(registration_ref)
     startup = json_ref(runtime["startup"])
     external_publisher(startup)
-    require(not os.path.lexists(startup["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    # A fenced stage adds its own stop beside the original experiment stop.
+    from upgrade_stage_fence import stop_paths
+    stops = [startup["stop_path"], *map(str, stop_paths(json_ref(file_ref(
+        Path(registration["controller"]) / "upgrade-binding.json"))))]
+    stopped = lambda: any(map(os.path.lexists, stops))
+    require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
     endpoint = checked_path(registration["socket"])
     require(not os.path.lexists(endpoint), "ORIGINAL_CHILD_SERVICE_SOCKET_EXISTS: do not replace it")
     root = Path(registration["output_root"])
@@ -306,7 +311,7 @@ def serve(registration_ref, *, timeout_seconds):
         print(json.dumps(dict(status="CHILD_SERVICE_READY_NOT_ADOPTED", registration=registration_ref,
                               socket=str(endpoint), pid=os.getpid(), model_requests=0, input_operations=0)), flush=True)
         while (time.monotonic() < deadline and handled < MAX_SERVICE_EVENTS
-               and not os.path.lexists(startup["stop_path"])):
+               and not stopped()):
             current = endpoint.lstat()
             require((current.st_dev, current.st_ino, current.st_mode, current.st_uid) == (
                 socket_identity.st_dev, socket_identity.st_ino, socket_identity.st_mode, socket_identity.st_uid),
@@ -327,7 +332,7 @@ def serve(registration_ref, *, timeout_seconds):
                     # The verification cache is read-only. Native permission
                     # decisions and ledger writes must independently reread
                     # their original authority outside that scope.
-                    require(not os.path.lexists(startup["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+                    require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
                     require(time.monotonic() < deadline, "CHILD_SERVICE_DURATION_EXPIRED")
                     result = handle_event(registration, packet, peer=peer)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:

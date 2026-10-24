@@ -44,10 +44,39 @@ def _native_observation_state():
 
 
 def _read_native_authority(authority):
-    context, runtime = validate_live_runtime(authority["runtime"])
-    proof = validate_session_authority(authority["runtime"], authority["adoption"],
-                                       runtime=runtime, allow_stopped=True)
-    return context, runtime, proof
+    return session_authority(authority["runtime"], authority["adoption"], allow_stopped=True)
+
+
+def _stage_routed(runtime, proof_ref):
+    """A stage's adoption sits beside the original one, at live-control/<stage>/adoption.json."""
+    spec = json_ref(runtime["startup"])
+    path = Path(proof_ref.get("path", ""))
+    return path.name == "adoption.json" and path.parent.parent == Path(spec["adoption_path"]).parent
+
+
+def session_authority(runtime_ref, proof_ref, *, allow_stopped=False):
+    """Runtime and session authority from one adoption, original or installed stage.
+
+    After a stage install the lane hook files no longer match the original
+    pins, so the runtime is validated against the stage controller that the
+    adoption names; only stage_authority may accept that controller.
+    """
+    require(isinstance(proof_ref, dict), "EXTERNAL_ADOPTION_REQUIRED")
+    if _stage_routed(json_ref(runtime_ref, "live runtime"), proof_ref):
+        from upgrade_stage_control import stage_authority
+        runtime, _, _, proof = stage_authority(runtime_ref, proof_ref, allow_stopped=allow_stopped)
+        return validate_context(runtime["context"]), runtime, proof
+    context, runtime = validate_live_runtime(runtime_ref)
+    return context, runtime, validate_session_authority(runtime_ref, proof_ref, runtime=runtime,
+                                                        allow_stopped=allow_stopped)
+
+
+def session_controller(runtime, proof):
+    """The controller whose hooks the enrolled lanes run: the stage's after a stage install."""
+    from upgrade_stage_fence import ADOPTION_SCHEMA
+    if proof.get("schema") == ADOPTION_SCHEMA:
+        return json_ref(proof["stage"], "validation stage")["controller"]
+    return runtime["controller"]["path"]
 
 
 @contextmanager
@@ -236,10 +265,15 @@ def validate_session_authority(runtime_ref, proof_ref, *, runtime=None, allow_st
     requirement. Only native continuing-task readers and child service use this
     explicit authority chooser; supplied paths cannot impersonate an old proof.
     """
+    require(isinstance(proof_ref, dict), "EXTERNAL_ADOPTION_REQUIRED")
+    if _stage_routed(runtime if runtime is not None else json_ref(runtime_ref, "live runtime"), proof_ref):
+        from upgrade_stage_control import stage_authority
+        current, _, _, proof = stage_authority(runtime_ref, proof_ref, allow_stopped=allow_stopped)
+        require(runtime is None or runtime == current, "STAGE_RUNTIME_CHANGED")
+        return proof
     if runtime is None:
         _, runtime = validate_live_runtime(runtime_ref)
     spec = json_ref(runtime["startup"])
-    require(isinstance(proof_ref, dict), "EXTERNAL_ADOPTION_REQUIRED")
     if proof_ref.get("path") == spec["adoption_path"]:
         return validate_adoption(runtime_ref, proof_ref, runtime=runtime, allow_stopped=allow_stopped)
     _, binding = validate_startup(runtime["startup"], controller=runtime["controller"]["path"])
