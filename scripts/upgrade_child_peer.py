@@ -13,6 +13,7 @@ from pathlib import Path
 import shlex
 import socket
 import struct
+import subprocess
 import sys
 
 from orchestration_common import contract_errors, require
@@ -45,8 +46,34 @@ def kernel_peer(connection):
     return result
 
 
+PYTHON_PROBE = "import sys; sys.stdout.write('r'); sys.stdout.flush(); sys.stdin.read()"
+
+
+@contract_errors("pinned Python kernel executable")
+def measured_python_executable(python):
+    """The binary the kernel reports for a process started as the pinned Python.
+
+    A macOS framework bin/python3.14 re-execs Resources/Python.app, so every
+    hook it starts shows that executable and argv[0]. Measure it, never infer it.
+    """
+    from cmux_daemon_identity import process
+    argv = [str(python), "-I", "-B", "-c", PYTHON_PROBE]
+    with subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          env={"PATH": "/usr/bin:/bin"}, close_fds=True) as probe:
+        try:
+            require(probe.stdout.read(1) == b"r", "PINNED_PYTHON_PROBE_FAILED")
+            row = process(probe.pid, validate_argv=False)
+        finally:
+            probe.stdin.close()
+            probe.wait(10)
+    require(row["pid"] == probe.pid and row["argv"][1:] == argv[1:]
+            and row["argv"][0] in (row["executable"], argv[0]), "PINNED_PYTHON_PROBE_IDENTITY_CHANGED")
+    return row["executable"]
+
+
 @contract_errors("original automatic child hook peer")
-def authenticate_hook_peer(peer, *, session, account_home, python, controller, process_reader=None):
+def authenticate_hook_peer(peer, *, session, account_home, python, controller, process_reader=None,
+                           native_python=None):
     require(set(peer) == {"pid", "uid"} and type(peer["pid"]) is int and peer["pid"] > 1
             and peer["uid"] == os.getuid(), "CHILD_IPC_KERNEL_PEER_REQUIRED")
     require(session.get("provider") in {"codex", "claude"}, "CHILD_ORIGINAL_PROVIDER_REQUIRED")
@@ -55,14 +82,18 @@ def authenticate_hook_peer(peer, *, session, account_home, python, controller, p
         process_reader = lambda pid: process(pid, validate_argv=False, native_roots=True)
     command = hook_command(python, controller)
     expected_argv = shlex.split(command)
+    # The hook process itself is either the pinned path or, after a measured
+    # launcher re-exec, that target with the same arguments.
+    accepted = [(str(Path(python).resolve()), expected_argv)]
+    if native_python is not None:
+        accepted.append((native_python, [native_python] + expected_argv[1:]))
     originals, pid, reached = [], peer["pid"], False
     for index in range(8):
         row = process_reader(pid)
         require(row["pid"] == pid, "CHILD_HOOK_PROCESS_IDENTITY_CHANGED")
         originals.append(row)
         if index == 0:
-            require(row["executable"] == str(Path(python).resolve()) and row["argv"] == expected_argv,
-                    "CHILD_AUTOMATIC_HOOK_COMMAND_REQUIRED")
+            require((row["executable"], row["argv"]) in accepted, "CHILD_AUTOMATIC_HOOK_COMMAND_REQUIRED")
         elif row["pid"] == session["process"]["pid"]:
             require(all(row.get(key) == value for key, value in session["process"].items()),
                     "CHILD_ORIGINAL_PARENT_PROCESS_CHANGED")

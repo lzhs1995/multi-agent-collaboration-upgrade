@@ -10,10 +10,11 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from orchestration_common import ContractError
-from upgrade_child_peer import authenticate_hook_peer, kernel_peer
+from upgrade_child_peer import authenticate_hook_peer, kernel_peer, measured_python_executable
 from upgrade_child_budget_protocol import hook_command
 from cmux_daemon_identity import _args
 from upgrade_child_service import read_packet
@@ -128,6 +129,64 @@ class OriginalHookAncestryTests(unittest.TestCase):
                 mutate(self.processes)
                 with self.assertRaises(ContractError):
                     self.authenticate()
+
+    def test_measured_launcher_target_of_the_pinned_python_is_the_same_hook(self):
+        # A macOS framework bin/python3.14 re-execs Resources/Python.app; the
+        # kernel then reports that binary as executable and argv[0].
+        native = "/original/Python.app/Contents/MacOS/Python"
+        self.processes[102].update(executable=native, argv=[native] + shlex.split(self.command)[1:])
+        with self.assertRaisesRegex(ContractError, "CHILD_AUTOMATIC_HOOK_COMMAND_REQUIRED"):
+            self.authenticate()
+        observed = authenticate_hook_peer(self.peer, session=self.session, account_home="/original/home",
+            python=self.python, controller=self.controller, native_python=native,
+            process_reader=lambda pid: copy.deepcopy(self.processes[pid]))
+        self.assertEqual(observed["peer_pid"], 102)
+        self.processes[102]["argv"] = [native] + shlex.split(self.command)[1:] + ["--extra"]
+        with self.assertRaisesRegex(ContractError, "CHILD_AUTOMATIC_HOOK_COMMAND_REQUIRED"):
+            authenticate_hook_peer(self.peer, session=self.session, account_home="/original/home",
+                python=self.python, controller=self.controller, native_python=native,
+                process_reader=lambda pid: copy.deepcopy(self.processes[pid]))
+
+
+@unittest.skipUnless(sys.platform == "darwin", "reads real macOS process rows")
+class RealHookAncestryTests(unittest.TestCase):
+    def test_real_shell_hook_chain_under_a_real_parent_authenticates_with_measured_python(self):
+        from cmux_daemon_identity import process
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as directory:
+            root = Path(directory).resolve()
+            controller, native_root = root / "controller", root / "native-a"
+            (controller / "scripts").mkdir(parents=True)
+            native_root.mkdir()
+            marker = root / "hook.pid"
+            (controller / "scripts/mac_upgrade_child_hook.py").write_text(
+                "import os, time\nopen(%r, 'w').write(str(os.getpid()))\ntime.sleep(20)\n" % str(marker))
+            python = str(Path(sys.executable).resolve())
+            command = hook_command(python, controller)
+            env = dict(HOME=str(root), CLAUDE_CONFIG_DIR=str(native_root), PATH="/usr/bin:/bin",
+                       CMUX_SURFACE_ID="33333333-3333-4333-8333-333333333333",
+                       CMUX_WORKSPACE_ID="22222222-2222-4222-8222-222222222222")
+            parent_code = "import subprocess, sys; subprocess.run(['/bin/sh', '-c', sys.argv[1]])"
+            with subprocess.Popen([python, "-I", "-B", "-c", parent_code, command], env=env) as parent:
+                self.addCleanup(parent.kill)
+                deadline = time.monotonic() + 20
+                while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                peer_pid = int(marker.read_text())
+                row = process(parent.pid, validate_argv=False, native_roots=True)
+                session = dict(provider="claude", session_id="11111111-1111-4111-8111-111111111111",
+                    workspace_uuid=env["CMUX_WORKSPACE_ID"], surface_uuid=env["CMUX_SURFACE_ID"],
+                    native_config_root=str(native_root),
+                    process={key: row[key] for key in ("pid", "birth", "executable", "file_identity")})
+                peer = dict(pid=peer_pid, uid=os.getuid())
+                native = measured_python_executable(python)
+                if native != python:
+                    with self.assertRaisesRegex(ContractError, "CHILD_AUTOMATIC_HOOK_COMMAND_REQUIRED"):
+                        authenticate_hook_peer(peer, session=session, account_home=str(root), python=python,
+                                               controller=controller)
+                observed = authenticate_hook_peer(peer, session=session, account_home=str(root), python=python,
+                                                  controller=controller, native_python=native)
+                self.assertEqual((observed["peer_pid"], observed["original_parent_pid"]), (peer_pid, parent.pid))
+                parent.kill()
 
 
 if __name__ == "__main__":

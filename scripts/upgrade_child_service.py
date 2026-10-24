@@ -27,7 +27,7 @@ from upgrade_child_budget_protocol import (POLICY, SCHEMA, child_socket, consume
     MAX_PACKET, encode_packet, parse_consumption, updated_agent_input)
 from upgrade_child_native import (child_report, native_agent_completion, original_agent_call,
                                   current_original_agent_call, original_consumption_call)
-from upgrade_child_peer import authenticate_hook_peer, kernel_peer
+from upgrade_child_peer import authenticate_hook_peer, kernel_peer, measured_python_executable
 
 REGISTRATION_SCHEMA = "upgrade-native-child-service-registration-v1"
 REGISTRATION_FIELDS = {"schema", "policy", "task_id", "runtime", "startup", "adoption", "source",
@@ -251,7 +251,8 @@ def validate_service_registration(ref, *, running_source=True):
 
 
 @contract_errors("native child hook transaction")
-def handle_event(registration, packet, *, peer, process_reader=None, fixtures=False, reply_deadline=None):
+def handle_event(registration, packet, *, peer, process_reader=None, fixtures=False, reply_deadline=None,
+                 native_python=None):
     """Python-only transaction boundary; live service authenticates registration.
 
     Offline fixtures use an explicit seam here. Production never accepts a
@@ -269,7 +270,8 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
             "CHILD_ORIGINAL_PARENT_NOT_REGISTERED")
     session = registration["sessions"][lane]
     authenticate_hook_peer(peer, session=session, account_home=registration["account_home"],
-        python=registration["python"], controller=registration["controller"], process_reader=process_reader)
+        python=registration["python"], controller=registration["controller"], process_reader=process_reader,
+        native_python=native_python)
     require(payload.get("session_id") == session["session_id"]
             and payload.get("transcript_path") == session["transcript"]["path"],
             "CHILD_NATIVE_HOOK_ORIGINAL_SESSION_REQUIRED")
@@ -439,6 +441,8 @@ def serve(registration_ref, *, timeout_seconds):
     stops = [startup["stop_path"], *map(str, stop_paths(json_ref(file_ref(
         Path(registration["controller"]) / "upgrade-binding.json"))))]
     stopped = lambda: any(map(os.path.lexists, stops))
+    # Hooks are started as the pinned Python; record what the kernel reports.
+    native_python = measured_python_executable(registration["python"])
     require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
     endpoint = checked_path(registration["socket"])
     require(not os.path.lexists(endpoint), "ORIGINAL_CHILD_SERVICE_SOCKET_EXISTS: do not replace it")
@@ -488,7 +492,7 @@ def serve(registration_ref, *, timeout_seconds):
                         reverifier.require_current()
                         require(not stopped(), "EXPERIMENT_STOP_REQUESTED")
                         require(time.monotonic() < deadline, "CHILD_SERVICE_DURATION_EXPIRED")
-                        result = handle_event(registration, packet, peer=peer,
+                        result = handle_event(registration, packet, peer=peer, native_python=native_python,
                                               reply_deadline=accepted + REPLY_BUDGET_SECONDS)
                     except (ValueError, KeyError, OSError, RuntimeError) as exc:
                         result = dict(status="REFUSED", error=str(exc), model_requests=0, input_operations=0)
