@@ -95,8 +95,11 @@ def codex_outcomes(session, records, task_id, now, *, outcome_after=0):
             active_observed = True
         if (record.get("type") == "turn_context" and active is not None
               and payload.get("turn_id") == active):
-            require(payload.get("model") == session["model"], "native continuity model changed")
-            model = payload["model"]
+            # Earlier models before the task fence stay history; a turn that
+            # carries one into the episode can only end as an unknown outcome.
+            if ref["offset"] >= outcome_after:
+                require(payload.get("model") == session["model"], "native continuity model changed")
+            model = payload.get("model")
         elif (record.get("type") == "response_item" and active is not None
               and payload.get("phase") == "final_answer"):
             final = native_text(record, "codex", "assistant")
@@ -157,7 +160,8 @@ def claude_outcomes(session, records, task_id, now, *, outcome_after=0, deduplic
         message = record.get("message")
         if (record.get("type") == "assistant" and isinstance(message, dict)
                 and record.get("isApiErrorMessage") is not True
-                and isinstance(message.get("model"), str) and message["model"] != "<synthetic>"):
+                and isinstance(message.get("model"), str) and message["model"] != "<synthetic>"
+                and ref["offset"] >= outcome_after):
             require(message["model"] == session["model"], "native continuity model changed")
         if (record.get("type") != "assistant" or not isinstance(message, dict)
                 or parent is None

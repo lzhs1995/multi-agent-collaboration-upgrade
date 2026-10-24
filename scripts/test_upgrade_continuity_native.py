@@ -350,6 +350,43 @@ class NativeContinuityTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "native continuity model changed"):
             collect_native_outcomes(self.sessions, task_id=TASK, now=40, fixtures=True)
 
+    def test_prefence_model_history_is_not_a_change_in_the_fenced_episode(self):
+        # Real stage history: the original Codex ran an earlier model before the
+        # approved stage; only records after the task fence carry the pinned model.
+        journal, old = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(1), payload=dict(type="task_started", turn_id=old)))
+        journal.append(dict(type="turn_context", timestamp=stamp(1), payload=dict(turn_id=old, model="earlier-native-model")))
+        journal.append(dict(type="event_msg", timestamp=stamp(2), payload=dict(type="task_complete", turn_id=old, error="HTTP 402")))
+        claude = self.journals["claude_a"]
+        user = claude.message("user", "Earlier stage.", at=stamp(1))
+        user.update(uuid=str(uuid.uuid4()), parentUuid=None, isSidechain=False)
+        claude.append(user)
+        answer = claude.message("assistant", "Earlier model answer.", at=stamp(2))
+        answer.update(uuid=str(uuid.uuid4()), parentUuid=user["uuid"], isSidechain=False)
+        answer["message"].update(id="msg_" + uuid.uuid4().hex, type="message", stop_reason="end_turn",
+                                  model="earlier-native-model")
+        claude.append(answer)
+        for lane in ("codex", "claude_a"):
+            self.sessions[lane]["freeze_fence"] = self.journals[lane].reader.snapshot()
+        codex_ref, claude_ref = self.codex_success(10), self.claude_success("claude_a", 10)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual([(o["kind"], o["native_record"]) for o in value["observations"]],
+                         [("API_SUCCESS", codex_ref), ("API_SUCCESS", claude_ref)])
+
+    def test_codex_turn_with_prefence_other_model_never_becomes_postfence_success(self):
+        journal, turn = self.journals["codex"], str(uuid.uuid4())
+        journal.append(dict(type="event_msg", timestamp=stamp(1), payload=dict(type="task_started", turn_id=turn)))
+        journal.append(dict(type="turn_context", timestamp=stamp(1), payload=dict(turn_id=turn, model="earlier-native-model")))
+        self.sessions["codex"]["freeze_fence"] = journal.reader.snapshot()
+        final = journal.message("assistant", "Original task checkpoint.", at=stamp(10))
+        final["payload"]["phase"] = "final_answer"
+        journal.append(final)
+        done = journal.append(dict(type="event_msg", timestamp=stamp(11),
+            payload=dict(type="task_complete", turn_id=turn, last_agent_message="Original task checkpoint.")))
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=20, fixtures=True)
+        self.assertEqual([(o["kind"], o["native_record"]) for o in value["observations"]],
+                         [("NATIVE_OUTCOME_UNKNOWN", done)])
+
     def test_chronology_future_internal_records_and_overlapping_turns_fail_closed(self):
         journal, first, second = self.journals["codex"], str(uuid.uuid4()), str(uuid.uuid4())
         journal.append(dict(type="event_msg", timestamp=stamp(30),
