@@ -80,7 +80,7 @@ def collect_native_outcomes(sessions, *, task_id, now, max_records=256, fixtures
         refs = []
 
         def bounded_records():
-            previous_epoch, byte_count, historical, episode = None, 0, 0, 0
+            byte_count, historical, episode = 0, 0, 0
             # Original prior records establish the in-flight turn/parent chain,
             # never availability in this episode. No caller supplies parser state.
             for ref, record in reader.records(0, end["offset"]):
@@ -93,9 +93,6 @@ def collect_native_outcomes(sessions, *, task_id, now, max_records=256, fixtures
                 if "timestamp" in record:
                     epoch = parse_time(record["timestamp"]).timestamp()
                     require(0 <= epoch <= now, "native record is outside the observation clock")
-                    require(previous_epoch is None or epoch >= previous_epoch,
-                            "native outcome chronology moved backwards")
-                    previous_epoch = epoch
                 byte_count += ref["length"]
                 historical += int(before)
                 episode += int(not before)
@@ -103,7 +100,12 @@ def collect_native_outcomes(sessions, *, task_id, now, max_records=256, fixtures
                 yield ref, record
 
         scan = codex_outcomes if lane == "codex" else claude_outcomes
-        observations.extend(scan(session, bounded_records(), task_id, now, outcome_after=start))
+        found = scan(session, bounded_records(), task_id, now, outcome_after=start)
+        # Claude attachments carry their own earlier creation time after the
+        # request record; only the order of outcomes decides the latest one.
+        require(all(a["at_epoch"] <= b["at_epoch"] for a, b in zip(found, found[1:])),
+                "native outcome chronology moved backwards")
+        observations.extend(found)
         boundaries[lane] = end
         reader.verify_metadata()
         reader.verify_pin(session["freeze_fence"])

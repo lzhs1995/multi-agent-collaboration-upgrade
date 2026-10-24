@@ -387,6 +387,26 @@ class NativeContinuityTests(unittest.TestCase):
         self.assertEqual([(o["kind"], o["native_record"]) for o in value["observations"]],
                          [("NATIVE_OUTCOME_UNKNOWN", done)])
 
+    def test_claude_attachment_stamped_before_previous_record_is_not_an_outcome_regression(self):
+        # Real Claude journals append attachments carrying their own earlier
+        # creation time after the request record of the same turn.
+        journal = self.journals["claude_a"]
+        first = self.claude_success("claude_a", 10)
+        journal.append(dict(type="api-request", sessionId=journal.session["session_id"], timestamp=stamp(13)))
+        journal.append(dict(type="attachment", sessionId=journal.session["session_id"], uuid=str(uuid.uuid4()),
+                            parentUuid=None, isSidechain=False, timestamp=stamp(12.5),
+                            attachment=dict(type="hook_success")))
+        second = self.claude_success("claude_a", 20)
+        value = collect_native_outcomes(self.sessions, task_id=TASK, now=30, fixtures=True)
+        self.assertEqual([(o["kind"], o["native_record"]) for o in value["observations"]],
+                         [("API_SUCCESS", first), ("API_SUCCESS", second)])
+
+    def test_outcome_chronology_moving_backwards_still_fails_closed(self):
+        self.claude_success("claude_a", 20)
+        self.claude_success("claude_a", 10)
+        with self.assertRaisesRegex(ContractError, "native outcome chronology moved backwards"):
+            collect_native_outcomes(self.sessions, task_id=TASK, now=30, fixtures=True)
+
     def test_chronology_future_internal_records_and_overlapping_turns_fail_closed(self):
         journal, first, second = self.journals["codex"], str(uuid.uuid4()), str(uuid.uuid4())
         journal.append(dict(type="event_msg", timestamp=stamp(30),
