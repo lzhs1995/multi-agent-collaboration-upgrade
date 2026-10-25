@@ -31,6 +31,7 @@ from orchestration_common import digest, write_json, tree_manifest
 from datetime import datetime, timezone
 from upgrade_client_isolation import SANDBOX, clean_child_environment
 from upgrade_live_control import control
+from test_upgrade_child_peer import kernel_measured_python
 
 
 class NativeChildDiscoveryTests(unittest.TestCase):
@@ -57,6 +58,11 @@ class NativeChildStartupTests(unittest.TestCase):
     def setUp(self):
         startup_fixtures.MaterializedStartupTests.setUpClass.__func__(self)
         self.addCleanup(self.tmp.cleanup)
+        # serve() measures the pinned Python from a probe it starts itself;
+        # only that probe reads a real kernel row under test_all's default.
+        measured = mock.patch.object(service, "measured_python_executable", kernel_measured_python)
+        measured.start()
+        self.addCleanup(measured.stop)
 
     def original_registration_inputs(self):
         # The existing private-adoption fixture is never a live model or
@@ -341,7 +347,9 @@ class NativeChildStartupTests(unittest.TestCase):
 
     def test_successor_refuses_while_the_predecessor_socket_still_accepts(self):
         registered = self.registered_service()
-        worker, outcome, endpoint = self.serve_in_background(registered, 3)
+        # The predecessor must still be serving when register_successor probes
+        # its socket, after it has validated the registration and source.
+        worker, outcome, endpoint = self.serve_in_background(registered, 10)
         source = tree_manifest(Path(__file__).resolve().parent.parent)
         with self.assertRaisesRegex(ContractError, "CHILD_SERVICE_PREDECESSOR_SOCKET_ACCEPTING"):
             service.register_successor(registered, source=source, process_present=lambda pid: False)

@@ -24,6 +24,7 @@ import upgrade_stage_control as control
 import upgrade_stage_fence as fence
 import upgrade_stage_release as release
 import test_upgrade_live_startup as startup_fixtures
+from test_upgrade_child_peer import kernel_measured_python
 
 MODELS = {"codex": "fixture-sol", "claude_a": "fixture-opus", "claude_b": "fixture-opus"}
 
@@ -46,6 +47,10 @@ class InstalledStageChildTests(unittest.TestCase):
         floor = patch.object(release, "FREE_FLOOR_BYTES", 0)
         floor.start()
         self.addCleanup(floor.stop)
+        # serve() measures the pinned Python from a probe it starts itself.
+        measured = patch("upgrade_child_service.measured_python_executable", kernel_measured_python)
+        measured.start()
+        self.addCleanup(measured.stop)
         ref = release.build(self.runtime_ref, "stage-a", MODELS, write_json(self.root / "AUTHORITY.json", {}),
                             self.root / "staging", self.root / "backup")
         self.plan = release.load_plan(ref["path"], ref["sha256"])

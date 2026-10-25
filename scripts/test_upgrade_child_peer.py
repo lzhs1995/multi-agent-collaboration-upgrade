@@ -22,8 +22,14 @@ from cmux_daemon_identity import _args
 from upgrade_child_service import read_packet
 
 # test_all replaces cmux_daemon_identity.process for every test; keep the
-# kernel reader bound at import for the one case that reads real process rows.
+# kernel reader bound at import for the cases that read real process rows.
 KERNEL_PROCESS = cmux_daemon_identity.process
+
+
+def kernel_measured_python(python):
+    """measured_python_executable reading the real row of the probe it starts."""
+    with patch.object(cmux_daemon_identity, "process", KERNEL_PROCESS):
+        return measured_python_executable(python)
 
 
 class KernelChildPeerTests(unittest.TestCase):
