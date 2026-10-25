@@ -186,9 +186,11 @@ class RealStopScopeTests(unittest.TestCase):
             production_adoption=False, account_uid=os.getuid(), account_home=str(Path.home().resolve())))
         self.startup_path = root / "config/B/startup-v2.json"
         startup = write_json(self.startup_path, {"offline_test_only": True})
-        controller = root / "controllers/B"
+        # The materialized layout: runtime-v2.json in the arm's controllers
+        # directory, the controller release below its releases/.
+        controller = root / "controllers/B/releases/private-live-v2/source"
         controller.mkdir(parents=True)
-        self.ref = write_json(controller / "runtime-v2.json", dict(version=2, skill=NAME,
+        self.ref = write_json(root / "controllers/B/runtime-v2.json", dict(version=2, skill=NAME,
             execution_mode="live-isolated-v2", production_adoption=False, arm="B", context=context,
             startup=startup, controller={"path": str(controller)}))
         self.stop_path = root / "evidence/B/live-control/stop.json"
@@ -212,6 +214,18 @@ class RealStopScopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "STOP_RUNTIME_LOCATION_CHANGED"):
             watchdog.stop_runtime_input(replacement)
         self.assertFalse(self.stop_path.exists())
+
+    def test_controller_outside_the_arm_releases_is_refused(self):
+        # The publisher's kernel query must be against this arm's own release,
+        # never another directory of the same private root.
+        root, original = Path(self.ref["path"]).parents[2], json_ref(self.ref)
+        for outside in (root / "controllers/B", root / "tmp/B/releases/x/source", root / "controllers/A/releases/x/source"):
+            with self.subTest(controller=str(outside)):
+                outside.mkdir(parents=True, exist_ok=True)
+                ref = write_json(Path(self.ref["path"]), dict(original, controller={"path": str(outside)}))
+                with self.assertRaisesRegex(ContractError, "escapes authorized root"):
+                    watchdog.stop_runtime_input(ref)
+                self.assertFalse(self.stop_path.exists())
 
 
 if __name__ == "__main__":
