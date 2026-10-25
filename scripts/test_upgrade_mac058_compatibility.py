@@ -121,6 +121,42 @@ class UpstreamTransformTests(unittest.TestCase):
             unknown = original.replace("⏵⏵ bypass permissions on", "unknown permissions")
             self.assertIsNone(parser["_claude_bordered_compose"](unknown))
 
+    def test_busy_goal_hud_above_border_is_a_complete_empty_frame_only_in_its_exact_pair(self):
+        # Original u12 handshake screens (both lanes refused 2026-10-26, zero input).
+        pins = {"a": "9fa226394733797aad797e4d3afbe4a80c2d6f1693a0b7b1c5e8507a4cd2b2e7",
+                "b": "65d64cf376cbd4374a1c60c9c7ba2d5c2fd59c28cfa3459e98ce269f1221bd2c"}
+        base = parser_namespace(source("cmux_bridge.py"))
+        parser = parser_namespace(claude_measured_chrome(source("cmux_bridge.py")))
+        fixtures = Path(__file__).resolve().parent.parent / "verification/fixtures"
+        bare = "⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+        for lane, pin in pins.items():
+            raw = (fixtures / f"claude-busy-goal-split-{lane}-20261026.txt").read_bytes()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), pin)
+            original = raw.decode("utf-8")
+            self.assertIsNone(base["_claude_bordered_compose"](original))
+            block = parser["_claude_bordered_compose"](original)
+            self.assertEqual((block["body"], block["footer"]), ("", [bare]))
+            self.assertTrue(parser["compose_block_is_empty"](original))
+            self.assertTrue(parser["_queued_or_active_input"](original))
+            rows = original.splitlines()
+            start = block["start"]
+            self.assertRegex(rows[start - 2], r"^\s*◎ /goal active \(\d+m\)\s*$")
+            changed = list(rows)
+            changed[start] = "❯ 用户原稿  \t"
+            self.assertEqual(parser["_claude_bordered_compose"]("\n".join(changed))["body"], "用户原稿  \t")
+            self.assertFalse(parser["compose_block_is_empty"]("\n".join(changed)))
+            mutants = {
+                "no_goal_row": rows[:start - 2] + rows[start - 1:],
+                "blank_between": rows[:start - 1] + [""] + rows[start - 1:],
+                "goal_paused": rows[:start - 2] + [rows[start - 2].replace("active", "paused")] + rows[start - 1:],
+                "goal_suffix": rows[:start - 2] + [rows[start - 2].rstrip() + " x"] + rows[start - 1:],
+                "footer_suffix": [row + " x" if row.strip() == bare else row for row in rows],
+                "extra_footer_row": rows + ["  unknown chrome"],
+            }
+            for name, value in mutants.items():
+                with self.subTest(lane=lane, mutant=name):
+                    self.assertIsNone(parser["_claude_bordered_compose"]("\n".join(value)))
+
     def test_private_identity_keeps_managed_process_reader_and_source_proof(self):
         before = source("cmux_daemon_identity.py")
         after = native_readers("cmux_daemon_identity.py", before)

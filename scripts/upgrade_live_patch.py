@@ -267,7 +267,13 @@ def claude_measured_chrome(text):
             "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents")
             or re.fullmatch(
                 r"⏵⏵ bypass permissions on \(shift\+tab to cycle\) · esc to interrupt"
-                rf" +◎ /goal active \({_CLAUDE_DURATION}\)", footer[0])):
+                rf" +◎ /goal active \({_CLAUDE_DURATION}\)", footer[0])
+            # Measured 2026-10-26 (u12, both lanes): a busy Goal session moves
+            # the HUD to the row directly above the top border and leaves the
+            # bare interrupt hint below. Accept only that exact pair.
+            or (footer[0] == "⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+                and start >= 2 and re.fullmatch(
+                    rf"\s*◎ /goal active \({_CLAUDE_DURATION}\)\s*", rows[start - 2]))):
         first = re.sub(r"^\s*❯[ \u00a0]?", "", rows[start], count=1)
         return {"body": "\n".join([first, *rows[start + 1:end]]),
                 "footer": footer, "before": rows[:start - 1], "start": start, "end": end}
