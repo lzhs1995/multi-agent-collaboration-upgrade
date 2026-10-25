@@ -71,6 +71,16 @@ SDK, Jev/Noul service, external model API, or provider credential is used here.
 A future adapter would need an explicit contract for any missing confidence
 field; it must not invent a score for a provider that supplies none.
 
+`scripts/jev_advice.py` is the offline truth table such an adapter would feed.
+It covers only supervisor triage before a task pack is frozen and bound; a bound
+task gets `NOT_CALLED`. For routing, the work-kind Choice has a companion Noul:
+below 0.3 rules decide, from 0.3 to 0.7 the supervisor decides, and above 0.7
+the advice lists verified lanes with an idle write domain (a non-author Claude
+for review), or `NO_IDLE_LANE`. A failed or malformed answer is `JEV_ERROR` or
+`NOT_CONFIGURED`, never a "no". Inbox advice only moves a message forward above
+0.7; every body is still read in full. Confidence is not a gate. The module makes
+no request and is not wired into `decide()` or any campaign.
+
 The frozen runner's `claim --run <run> --node <node>` is the action that requests
 a new rules decision for a `PENDING` node. An already claimed node returns its
 existing record without requesting another decision. An allowed claim persists its gates and decision before
