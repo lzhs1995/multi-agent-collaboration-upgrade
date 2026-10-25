@@ -153,6 +153,37 @@ def hook_matches(value, call, session, lane, spec, launches):
     return value.get("command") == expected and registered.count(expected) == 1
 
 
+def execution_turn(records, call, result_ref):
+    """The native turn the nested command must carry, or None.
+
+    Older builds tag the outer call with that turn. Newer builds tag the call
+    with a per-sampling ID while its own output, task_started and the native
+    completion carry the real turn. Then the output's turn must be the only
+    task open across the whole call/result interval, and never the call's ID.
+    """
+    outputs = [row["payload"] for ref, row in records
+               if ref["offset"] == result_ref["offset"] and row.get("type") == "response_item"
+               and row.get("payload", {}).get("type") in ("function_call_output", "custom_tool_call_output")
+               and row["payload"].get("call_id") == call["id"]]
+    if len(outputs) != 1:
+        return None
+    # A missing output tag keeps the old rule: the completion must carry the call's turn.
+    turn = outputs[0].get("internal_chat_message_metadata_passthrough", {}).get("turn_id", call["turn_id"])
+    if turn == call["turn_id"]:
+        return turn
+    tasks = [(ref, row["payload"]) for ref, row in records if row.get("type") == "event_msg"
+             and row.get("payload", {}).get("type") in ("task_started", "task_complete", "turn_aborted")]
+    opened = [ref for ref, payload in tasks if payload["type"] == "task_started"
+              and payload.get("turn_id") == turn and ref["offset"] < call["record"]["offset"]]
+    if (not isinstance(turn, str) or len(opened) != 1
+            or any(payload.get("turn_id") == call["turn_id"] for _, payload in tasks)
+            or any(opened[0]["offset"] < ref["offset"] < result_ref["offset"]
+                   and (payload["type"] == "task_started" or payload.get("turn_id") == turn)
+                   for ref, payload in tasks)):
+        return None
+    return turn
+
+
 def nested_readiness_command(records, call, result_ref, session, command, spec):
     """Bind a nested Bash hook to its native CommandExecution, never by text alone.
 
@@ -180,11 +211,12 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
                    and row["payload"].get("item", {}).get("type") == "CommandExecution"]
     if len(completions) != 1:
         return None
+    turn = execution_turn(records, call, result_ref)
     ref, event = completions[0]
     item = event["item"]
     argv = item.get("command")
-    if (event.get("thread_id") != session["session_id"]
-            or event.get("turn_id") != call["turn_id"]
+    if (turn is None or event.get("thread_id") != session["session_id"]
+            or event.get("turn_id") != turn
             or item.get("source") != "unified_exec_startup"
             or item.get("status") != "completed"
             or type(item.get("exit_code")) is not int or item["exit_code"] != 0
@@ -195,7 +227,7 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
             or not completed_probe(item.get("aggregated_output"), "codex", spec)):
         return None
     return dict(id=item["id"], name="Bash", arguments={"command": command},
-                startup=call["startup"], record=ref, turn_id=call["turn_id"])
+                startup=call["startup"], record=ref, turn_id=event["turn_id"])
 
 
 def readiness_evidence(native, session, lane, spec, startup_ref, binding, launches, *, stage=None):
@@ -217,9 +249,10 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         if lane == "codex":
             payload = record.get("payload", {})
             # Retain execution structure only, not reasoning or large tool output.
-            if (record.get("type") == "event_msg" and payload.get("type") == "item_completed"
+            if (record.get("type") == "event_msg" and payload.get("type")
+                    in ("item_completed", "task_started", "task_complete", "turn_aborted")
                     or record.get("type") == "response_item" and payload.get("type")
-                    in ("function_call", "custom_tool_call")):
+                    in ("function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output")):
                 execution_records.append((ref, record))
             if record.get("type") == "turn_context" and payload.get("model"):
                 model_records.append((ref, payload["model"]))

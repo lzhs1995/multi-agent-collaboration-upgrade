@@ -319,6 +319,77 @@ class ReadinessTests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     self.check_nested(fixture)
 
+    def sampling_fixture(self):
+        """The u11 shape: the call carries a per-sampling ID; its output, the
+        task and the native completion carry the real turn (rows 2/3/4)."""
+        fixture = self.nested_fixture()
+        rows = fixture[1]
+        turn = rows[3][1]["payload"]["turn_id"]
+        rows[2][1]["payload"]["internal_chat_message_metadata_passthrough"] = {"turn_id": str(uuid.uuid4())}
+        rows[4][1]["payload"]["internal_chat_message_metadata_passthrough"] = {"turn_id": turn}
+        rows.append((dict(rows[0][0], offset=50, length=10),
+                     dict(type="event_msg", payload=dict(type="task_started", turn_id=turn))))
+        return fixture
+
+    def task_row(self, kind, turn, offset):
+        return (dict(path="/fixture", offset=offset, length=10),
+                dict(type="event_msg", payload=dict(type=kind, turn_id=turn)))
+
+    def test_sampling_call_turn_binds_through_output_and_open_task(self):
+        fixture = self.sampling_fixture()
+        rows = fixture[1]
+        result = self.check_nested(fixture)
+        self.assertEqual(result["native_command"]["id"], "exec-native-command")
+        # The proof keeps the completion's own turn, never the call's sampling ID.
+        self.assertEqual(result["native_command"]["turn_id"], rows[3][1]["payload"]["turn_id"])
+        self.assertNotEqual(result["native_command"]["turn_id"],
+                            rows[2][1]["payload"]["internal_chat_message_metadata_passthrough"]["turn_id"])
+        self.assertEqual(len(result["hooks"]["PreToolUse"]), 1)
+        self.assertEqual(len(result["hooks"]["PostToolUse"]), 1)
+
+    def test_sampling_call_turn_rejects_unbound_or_ambiguous_task(self):
+        turn = lambda r: r[3][1]["payload"]["turn_id"]
+        output = lambda r: r[4][1]["payload"]
+        mutations = {
+            "output_untagged": lambda r: output(r).pop("internal_chat_message_metadata_passthrough"),
+            "output_other_turn": lambda r: output(r).update(
+                internal_chat_message_metadata_passthrough={"turn_id": str(uuid.uuid4())}),
+            "completion_other_turn": lambda r: r[3][1]["payload"].update(turn_id=str(uuid.uuid4())),
+            "completion_other_thread": lambda r: r[3][1]["payload"].update(thread_id=str(uuid.uuid4())),
+            "task_not_started": lambda r: r.pop(),
+            "task_started_after_call": lambda r: r[-1][0].update(offset=210),
+            "task_started_twice": lambda r: r.append(self.task_row("task_started", turn(r), 60)),
+            "task_completed_inside": lambda r: r.append(self.task_row("task_complete", turn(r), 260)),
+            "task_aborted_inside": lambda r: r.append(self.task_row("turn_aborted", turn(r), 220)),
+            "other_task_started_inside": lambda r: r.append(self.task_row("task_started", str(uuid.uuid4()), 230)),
+            "call_turn_is_a_task": lambda r: r.append(self.task_row("task_started",
+                r[2][1]["payload"]["internal_chat_message_metadata_passthrough"]["turn_id"], 70)),
+            "duplicate_completion": lambda r: r.insert(4, copy.deepcopy(r[3])),
+            "interleaved_call": lambda r: r.insert(3, (dict(r[2][0], offset=225), {
+                "type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec",
+                "input": "text('unrelated');", "call_id": "concurrent-call"}})),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                fixture = self.sampling_fixture()
+                mutate(fixture[1])
+                with self.assertRaises(ContractError):
+                    self.check_nested(fixture)
+
+    def test_sampling_call_turn_controls_are_live(self):
+        # Positive control for the mutations above: an earlier closed task and
+        # an unrelated later task outside the interval do not disturb binding.
+        fixture = self.sampling_fixture()
+        fixture[1].append(self.task_row("task_started", str(uuid.uuid4()), 10))
+        fixture[1].append(self.task_row("task_complete", fixture[1][-1][1]["payload"]["turn_id"], 20))
+        fixture[1].append(self.task_row("task_started", str(uuid.uuid4()), 400))
+        self.assertEqual(self.check_nested(fixture)["native_command"]["id"], "exec-native-command")
+        # The old shape still binds by the call's own turn, with an untagged output.
+        old = self.nested_fixture()
+        self.assertNotIn("internal_chat_message_metadata_passthrough", old[1][4][1]["payload"])
+        self.assertEqual(self.check_nested(old)["native_command"]["turn_id"],
+                         old[1][2][1]["payload"]["internal_chat_message_metadata_passthrough"]["turn_id"])
+
     def test_replaced_or_partial_native_log_rejected(self):
         session, _, _, _, _, _ = self.fixture("claude_a")
         path = Path(session["transcript"]["path"])

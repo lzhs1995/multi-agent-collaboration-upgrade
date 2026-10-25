@@ -185,6 +185,19 @@ class LiveControlTests(unittest.TestCase):
             self.assertIs(invoke.call_args.kwargs["persist"], False)
         runtime.validate_adoption(self.runtime_ref, adopted["adoption"])
 
+    def test_stop_scope_names_the_pinned_controller_for_the_real_publisher_check(self):
+        # u10's stop refused with KeyError 'controller': external_publisher()
+        # was never reached unpatched. Only the kernel query is replaced here.
+        _, scope = control.stop_scope(self.runtime_ref)
+        self.assertEqual(scope["controller"], self.spec["controller"])
+        with patch.object(control, "sandbox_check", return_value=False) as query:
+            stopped = control.control(self.runtime_ref, "stop")
+        self.assertEqual(stopped["status"], "STOPPED_INPUT")
+        self.assertEqual(query.call_args.args[1:], (self.spec["controller"], "file-write-create"))
+        with patch.object(control, "sandbox_check", return_value=True):
+            with self.assertRaisesRegex(ContractError, "CLIENT_CANNOT_PUBLISH_ADOPTION"):
+                control.control(self.runtime_ref, "stop")
+
     def test_client_cannot_publish_adoption(self):
         with patch.object(control, "sandbox_check", return_value=True):
             with self.assertRaisesRegex(ContractError, "CLIENT_CANNOT_PUBLISH_ADOPTION"):

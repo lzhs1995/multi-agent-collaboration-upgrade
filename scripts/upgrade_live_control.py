@@ -151,8 +151,11 @@ def stop_scope(runtime_ref):
             and runtime["startup"]["path"] == str(paths["config"] / "startup-v2.json"),
             "STOP_RUNTIME_LOCATION_CHANGED")
     directory = within(paths["evidence"] / "live-control", root)
+    # external_publisher() proves this process is outside every client against
+    # the controller release; it is only the pinned path, never executed here.
+    controller = within(runtime["controller"]["path"], paths["controllers"] / "releases")
     return runtime, dict(stop_path=str(directory / "stop.json"),
-                         adoption_path=str(directory / "adoption.json"))
+                         adoption_path=str(directory / "adoption.json"), controller=str(controller))
 
 
 def stop(runtime_ref):
