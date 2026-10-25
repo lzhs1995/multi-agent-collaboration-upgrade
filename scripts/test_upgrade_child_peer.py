@@ -12,12 +12,18 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from orchestration_common import ContractError
 from upgrade_child_peer import authenticate_hook_peer, kernel_peer, measured_python_executable
 from upgrade_child_budget_protocol import hook_command
+import cmux_daemon_identity
 from cmux_daemon_identity import _args
 from upgrade_child_service import read_packet
+
+# test_all replaces cmux_daemon_identity.process for every test; keep the
+# kernel reader bound at import for the one case that reads real process rows.
+KERNEL_PROCESS = cmux_daemon_identity.process
 
 
 class KernelChildPeerTests(unittest.TestCase):
@@ -151,8 +157,9 @@ class OriginalHookAncestryTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin", "reads real macOS process rows")
 class RealHookAncestryTests(unittest.TestCase):
     def test_real_shell_hook_chain_under_a_real_parent_authenticates_with_measured_python(self):
-        from cmux_daemon_identity import process
-        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as directory:
+        process = KERNEL_PROCESS
+        with patch.object(cmux_daemon_identity, "process", KERNEL_PROCESS), \
+                tempfile.TemporaryDirectory(prefix="", dir="/tmp") as directory:
             root = Path(directory).resolve()
             controller, native_root = root / "controller", root / "native-a"
             (controller / "scripts").mkdir(parents=True)
