@@ -268,9 +268,11 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
                 f"result['pressure'] = pressure(journal, {str(self.paths['tmp'] / 'callback-wait-pressure')!r}, "
                 f"{str(self.paths['state'] / 'deliveries-v1')!r})\n"
                 "print(json.dumps(result))\n")
+        # 80 serialized offline deliveries take 5-8 s alone but exceeded 25 s
+        # under full-suite load. Only counts are asserted; the cap catches hangs.
         result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
                                  sys.executable, "-I", "-B", "-c", code],
-                                capture_output=True, text=True, timeout=25)
+                                capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr)
         counts = json.loads(result.stdout)
         self.assertEqual(len(counts["checks"]), 16 if self.source_controller == SOURCE else 17)

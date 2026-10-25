@@ -281,19 +281,30 @@ class CoordinatorBoundaryTests(CoordinatorContentionTests):
         self.assertEqual((self.co.root / "run.json").read_bytes(), original)
 
     def test_timeout_during_wait_creates_no_dispatch_or_input_intent(self):
+        from orchestration_permit import elapsed
         self.prepared()
-        policy = registered_policy(Path(self.temp.name) / "policy", self.co.header, remaining_seconds=0.4)
+        policy = registered_policy(Path(self.temp.name) / "policy", self.co.header)
+        limit = read_json(policy.campaign["registration"]["path"])["contract"]["run_timeout_seconds"]
         result, contended = MP.Queue(), MP.Event()
         release = self.hold()
+        # The registered cap expires only after an actual flock conflict. A
+        # short real cap could instead expire during fork before the first
+        # flock, and then no contention would ever be observed.
+        def expiring_clock(header):
+            measured = elapsed(header)
+            if contended.is_set():
+                measured["seconds"] = limit + 1
+            return measured
         try:
-            self.start("review", "dispatch", result, contended=contended, policy=policy)
+            with patch("orchestration_permit.elapsed", side_effect=expiring_clock):
+                self.start("review", "dispatch", result, contended=contended, policy=policy)
             self.assertTrue(contended.wait(10))
             row = result.get(timeout=10)
         finally:
             release.set()
         print("EXPIRED_WAIT", row, flush=True)
         self.assertEqual(row["status"], "ERROR", row)
-        self.assertRegex(row["error"], "time cap|timed out")
+        self.assertIn("time cap reached while waiting", row["error"])
         self.assertFalse(row["intent"])
         self.assertFalse(row["submit_operation"])
         self.assertEqual(row["submit_calls"], 0)
