@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -20,6 +21,7 @@ from test_orchestration_native import NativeFixture
 from upgrade_child_budget import budget_status, initialize_ledger
 from upgrade_child_budget_protocol import SCHEMA, child_prompt, hook_command, consume_command
 from upgrade_body_read import read_command, read_result
+import upgrade_child_service as service
 from upgrade_child_service import handle_event, recover_child_reports
 
 
@@ -157,6 +159,55 @@ class NativeChildServiceTests(unittest.TestCase):
         self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
         timely = self.request("claude_a", self.original_call("claude_a", "toolu_in_time"))
         self.assertEqual((timely["status"], timely["inflight"]), ("RESERVED", 1))
+
+    def hook_budget_request(self, lane, payload):
+        peer = dict(pid=102 if lane == "claude_a" else 112, uid=os.getuid())
+        return handle_event(self.registration, dict(schema=SCHEMA, lane=lane, payload=payload), peer=peer,
+            process_reader=lambda pid: copy.deepcopy(self.processes[pid]), fixtures=True,
+            reply_deadline=time.monotonic() + service.REPLY_BUDGET_SECONDS)
+
+    def test_original_call_appended_after_the_hook_started_reserves_within_the_reply_budget(self):
+        # u19 C2: PreToolUse read the journal before Claude appended the tool_use.
+        journal = self.journals["claude_a"]
+        payload = self.original_call("claude_a", "toolu_appended_late")
+        lines = journal.path.read_bytes().splitlines(keepends=True)
+        journal.path.write_bytes(b"".join(lines[:-1]))
+        def append_call():
+            with journal.path.open("ab") as stream:
+                stream.write(lines[-1])
+        late = threading.Timer(1.0, append_call)
+        late.start()
+        self.addCleanup(late.cancel)
+        started = time.monotonic()
+        reserved = self.hook_budget_request("claude_a", payload)
+        elapsed = time.monotonic() - started
+        self.assertEqual((reserved["status"], reserved["inflight"]), ("RESERVED", 1))
+        self.assertGreaterEqual(elapsed, 0.9)
+        self.assertLess(elapsed, service.REPLY_BUDGET_SECONDS - service.CALL_WAIT_MARGIN_SECONDS + 0.5)
+
+    def test_absent_original_call_is_refused_inside_the_reply_budget_without_a_slot(self):
+        payload = self.original_call("claude_a", "toolu_never_appended")
+        journal = self.journals["claude_a"]
+        journal.path.write_bytes(b"".join(journal.path.read_bytes().splitlines(keepends=True)[:-1]))
+        started = time.monotonic()
+        with self.assertRaisesRegex(ContractError, "missing or duplicate native invocation"):
+            self.hook_budget_request("claude_a", payload)
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, service.REPLY_BUDGET_SECONDS - service.CALL_WAIT_MARGIN_SECONDS - 0.5)
+        self.assertLess(elapsed, service.REPLY_BUDGET_SECONDS)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
+
+    def test_duplicate_original_call_is_refused_at_once_even_with_wait_budget(self):
+        payload = self.original_call("claude_a", "toolu_duplicated")
+        journal = self.journals["claude_a"]
+        copy_record = json.loads(journal.path.read_bytes().splitlines()[-1])
+        copy_record["uuid"] = str(uuid.uuid4())
+        journal.append(copy_record)
+        started = time.monotonic()
+        with self.assertRaisesRegex(ContractError, "missing or duplicate native invocation"):
+            self.hook_budget_request("claude_a", payload)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(budget_status(self.authority_ref)["inflight"], 0)
 
     def test_later_native_failure_cannot_reuse_an_old_agent_call_to_reserve_new_capacity(self):
         payload = self.original_call("claude_a", "toolu_before_failure")

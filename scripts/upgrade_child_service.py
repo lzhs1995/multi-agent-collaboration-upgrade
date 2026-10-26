@@ -43,6 +43,7 @@ MAX_SUCCESSORS = 8
 REVERIFY_INTERVAL_SECONDS = 30
 MAX_VERIFIED_AGE_SECONDS = 120
 REPLY_BUDGET_SECONDS = 6
+CALL_WAIT_MARGIN_SECONDS = 1.5
 
 
 def service_root(runtime):
@@ -412,7 +413,10 @@ def handle_event(registration, packet, *, peer, process_reader=None, fixtures=Fa
     if event == "PreToolUse":
         require(payload.get("tool_input", {}).get("run_in_background", False) is False,
                 "CHILD_NATIVE_BACKGROUND_UNSUPPORTED: completion binding is not proven")
-        call = current_original_agent_call(session, payload, fixtures=fixtures)
+        # Wait for a not-yet-appended original call only while the hook still
+        # waits, leaving the reservation and its reply inside the same budget.
+        call = current_original_agent_call(session, payload, fixtures=fixtures, wait_until=(
+            None if reply_deadline is None else reply_deadline - CALL_WAIT_MARGIN_SECONDS))
         in_reply_budget()
         reservation = reserve_child(authority, parent=lane, tool_use_id=call["tool_use_id"], tool_input=call["tool_input"])
         require(reservation["status"] == "RESERVED",

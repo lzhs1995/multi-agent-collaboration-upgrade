@@ -9,13 +9,18 @@ from __future__ import annotations
 import re
 import time
 
-from orchestration_common import checked_path, contract_errors, digest, object_sha, parse_time, require
+from orchestration_common import ContractError, checked_path, contract_errors, digest, object_sha, parse_time, require
 from orchestration_native import NativeReader, native_text
 from upgrade_child_budget_protocol import child_prompt, updated_agent_input
 from upgrade_native_outcomes import claude_outcomes
 
 MAX_RECORDS = 65536
 MAX_BYTES = 32 * 1024 * 1024
+CALL_POLL_SECONDS = 0.1
+
+
+class NativeCallPending(ContractError):
+    """No original tool_use record for this hook yet; the journal may still append it."""
 
 
 @contract_errors("original native Agent call")
@@ -63,6 +68,8 @@ def original_agent_call(session, payload, *, fixtures=False):
             require(parse_time(record["timestamp"]).timestamp() <= time.time(),
                     "ORIGINAL_NATIVE_AGENT_CALL_REQUIRED: future native invocation")
             matches.append(dict(call_record=ref, tool_use_id=tool_id, tool_input=block["input"]))
+    if not matches:
+        raise NativeCallPending("ORIGINAL_NATIVE_AGENT_CALL_REQUIRED: missing or duplicate native invocation")
     require(len(matches) == 1, "ORIGINAL_NATIVE_AGENT_CALL_REQUIRED: missing or duplicate native invocation")
     reader.record(matches[0]["call_record"])
     reader.verify_pin(session["freeze_fence"])
@@ -71,14 +78,27 @@ def original_agent_call(session, payload, *, fixtures=False):
 
 
 @contract_errors("current original native Agent creation")
-def current_original_agent_call(session, payload, *, fixtures=False):
+def current_original_agent_call(session, payload, *, fixtures=False, wait_until=None):
     """Require the current API tool-use response, not a call before failure.
 
     Only new creation uses this freshness gate. Historical reports and exact
     parent consumption continue to authenticate their original call separately.
     A hook label or stale tool-call record cannot prove current API execution.
+
+    Claude Code 2.1.303 can run PreToolUse before its journal appends the
+    assistant tool_use record (u19 C2: hook read 0.98 s after the record's
+    timestamp, record absent; same payload matched once on a later read).
+    Until wait_until only a still-absent record is re-read; a duplicate or
+    changed record is refused at once and nothing is reserved meanwhile.
     """
-    call = original_agent_call(session, payload, fixtures=fixtures)
+    while True:
+        try:
+            call = original_agent_call(session, payload, fixtures=fixtures)
+            break
+        except NativeCallPending:
+            if wait_until is None or time.monotonic() + CALL_POLL_SECONDS >= wait_until:
+                raise
+            time.sleep(CALL_POLL_SECONDS)
     reader = NativeReader(session, fixtures=fixtures)
     end = reader.snapshot()
     # Reused original parents can have a large pre-enrollment history. Read
