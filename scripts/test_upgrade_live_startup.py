@@ -179,6 +179,42 @@ print("MATERIALIZED_CLAUDE_CHROME_PASS: default/Tip/draft/queue/native-route/rec
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("MATERIALIZED_CLAUDE_CHROME_PASS", result.stdout)
 
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_actual_handshake_observer_pins_the_materialized_release(self):
+        # u13 recorded UNAVAILABLE/invalid release member pin: the original
+        # verifier accepts only {bytes, sha256, executable} members.
+        controller = Path(self.spec["controller"])
+        if not (controller / "scripts/handshake_evidence.py").is_file():
+            self.skipTest("fixed base has no handshake controller observer")
+        manifest = json.loads((controller.parent / "MANIFEST.json").read_bytes())
+        self.assertEqual(manifest["schema"], "upgrade-private-controller-v3")
+        tree = self.runtime["controller"]["files"]
+        self.assertEqual(set(manifest["files"]), set(tree))
+        for name, pin in manifest["files"].items():
+            self.assertEqual(pin, dict(bytes=tree[name]["bytes"], sha256=tree[name]["sha256"],
+                                       executable=bool(tree[name]["mode"] & 0o111)), name)
+        code = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, ROOT_PATH + "/scripts")
+import handshake_evidence as h
+import executor_reask_protocol as protocol
+assert Path(h.__file__).parent == Path(ROOT_PATH) / "scripts"
+row = {}
+h.record_controller(row, ROOT_PATH + "/scripts/cmux_message_journal.py", ROOT_PATH + "/SKILL.md",
+                    ROOT_PATH + "/scripts/mac_harness.py", ROOT_PATH + "/scripts/cmux_bridge.py")
+assert row.get("dispatch_controller_status") == "PINNED_BEFORE_INPUT", row
+pin = row["dispatch_controller_pin"]
+assert h.verify_controller(pin, pin["provenance"]) == Path(ROOT_PATH)
+files = protocol._verify_release(Path(ROOT_PATH), pin["manifest"]["sha256"])
+print("MATERIALIZED_HANDSHAKE_CONTROLLER_PINNED", len(files))
+'''.replace("ROOT_PATH", repr(str(controller)))
+        result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"]["control_sandbox"]["path"],
+                                 sys.executable, "-I", "-B", "-c", code],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("MATERIALIZED_HANDSHAKE_CONTROLLER_PINNED " + str(len(tree)), result.stdout)
+
     def test_full_materialization_has_distinct_roots_and_real_observer_marker_only(self):
         self.assertEqual(set(self.spec["clients"]), set(LANES))
         for lane, client in self.spec["clients"].items():

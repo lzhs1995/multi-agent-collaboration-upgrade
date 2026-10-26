@@ -26,6 +26,14 @@ RUNTIME_FIELDS = {"version", "skill", "context", "arm", "execution_mode", "sourc
 SESSION_FIELDS = ("provider", "session_id", "workspace_uuid", "surface_uuid", "pane_uuid",
                   "tty", "process", "native_config_root", "model", "model_record")
 TRANSCRIPT_FIELDS = ("path", "device", "inode")
+RELEASE_MANIFEST_SCHEMA = "upgrade-private-controller-v3"
+
+
+def release_members(files):
+    """The original release-member pin shape: the MAC reask verifier accepts
+    exactly {bytes, sha256, executable}; the tree pin keeps the full mode."""
+    return {name: dict(bytes=pin["bytes"], sha256=pin["sha256"], executable=bool(pin["mode"] & 0o111))
+            for name, pin in files.items()}
 
 # This is an invocation-local verification batch, not a process-wide cache.
 # Input gates never use it: validate_live_runtime/live_gate_v2 remain fresh.
@@ -182,8 +190,8 @@ def validate_live_runtime(ref, *, context_ref=None, stage_controller=None, recov
     verify_tree(runtime["source_controller"])
     verify_tree(runtime["controller"])
     manifest = json_ref(runtime["release_manifest"], "private release manifest")
-    require(manifest == dict(schema="upgrade-private-controller-v2", arm=runtime["arm"],
-            source=runtime["source_controller"], files=runtime["controller"]["files"]),
+    require(manifest == dict(schema=RELEASE_MANIFEST_SCHEMA, arm=runtime["arm"],
+            source=runtime["source_controller"], files=release_members(runtime["controller"]["files"])),
             "LIVE_RELEASE_MANIFEST_CHANGED")
     patches = json_ref(runtime["patches"], "private patches")
     require(patches["source"] == runtime["source_controller"] and patches["version"] == 2

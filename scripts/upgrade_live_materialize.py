@@ -18,6 +18,7 @@ from upgrade_controller_patch import add_bootstrap
 from upgrade_experiment import NAME, arm_paths, protected_paths, validate_context
 from upgrade_live_integrity import artifact_ref
 from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
+from upgrade_live_runtime import RELEASE_MANIFEST_SCHEMA, release_members
 from upgrade_materialize import hook_config, rendered_helper
 from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
@@ -240,8 +241,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     write_json(controller / "upgrade-binding.json", binding, exclusive=True)
     (controller / "upgrade-binding.json").chmod(0o444)
     private_pin = tree_manifest(controller)
-    manifest = write_json(release / "MANIFEST.json", dict(schema="upgrade-private-controller-v2",
-        arm=arm, source=source_pin, files=private_pin["files"]), exclusive=True)
+    manifest = write_json(release / "MANIFEST.json", dict(schema=RELEASE_MANIFEST_SCHEMA,
+        arm=arm, source=source_pin, files=release_members(private_pin["files"])), exclusive=True)
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
