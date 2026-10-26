@@ -12,8 +12,9 @@ import stat
 import uuid
 
 from orchestration_common import checked_path, digest, file_ref, json_ref, read_regular, require
-from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_ps_wrapper, client_argv, control_socket,
-                                      environment, private_native_roots, sandbox_profile, verify_client_temp)
+from upgrade_client_isolation import (LANES, NATIVE_POLICY, STATION_LAUNCHERS, claude_ps_wrapper, client_argv,
+                                      control_socket, environment, private_native_roots, sandbox_profile,
+                                      station_argv, station_config, station_server_argv, verify_client_temp)
 from upgrade_live_integrity import verify_artifacts
 from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary, extend_profile
 from upgrade_child_budget_protocol import (POLICY as CHILD_POLICY, child_socket, validate_registered_hooks)
@@ -62,6 +63,39 @@ def response_observation_enabled(binding):
     require(binding["response_observation"] == RESPONSE_OBSERVATION,
             "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     return True
+
+
+def station_launchers_enabled(binding):
+    """The binding's station launchers, or None. Shape is fixed by materialize_live."""
+    if "station_launchers" not in binding:
+        return None
+    station = binding["station_launchers"]
+    require(isinstance(station, dict) and set(station) == {"schema", "codex", "claude"}
+            and station["schema"] == STATION_LAUNCHERS
+            and isinstance(station["codex"], dict) and set(station["codex"]) == {"station", "base_url"}
+            and isinstance(station["claude"], dict) and set(station["claude"]) == {"station", "key"},
+            "STARTUP_STATION_LAUNCHERS_CHANGED")
+    return station
+
+
+def station_client(station, lane, python, mg):
+    if station is None:
+        return None
+    provider = "codex" if lane == "codex" else "claude"
+    value = dict(python=str(python), mg=str(mg), station=station[provider]["station"])
+    if provider == "claude":
+        value["key"] = station["claude"]["key"]
+    return value
+
+
+def station_rpc(station, socket, codex, python, mg, codex_root):
+    """The private Codex server: its final native argv and, with stations, the mg launch of it."""
+    argv = [str(codex), "app-server", "--listen", "unix://" + str(socket)]
+    if station is None:
+        return {"path": str(socket), "argv": argv}
+    return {"path": str(socket), "argv": station_server_argv(argv, station["codex"]["base_url"]),
+            "launch_argv": station_argv(python, mg, argv, station=station["codex"]["station"]),
+            "launch_environment": {"MG_CONFIG": str(Path(codex_root) / "mg-server.toml")}}
 
 
 def response_observer_path(paths):
@@ -184,10 +218,11 @@ def readiness_prompt(controller, python, rtk, lane):
             "正式任务须等待独立 adoption 核验。保留本会话，不得新建替代会话。")
 
 
-def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False):
+def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False, station=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
-    result = environment(roots, paths, lane)
+    require(type(station) is bool, "STARTUP_STATION_LAUNCHERS_CHANGED")
+    result = environment(roots, paths, lane, station=station)
     # Frozen native binaries do not use PATH resolution. Tools still need a
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
     result["PATH"] = os.pathsep.join(dict.fromkeys(map(str, (
@@ -230,6 +265,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     continuity_registration = continuity_registration_enabled(binding)
     startup_continuity_enabled(binding)
     child_budget = child_budget_enabled(binding)
+    station = station_launchers_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -316,6 +352,13 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                      if lane == "codex" else ("settings.json", "CLAUDE.md")):
             required.add(lane + "/" + name)
             local[lane + "/" + name] = roots[lane] / name
+    if station is not None:
+        required |= {"mg", "magpie"}
+        for lane in LANES:
+            for name in (("mg.toml", "mg-server.toml") if lane == "codex"
+                         else ("mg.toml", "mg-profiles/" + station["claude"]["key"] + ".json")):
+                required.add(lane + "/" + name)
+                local[lane + "/" + name] = roots[lane] / name
     optional = {"codex/auth.json", "claude_a/.credentials.json", "claude_b/.credentials.json"}
     require(required <= set(pins) <= required | optional, "STARTUP_PIN_SET_CHANGED")
     require(pins["python"] == context["python"], "STARTUP_PYTHON_CHANGED")
@@ -369,9 +412,22 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
             require(read_regular(pins[lane + "_sandbox"]["path"]) == profile,
                     "STARTUP_SOCKET_PROFILE_CHANGED:" + lane)
     socket = control_socket(paths, socket_boundary=boundary)
-    require(spec["rpc"] == {"path": str(socket), "argv": [pins["codex"]["path"],
-            "app-server", "--listen", "unix://" + str(socket)]}
+    mg = pins["mg"]["path"] if station is not None else None
+    require(spec["rpc"] == station_rpc(station, socket, pins["codex"]["path"], pins["python"]["path"], mg,
+                                       roots["codex"])
             and binding["codex_control_socket"] == str(socket), "STARTUP_RPC_CHANGED")
+    if station is not None:
+        # The station launcher reads the pinned profile; the hook readers read settings.json.
+        profile = "mg-profiles/" + station["claude"]["key"] + ".json"
+        require(all(pins[lane + "/" + profile]["sha256"] == pins[lane + "/settings.json"]["sha256"]
+                    for lane in GOAL_LANES)
+                and read_regular(pins["codex/mg-server.toml"]["path"]) == station_config(
+                    "codex", pins["codex"]["path"], pins["magpie"]["path"], roots["codex"])
+                and read_regular(pins["codex/mg.toml"]["path"]) == station_config(
+                    "codex", pins["codex_wrapper"]["path"], pins["magpie"]["path"], roots["codex"])
+                and all(read_regular(pins[lane + "/mg.toml"]["path"]) == station_config(
+                    "claude", pins["claude_wrapper"]["path"], pins["magpie"]["path"], roots[lane],
+                    roots[lane] / "mg-profiles") for lane in GOAL_LANES), "STARTUP_STATION_LAUNCHERS_CHANGED")
     require(set(spec["clients"]) == set(LANES), "STARTUP_LANES_CHANGED")
     ids = set()
     for lane in LANES:
@@ -391,12 +447,14 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
             require(client["session_id"] is None, "STARTUP_CODEX_ID_INVENTED")
         argv = client_argv(provider, pins[provider + "_wrapper"]["path"], spec["work_root"], roots[lane],
                            session_id=client["session_id"], remote_socket=socket if provider == "codex" else None,
-                           socket_boundary=boundary if provider == "codex" else None)
+                           socket_boundary=boundary if provider == "codex" else None,
+                           station=station_client(station, lane, pins["python"]["path"], mg))
         argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
                     if goal_mode else
                     readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"],
-                                   response_observation=response_observation, child_budget=child_budget),
+                                   response_observation=response_observation, child_budget=child_budget,
+                                   station=station is not None),
                 "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding

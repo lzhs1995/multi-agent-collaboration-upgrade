@@ -51,15 +51,20 @@ def start_server(ref, spec, binding, env):
     binding_boundary(binding, binary_pin=spec["pins"]["codex"], fresh=True)
     require(not os.path.lexists(socket), "ORIGINAL_CONTROL_SOCKET_ALREADY_EXISTS")
     require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
+    # With station launchers mg execs the pinned binary in place (same PID);
+    # spec["rpc"]["argv"] is then the final native argv the verifier compares.
+    launch_argv = spec["rpc"].get("launch_argv", spec["rpc"]["argv"])
+    env = dict(env, **spec["rpc"].get("launch_environment", {}))
     write_json(control / "codex-server-intent.json", dict(
         schema="upgrade-server-intent-v2", startup=ref, created_at=utc_now(),
-        argv=spec["rpc"]["argv"], input_operations=0), exclusive=True)
+        argv=spec["rpc"]["argv"], input_operations=0,
+        **({"launch_argv": launch_argv} if "launch_argv" in spec["rpc"] else {})), exclusive=True)
     # umask restricts the socket and server-created observations. The server
     # inherits the same kernel sandbox as its TUI and all descendant tools.
     # subprocess.DEVNULL opens the device O_RDWR, which violates the private
     # controller's write audit. Stdin only needs a read-only EOF descriptor.
     with open(os.devnull, "rb") as null_input, (control / "codex-server.log").open("xb") as log:
-        child = subprocess.Popen(spec["rpc"]["argv"], stdin=null_input,
+        child = subprocess.Popen(launch_argv, stdin=null_input,
             stdout=log, stderr=subprocess.STDOUT, cwd=spec["work_root"], env=env,
             close_fds=True, start_new_session=True, umask=0o077)
     row = identity.process(child.pid, validate_argv=False)

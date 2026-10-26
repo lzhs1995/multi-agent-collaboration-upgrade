@@ -24,6 +24,26 @@ LANES = ("codex", "claude_a", "claude_b")
 NATIVE_POLICY = "private-cli-roots-v1"
 SANDBOX = Path("/usr/bin/sandbox-exec")
 LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1"
+# Station launchers (magpie `mg cc|cx`). Each lane's own mg.toml names the
+# pinned private wrapper (the Codex server: the pinned binary) as launcher, so
+# mg checks the station and execs it in place: same PID, binaries, roots, hooks.
+STATION_LAUNCHERS = "station-launchers-v1"
+STATION_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+# A station profile reaches a private lane only through these settings. Hooks,
+# status line and plugins are account-wide commands; the harness owns hooks.
+STATION_SETTINGS = {"model", "effortLevel", "env", "permissions", "autoCompactEnabled",
+                    "autoCompactWindow", "includeCoAuthoredBy"}
+STATION_DROPPED = {"hooks", "statusLine", "enabledPlugins", "extraKnownMarketplaces",
+                   "skipDangerousModePermissionPrompt"}
+# The harness sets these for the client process; a settings env must not override them.
+STATION_ENV_REFUSED = {"HOME", "PATH", "TMPDIR", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_TMPDIR", "XDG_CACHE_HOME",
+                       "XDG_STATE_HOME", "BUN_OPTIONS", "NODE_OPTIONS", "BASH_ENV", "ENV", "PYTHONPATH",
+                       "PYTHONDONTWRITEBYTECODE", "CLAUDE_CODE_FORK_SUBAGENT", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+                       "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE", "CCC_CLAUDE_REQUEST_OBSERVATIONS_DIR"}
+STATION_ENV_PREFIXES = ("CMUX_", "UPGRADE_", "CODEX_", "DYLD_", "LD_", "MG_", "MAGPIE_")
+# Inherited selectors that would override a lane's own mg.toml.
+STATION_SELECTORS = ("MG_CONFIG", "MG_MAGPIE", "MAGPIE_STATIONS", "MG_CLAUDE", "CODEX_BIN",
+                     "CX_DISABLE_COMPUTER_USE", "_MG_REEXEC")
 
 
 def toml(value):
@@ -85,6 +105,59 @@ def claude_config(original, hook_config):
     return (json.dumps(config, sort_keys=True, indent=2) + "\n").encode()
 
 
+def station_profile(original, hook_config):
+    """A Claude lane's station profile; its settings.json is the same bytes.
+
+    `mg cc` refuses a profile without its own routing keys (proxy variables
+    included), so unlike claude_config the profile environment is kept whole.
+    """
+    require(isinstance(original, dict) and set(original) <= STATION_SETTINGS | STATION_DROPPED,
+            "STATION_PROFILE_SETTING_UNKNOWN")
+    env = original.get("env")
+    require(isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str)
+                                          for k, v in env.items()), "invalid Claude provider environment")
+    refused = sorted(k for k in env if k in STATION_ENV_REFUSED or k.startswith(STATION_ENV_PREFIXES)
+                     or (k in ("NO_PROXY", "no_proxy") and "127.0.0.1" not in env[k].split(",")))
+    require(not refused, "STATION_PROFILE_ENV_REFUSED: " + ",".join(refused))
+    config = {k: v for k, v in original.items() if k in STATION_SETTINGS}
+    config["hooks"] = hook_config["hooks"]
+    config["skipDangerousModePermissionPrompt"] = True
+    return (json.dumps(config, sort_keys=True, indent=2) + "\n").encode()
+
+
+def station_config(provider, launcher, magpie, native_root, profiles=None):
+    """One lane's own mg.toml: the station list from the pinned magpie, this launcher."""
+    require(provider in ("codex", "claude") and (profiles is None) == (provider == "codex"),
+            "STATION_LAUNCHER_INVALID")
+    lines = ["[magpie]", "binary = " + toml(str(magpie)), ""]
+    if provider == "codex":
+        lines += ["[codex]", "launcher = " + toml(str(launcher)), 'provider = "custom"',
+                  "home = " + toml(str(native_root))]
+    else:
+        lines += ["[claude]", "launcher = " + toml(str(launcher)), "profiles = " + toml(str(profiles))]
+    return ("\n".join(lines) + "\n").encode()
+
+
+def station_argv(python, mg, native_argv, *, station, key=None):
+    """`mg cc <station> -k <key> -- <args>` or `mg cx <station> -- <args>`.
+
+    mg checks the station, then execs native_argv[0] (its configured launcher)
+    in place, adding only its routing argument: --settings for Claude (this
+    lane's station profile, so the lane's own --settings is not repeated) or
+    -c model_providers.custom.base_url for Codex.
+    """
+    command = "cx" if key is None else "cc"
+    require(re.fullmatch(STATION_NAME, station) is not None
+            and (key is None or re.fullmatch(STATION_NAME, key) is not None), "STATION_LAUNCHER_INVALID")
+    args = list(native_argv[1:])
+    if command == "cc":
+        require(args.count("--settings") == 1, "STATION_LAUNCHER_INVALID")
+        index = args.index("--settings")
+        del args[index:index + 2]
+    require("--" not in args, "STATION_LAUNCHER_INVALID")
+    return [str(python), "-I", "-B", str(mg), command, station, *(["-k", key] if key else []), "--", *args]
+
+
 def client_temp_base(paths, lane):
     """Keep Claude's real child TMPDIR under 44 bytes, inside the arm boundary.
 
@@ -121,7 +194,7 @@ def verify_client_temp(paths, lane):
     return base
 
 
-def environment(native_roots, paths, lane):
+def environment(native_roots, paths, lane, *, station=False):
     require(lane in LANES, "unknown client lane")
     native = native_roots[lane]
     temp = client_temp_base(paths, lane)
@@ -139,6 +212,8 @@ def environment(native_roots, paths, lane):
     else:
         value.update(CLAUDE_CONFIG_DIR=str(native), CLAUDE_CODE_TMPDIR=str(temp),
                      CCC_CLAUDE_REQUEST_OBSERVATIONS_DIR=str(native / "request-observations"))
+    if station:
+        value["MG_CONFIG"] = str(native / "mg.toml")
     require("HOME" not in value, "HOME substitution is forbidden")
     return value
 
@@ -155,7 +230,19 @@ def control_socket(paths, *, socket_boundary=None):
 
 
 def client_argv(provider, wrapper, cwd, native_root, *, session_id=None, remote_socket=None,
-                socket_boundary=None):
+                socket_boundary=None, station=None):
+    """station: {"python", "mg", "station"[, "key"]} launches through mg (station_argv)."""
+    argv = native_client_argv(provider, wrapper, cwd, native_root, session_id=session_id,
+                              remote_socket=remote_socket, socket_boundary=socket_boundary)
+    if station is None:
+        return argv
+    require(set(station) == ({"python", "mg", "station"} | ({"key"} if provider == "claude" else set())),
+            "STATION_LAUNCHER_INVALID")
+    return station_argv(station["python"], station["mg"], argv, station=station["station"], key=station.get("key"))
+
+
+def native_client_argv(provider, wrapper, cwd, native_root, *, session_id=None, remote_socket=None,
+                       socket_boundary=None):
     require(provider in ("codex", "claude"), "unsupported client provider")
     wrapper, cwd, native_root = map(checked_path, (wrapper, cwd, native_root))
     if provider == "codex":
@@ -181,6 +268,13 @@ def client_argv(provider, wrapper, cwd, native_root, *, session_id=None, remote_
     return [str(wrapper), "--dangerously-skip-permissions", "--session-id", session_id, "--setting-sources", "",
             "--settings", str(native_root / "settings.json"),
             "--debug-file", str(native_root / "log" / "client.log")]
+
+
+def station_server_argv(native_argv, base_url):
+    """The Codex server's final native argv after `mg cx`: one -c base_url ahead of app-server."""
+    require(isinstance(base_url, str) and re.fullmatch(r"http://127\.0\.0\.1:[0-9]{2,5}", base_url) is not None,
+            "STATION_LAUNCHER_INVALID")
+    return [native_argv[0], "-c", 'model_providers.custom.base_url="%s/v1"' % base_url, *native_argv[1:]]
 
 
 def sandbox_profile(writable, readonly=(), *, tty=None):
@@ -275,7 +369,7 @@ def clean_child_environment(overrides):
                  "CODEX_HOME", "CLAUDE_CONFIG_DIR", "BASH_ENV", "ENV", "PYTHONPATH",
                  "NODE_OPTIONS", "BUN_OPTIONS", "DYLD_INSERT_LIBRARIES",
                  "CMUX_CODEX_HOOKS_DISABLED", "CMUX_CLAUDE_HOOKS_DISABLED",
-                 "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE", "CLAUDE_CODE_TMPDIR"):
+                 "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE", "CLAUDE_CODE_TMPDIR", *STATION_SELECTORS):
         env.pop(name, None)
     require("HOME" not in overrides and not any(k in overrides for k in
             ("CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID")),

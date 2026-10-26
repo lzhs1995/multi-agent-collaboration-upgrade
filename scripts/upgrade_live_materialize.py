@@ -11,9 +11,10 @@ import uuid
 from orchestration_common import (ContractError, checked_path, digest, file_ref, read_ref,
                                   read_regular, tree_manifest, verify_tree, write_bytes_once, write_json)
 from orchestration_native import require
-from upgrade_client_isolation import (LANES, NATIVE_POLICY, claude_config, client_argv, client_temp_base,
-    claude_ps_wrapper, codex_config, control_socket, patch_cmux_wrapper, private_native_roots,
-    prepare_client_temp, read_provider_configuration, sandbox_profile)
+from upgrade_client_isolation import (LANES, NATIVE_POLICY, STATION_LAUNCHERS, claude_config, client_argv,
+    client_temp_base, claude_ps_wrapper, codex_config, control_socket, patch_cmux_wrapper, private_native_roots,
+    prepare_client_temp, read_provider_configuration, sandbox_profile, station_argv, station_config,
+    station_profile, station_server_argv)
 from upgrade_controller_patch import add_bootstrap
 from upgrade_experiment import NAME, arm_paths, protected_paths, validate_context
 from upgrade_live_integrity import artifact_ref
@@ -24,7 +25,7 @@ from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_B
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
     CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY,
     bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
-    pressure_startup_prompt, readiness_prompt, validate_startup)
+    pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
@@ -77,7 +78,10 @@ def render_private_support(support):
 def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
-                     continuity_registration=False, child_budget=False, startup_continuity=False):
+                     continuity_registration=False, child_budget=False, startup_continuity=False,
+                     station_launchers=None):
+    """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
+    "claude": {"station", "key"}} launches every lane and the Codex server through mg."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
@@ -113,6 +117,21 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         path = checked_path(value)
         require(path.is_file() and os.access(path, os.X_OK), "startup executable missing: " + name)
         executable_pins[name] = artifact_ref(path)
+    station = None
+    if station_launchers is not None:
+        require(isinstance(station_launchers, dict) and set(station_launchers) == {"mg", "magpie", "codex", "claude"}
+                and isinstance(station_launchers["codex"], dict) and set(station_launchers["codex"]) == {"station", "base_url"}
+                and isinstance(station_launchers["claude"], dict) and set(station_launchers["claude"]) == {"station", "key"},
+                "STATION_LAUNCHERS_INVALID")
+        for name in ("mg", "magpie"):
+            path = checked_path(station_launchers[name])
+            require(path.is_file() and os.access(path, os.X_OK), "startup executable missing: " + name)
+            executable_pins[name] = artifact_ref(path)
+        station = dict(schema=STATION_LAUNCHERS, codex=dict(station_launchers["codex"]),
+                       claude=dict(station_launchers["claude"]))
+        station_server_argv(["codex"], station["codex"]["base_url"])
+        station_argv("python", "mg", ["claude", "--settings", "s"], station=station["claude"]["station"],
+                     key=station["claude"]["key"])
     socket_boundary = (boundary_plan(socket, executable_pins["codex"])
                        if native_policy == SOCKET_POLICY else None)
     read_ref(context["python"], "startup Python")
@@ -156,6 +175,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         common_immutable += [root / n for n in (("config.toml", "hooks.json", "auth.json", "AGENTS.md",
                                                 "credential-observations/enabled-v1")
             if lane == "codex" else ("settings.json", ".credentials.json", "CLAUDE.md"))]
+        if station is not None:
+            common_immutable += [root / n for n in (("mg.toml", "mg-server.toml") if lane == "codex"
+                                                    else ("mg.toml", "mg-profiles"))]
     existing_protected = sorted({str(p.resolve()) for p in protected_paths() if p.exists()})
     denied_probes = existing_protected + [str(controller / "SKILL.md")]
     isolation = {"immutable": list(map(str, common_immutable)), "denied_probes": denied_probes,
@@ -230,6 +252,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["child_budget"] = CHILD_POLICY
     if startup_continuity:
         binding["startup_continuity"] = STARTUP_CONTINUITY
+    if station is not None:
+        binding["station_launchers"] = station
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -319,28 +343,46 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                             "hooks.json": (json.dumps(provider_hooks[provider], sort_keys=True) + "\n").encode(),
                             "AGENTS.md": policy.encode(),
                             "credential-observations/enabled-v1": b"ccc-request-credentials-v1\n"}
+            if station is not None:
+                config_files["mg.toml"] = station_config("codex", paths["bin"] / "cmux-codex-wrapper",
+                                                         executable_pins["magpie"]["path"], root)
+                config_files["mg-server.toml"] = station_config("codex", executable_pins["codex"]["path"],
+                                                                executable_pins["magpie"]["path"], root)
         else:
             if response_observation:
                 (root / "response-observations").mkdir(mode=0o700)
-            config_files = {"settings.json": claude_config(claude_original, provider_hooks[provider]), "CLAUDE.md": policy.encode()}
+            if station is None:
+                settings = claude_config(claude_original, provider_hooks[provider])
+                config_files = {"settings.json": settings, "CLAUDE.md": policy.encode()}
+            else:
+                # mg cc passes the profile; hook readers keep reading the same bytes as settings.json.
+                settings = station_profile(claude_original, provider_hooks[provider])
+                (root / "mg-profiles").mkdir(mode=0o700)
+                config_files = {"settings.json": settings, "CLAUDE.md": policy.encode(),
+                                "mg.toml": station_config("claude", paths["bin"] / "cmux-claude-wrapper",
+                                                          executable_pins["magpie"]["path"], root, root / "mg-profiles"),
+                                "mg-profiles/" + station["claude"]["key"] + ".json": settings}
             write_json(root / ".claude.json", claude_seed, exclusive=True)
             (root / ".claude.json").chmod(0o600)
         for name, raw in config_files.items():
             pins[lane + "/" + name] = immutable_bytes(root / name, raw,
-                secret=name in ("settings.json", "credential-observations/enabled-v1"))
+                secret=name in ("settings.json", "credential-observations/enabled-v1") or name.startswith("mg-profiles/"))
         if provider in secrets:
             name = "auth.json" if provider == "codex" else ".credentials.json"
             pins[lane + "/" + name] = immutable_bytes(root / name, secrets[provider], secret=True)
         session = None if provider == "codex" else str(uuid.uuid4())
         argv = client_argv(provider, paths["bin"] / ("cmux-" + provider + "-wrapper"), work, root,
                            session_id=session, remote_socket=socket if provider == "codex" else None,
-                           socket_boundary=socket_boundary if provider == "codex" else None)
+                           socket_boundary=socket_boundary if provider == "codex" else None,
+                           station=station_client(station, lane, context["python"]["path"],
+                                                  executable_pins["mg"]["path"] if station is not None else None))
         argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
                                            goal_contract["goal_startup"])
                     if goal_contract is not None else
                     readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
         env = client_environment(roots, paths, lane, binaries["rtk"],
-                                 response_observation=response_observation, child_budget=child_budget)
+                                 response_observation=response_observation, child_budget=child_budget,
+                                 station=station is not None)
         clients[lane] = dict(provider=provider, native_root=str(root), session_id=session,
                              argv=argv, environment=env)
     writable = [paths[name] for name in ("state", "campaigns", "evidence", "tmp")]
@@ -358,8 +400,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(patch_ref["path"]).chmod(0o444)
     startup = dict(schema="upgrade-startup-v2", context=context_ref, arm=arm,
         controller=str(controller), native_policy=native_policy, pins=pins,
-        rpc={"path": str(socket), "argv": [executable_pins["codex"]["path"], "app-server", "--listen",
-                                          "unix://" + str(socket)]},
+        rpc=station_rpc(station, socket, executable_pins["codex"]["path"], context["python"]["path"],
+                        executable_pins["mg"]["path"] if station is not None else None, roots["codex"]),
         clients=clients, work_root=str(work), workspace_name="upgrade-lab-" + context["experiment_id"] + "-" + arm,
         protected_surface_uuids=sorted({str(uuid.UUID(x)) for x in protected_surface_uuids}),
         stop_path=str(paths["evidence"] / "live-control/stop.json"),
