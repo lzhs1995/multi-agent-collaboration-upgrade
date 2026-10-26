@@ -34,6 +34,7 @@ from upgrade_live_patch import (claude_measured_chrome, live_gates, native_reade
 
 FIXTURES = Path(__file__).with_name("fixtures") / "mac-0.4.58"
 MANIFEST = json.loads((FIXTURES / "manifest.json").read_text())
+BASE058 = Path.home() / ".local/share/multi-agent-collaboration/releases/0.4.58-cf3f6175840b/source"
 
 
 def source(name):
@@ -87,6 +88,53 @@ class UpstreamTransformTests(unittest.TestCase):
                 compile(transformed, name, "exec", dont_inherit=True)
                 self.assertIn("live_v2_kernel_boundary", changes)
                 self.assertEqual(source(name), before)
+
+    def test_lane_identity_reads_never_exec_setuid_ps_after_transform(self):
+        # u13: both Claude inquiry starts failed with EPERM at /bin/ps (setuid,
+        # denied by the lane sandbox) before registration. Every transformed
+        # tty read on a lane/supervisor path must use the kernel reader.
+        paths = {name: Path("/offline/mac058") / name
+                 for name in ("state", "controllers", "tmp", "config", "bin")}
+        continuity = json.loads((FIXTURES / "continuity-manifest.json").read_text())
+        pinned = dict(MANIFEST["files"], **continuity["files"])
+        scanned = []
+        for name, pin in sorted(pinned.items()):
+            raw = (FIXTURES / name).read_bytes()
+            self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (pin["bytes"], pin["sha256"]), name)
+            if not name.endswith(".py"):
+                continue
+            text, _ = transform_live(name, raw.decode(), paths, Path("/offline/mac058/controller"),
+                                     compatibility=True)
+            self.assertEqual([n.lineno for n in ast.walk(ast.parse(text))
+                              if isinstance(n, ast.Constant) and n.value == "/bin/ps"], [], name)
+            scanned.append(name)
+        # Both inquiry entrypoints come from the continuity fixture set.
+        self.assertLessEqual({"executor_reask_identity.py", "executor_reply_advisory.py",
+                              "reconcile_handshake_ack.py", "cmux_native_delivery.py"}, set(scanned))
+        for name, subject in (("executor_reask_identity.py", "process"), ("executor_reply_advisory.py", "process"),
+                              ("reconcile_handshake_ack.py", "client")):
+            text, _ = transform_live(name, (FIXTURES / name).read_text(), paths,
+                                     Path("/offline/mac058/controller"), compatibility=True)
+            self.assertEqual(text.count("tty = private_process.terminal(" + subject + ")"), 1, name)
+            self.assertIn("import mac_upgrade_process_inventory as private_process", text, name)
+
+    @unittest.skipUnless(BASE058.is_dir(), "requires the complete fixed MAC 0.4.58 source")
+    def test_complete_base_keeps_only_off_path_setuid_ps_reads(self):
+        paths = {name: Path("/offline/mac058") / name
+                 for name in ("state", "controllers", "tmp", "config", "bin")}
+        residual = {}
+        for path in sorted((BASE058 / "scripts").glob("*.py")):
+            if path.name.startswith("test_"):
+                continue
+            text, _ = transform_live(path.name, path.read_text(), paths, Path("/offline/mac058/controller"),
+                                     compatibility=True)
+            hits = sum(isinstance(n, ast.Constant) and n.value == "/bin/ps" for n in ast.walk(ast.parse(text)))
+            if hits:
+                residual[path.name] = hits
+        # The refused successor route, the interrupted-Bash child listing and
+        # offline test support; none is on the inquiry or handshake path.
+        self.assertEqual(residual, {"cmux_claude_interruption.py": 1, "successor_native_delivery.py": 1,
+                                    "native_test_support.py": 2})
 
     def test_modern_chrome_changes_only_measured_composer_not_transport_or_activity(self):
         before = source("cmux_bridge.py")

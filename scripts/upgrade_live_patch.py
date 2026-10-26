@@ -177,6 +177,18 @@ def native_readers(name, text):
             text = replace_once(text,
                 "proof.get('source') == 'embedded-native-client-v1'",
                 "proof.get('source') in ('embedded-native-client-v1', 'private-standalone-native-client-v1')")
+        # u13: the lane sandbox denies exec of setuid /bin/ps, so start/consume
+        # failed before registration. Read the same tty from the kernel.
+        text = replace_once(text, "from upgrade_native_roots import process_root, binding_root",
+                            "from upgrade_native_roots import process_root, binding_root\n"
+                            "import upgrade_process_inventory as private_process")
+        text = _terminal_reads(text, subjects=("process",))
+    elif name == "reconcile_handshake_ack.py" and "'/bin/ps'" in text:
+        # Older bases have no embedded-supervisor tty read; leave them unchanged.
+        text = replace_once(text, "    import cmux_daemon_identity as identity\n",
+                            "    import cmux_daemon_identity as identity\n"
+                            "    import upgrade_process_inventory as private_process\n")
+        text = _terminal_reads(text, subjects=("client",))
     return text
 
 
@@ -220,8 +232,8 @@ def standalone_identity(text):
         "daemon_pid=proof['daemon']['pid'] if proof['daemon'] is not None else None,")
 
 
-def _terminal_reads(text, *, shell_diagnostics=False):
-    edits = []
+def _terminal_reads(text, *, shell_diagnostics=False, subjects=("p", "client")):
+    edits, allowed = [], tuple(subjects)
     tree = ast.parse(text)
     target_nodes = set()
     if shell_diagnostics:
@@ -234,18 +246,18 @@ def _terminal_reads(text, *, shell_diagnostics=False):
         if (isinstance(node, ast.Assign) and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "tty"
                 and "/bin/ps" in ast.get_source_segment(text, node)):
-            subjects = [child.value.id for child in ast.walk(node.value)
-                        if isinstance(child, ast.Subscript) and isinstance(child.value, ast.Name)
-                        and isinstance(child.slice, ast.Constant) and child.slice.value == "pid"]
+            found = [child.value.id for child in ast.walk(node.value)
+                     if isinstance(child, ast.Subscript) and isinstance(child.value, ast.Name)
+                     and isinstance(child.slice, ast.Constant) and child.slice.value == "pid"]
             # The managed inventory names its already-read process `p` but
             # uses the original candidate variable for the ps argument.
-            if not subjects and any(isinstance(child, ast.Name) and child.id == "candidate"
-                                    for child in ast.walk(node.value)):
-                subjects = ["p"]
-            allowed_shell = (subjects == ["shell"] and shell_diagnostics and node in target_nodes)
-            if len(subjects) != 1 or (subjects[0] not in ("p", "client") and not allowed_shell):
+            if not found and any(isinstance(child, ast.Name) and child.id == "candidate"
+                                 for child in ast.walk(node.value)):
+                found = ["p"]
+            allowed_shell = (found == ["shell"] and shell_diagnostics and node in target_nodes)
+            if len(found) != 1 or (found[0] not in allowed and not allowed_shell):
                 raise ValueError("expected native terminal process subject changed")
-            edits.append((node, "tty = private_process.terminal(" + subjects[0] + ")"))
+            edits.append((node, "tty = private_process.terminal(" + found[0] + ")"))
     if not edits:
         raise ValueError("expected native terminal reads missing")
     return edit_nodes(text, edits)

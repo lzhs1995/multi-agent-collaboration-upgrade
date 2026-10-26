@@ -187,7 +187,8 @@ with patch.object(native, "_tree_row", return_value=row), \
      patch.object(native, "_provider", return_value=provider), \
      patch.object(native, "_live_session", return_value=sid), \
      patch.object(identity, "_claude_ancestry", side_effect=ancestry), \
-     patch.object(identity.subprocess, "run", return_value=SimpleNamespace(stdout=row["tty"])), \
+     patch.object(identity.private_process, "terminal", return_value=row["tty"]), \
+     patch.object(identity.subprocess, "run", side_effect=AssertionError("setuid /bin/ps must not run")), \
      patch.object(advisory.maintenance, "caller_matches", return_value=True):
     binding = identity.capture_executor(live, state=state)
     assert binding["native_config_root"] == str(root)
@@ -241,6 +242,37 @@ print("ORIGINAL_INQUIRY_CAPTURE_CONSUME_ADVISORY_PRIVATE_ROOT_PASS")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("ORIGINAL_INQUIRY_CAPTURE_CONSUME_ADVISORY_PRIVATE_ROOT_PASS", result.stdout)
 
+    def test_lane_sandbox_denies_setuid_ps_but_the_kernel_terminal_reader_works(self):
+        # u13: both original Claude inquiry starts failed here before registration.
+        # No mocks: the genuine lane profile, the generated controller modules.
+        code = r'''
+import os, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, CONTROLLER)
+import cmux_daemon_identity as kernel
+import mac_upgrade_process_inventory as private_process
+import executor_reask_identity as identity
+import executor_reply_advisory as advisory
+try:
+    subprocess.run(["/bin/ps", "-p", str(os.getpid()), "-o", "tty="], capture_output=True, check=True, timeout=3)
+except PermissionError:
+    denied = True
+else:
+    denied = False
+assert denied, "lane profile no longer denies setuid /bin/ps; this control is stale"
+tty = private_process.terminal(kernel.process(os.getpid()))
+assert isinstance(tty, str) and tty, tty
+for module in (identity, advisory):
+    assert "/bin/ps" not in Path(module.__file__).read_text(), module.__file__
+print("LANE_SETUID_PS_DENIED_KERNEL_TTY_PASS", tty)
+'''.replace("CONTROLLER", repr(str(Path(self.spec["controller"]) / "scripts")))
+        for lane in ("claude_a", "claude_b"):
+            with self.subTest(lane=lane):
+                result = subprocess.run([str(SANDBOX), "-f", self.spec["pins"][lane + "_sandbox"]["path"],
+                    sys.executable, "-I", "-B", "-c", code], text=True, capture_output=True, timeout=25)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("LANE_SETUID_PS_DENIED_KERNEL_TTY_PASS", result.stdout)
+
     def test_original_codex_consumer_requires_exact_private_standalone_foreground_proof(self):
         code = r'''
 import copy, json, sys, uuid
@@ -272,7 +304,8 @@ with patch.object(native, "_tree_row", return_value=row), \
      patch.object(native.identity, "process", return_value=process), \
      patch.object(native, "_provider", return_value=provider), \
      patch.object(native, "_live_session", return_value=sid), \
-     patch.object(identity.subprocess, "run", return_value=SimpleNamespace(stdout=row["tty"])), \
+     patch.object(identity.private_process, "terminal", return_value=row["tty"]), \
+     patch.object(identity.subprocess, "run", side_effect=AssertionError("setuid /bin/ps must not run")), \
      patch.object(identity.workspace, "caller_snapshot", side_effect=lambda: (caller, {}, {}, copy.deepcopy(proof))):
     binding = identity.capture_executor(dict(caller_surface_uuid=surface, workspace_uuid=workspace,
                                              caller_pane_uuid=pane), state=state)
@@ -344,7 +377,8 @@ with patch.object(ready, "_bridge", return_value=HostBridge()), \
      patch.object(native, "_provider", return_value=provider), \
      patch.object(native, "_live_session", return_value=sid), \
      patch.object(identity, "_claude_ancestry", return_value=dict(kind="OFFLINE_EXTERNAL_ANCESTRY")), \
-     patch.object(identity.subprocess, "run", return_value=SimpleNamespace(stdout=row["tty"])), \
+     patch.object(identity.private_process, "terminal", return_value=row["tty"]), \
+     patch.object(identity.subprocess, "run", side_effect=AssertionError("setuid /bin/ps must not run")), \
      patch.object(advisory.maintenance, "caller_matches", return_value=True):
     clock = 2000000000.
     original = scheduler.start(live, task_id="same-private-task", now=clock, authenticate_executor=True,
@@ -494,7 +528,8 @@ class InquiryConsumerPortableTests(unittest.TestCase):
             identity=SimpleNamespace(process=lambda *a, **kw: process))
         ns = definitions(transformed, {"capture_executor", "check_live", "_same_uuid"},
             dict(native=native, ready=SimpleNamespace(_bridge=lambda: None), Path=Path, uuid=uuid, time=time,
-                subprocess=SimpleNamespace(run=lambda *a, **kw: SimpleNamespace(stdout=row["tty"])),
+                subprocess=SimpleNamespace(run=lambda *a, **kw: self.fail("setuid /bin/ps must not run")),
+                private_process=SimpleNamespace(terminal=lambda p: row["tty"] if p is process else self.fail("foreign terminal subject")),
                 SCHEMA="executor-reask-consumer-identity-v1", _episode=lambda s: s.copy(),
                 _caller=lambda b: dict(kind="OFFLINE_EXTERNAL_ANCESTRY"),
                 process_root=private_roots.process_root, binding_root=private_roots.binding_root))
