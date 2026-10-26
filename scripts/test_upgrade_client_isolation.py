@@ -55,6 +55,12 @@ class ConfigurationTests(unittest.TestCase):
             for key in ("CODEX_THREAD_ID", "NODE_OPTIONS", "CMUX_CODEX_HOOKS_DISABLED"):
                 self.assertNotIn(key, child)
             self.assertEqual(overrides.get("CODEX_HOME", overrides.get("CLAUDE_CONFIG_DIR")), str(roots[lane]))
+            # A loopback gateway is reached directly even when the login shell
+            # exports a forwarding proxy and an unrelated inherited NO_PROXY.
+            with patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:7897", "NO_PROXY": "example.invalid"}):
+                proxied = clean_child_environment(overrides)
+            for key in ("NO_PROXY", "no_proxy"):
+                self.assertEqual(proxied[key].split(","), ["127.0.0.1", "localhost", "::1"])
             if lane == "codex":
                 self.assertNotIn("CLAUDE_CODE_TMPDIR", child)
             else:

@@ -23,6 +23,7 @@ from orchestration_common import ContractError, checked_path, read_regular, requ
 LANES = ("codex", "claude_a", "claude_b")
 NATIVE_POLICY = "private-cli-roots-v1"
 SANDBOX = Path("/usr/bin/sandbox-exec")
+LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1"
 
 
 def toml(value):
@@ -124,11 +125,15 @@ def environment(native_roots, paths, lane):
     require(lane in LANES, "unknown client lane")
     native = native_roots[lane]
     temp = client_temp_base(paths, lane)
+    # The login shell exports HTTP(S)_PROXY for a local forwarding proxy. A
+    # loopback model gateway must be reached directly: through that proxy a
+    # 127.0.0.1 endpoint answers 502. Both spellings, as clients differ.
     value = {"TMPDIR": str(temp), "PYTHONDONTWRITEBYTECODE": "1",
              "XDG_CACHE_HOME": str(native / "cache"), "XDG_STATE_HOME": str(native / "xdg-state"),
              "UPGRADE_CLIENT_LANE": lane,
              "CMUX_CUA_STATE_DIR": str(native / "cua"),
-             "CMUX_COMPUTER_USE_INSTALL_GLOBAL_SKILL": "0"}
+             "CMUX_COMPUTER_USE_INSTALL_GLOBAL_SKILL": "0",
+             "NO_PROXY": LOOPBACK_NO_PROXY, "no_proxy": LOOPBACK_NO_PROXY}
     if lane == "codex":
         value.update(CODEX_HOME=str(native), CODEX_CLIENT_THREAD_OBSERVER="1")
     else:
