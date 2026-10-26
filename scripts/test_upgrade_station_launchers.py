@@ -51,9 +51,10 @@ class StationArgvTests(unittest.TestCase):
         native = ["/w/codex", "--remote", "unix:///s", "--cd", "/w", "--dangerously-bypass-hook-trust", "p"]
         self.assertEqual(station_argv("/py", "/mg", native, station="agentrouter-a"),
                          ["/py", "-I", "-B", "/mg", "cx", "agentrouter-a", "--", *native[1:]])
+        # argv[1] stays app-server: the controller's caller resolvers identify the server by it.
         self.assertEqual(station_server_argv(["/c", "app-server", "--listen", "unix:///s"], "http://127.0.0.1:3465"),
-                         ["/c", "-c", 'model_providers.custom.base_url="http://127.0.0.1:3465/v1"',
-                          "app-server", "--listen", "unix:///s"])
+                         ["/c", "app-server", "-c", 'model_providers.custom.base_url="http://127.0.0.1:3465/v1"',
+                          "--listen", "unix:///s"])
 
     def test_invalid_launch_shapes_refuse(self):
         for native, station, key in ((["/c", "--settings", "a", "--settings", "b"], "s", "k"),
@@ -64,7 +65,9 @@ class StationArgvTests(unittest.TestCase):
                     station_argv("/py", "/mg", native, station=station, key=key)
         for url in ("https://127.0.0.1:3465", "http://127.0.0.1:3465/v1", "http://example.invalid:80"):
             with self.subTest(url=url), self.assertRaises(ContractError):
-                station_server_argv(["/c"], url)
+                station_server_argv(["/c", "app-server"], url)
+        with self.assertRaises(ContractError):
+            station_server_argv(["/c", "-c", "x", "app-server"], "http://127.0.0.1:3465")
 
 
 class StationProfileTests(unittest.TestCase):
@@ -139,11 +142,12 @@ class MaterializedStationTests(unittest.TestCase):
         spec, pins = self.spec, self.spec["pins"]
         python, mg = pins["python"]["path"], str(self.mg)
         rpc = spec["rpc"]
-        # mg-server.toml names the pinned binary as launcher; only its arguments follow `--`.
+        # mg-server.toml's launcher is [pinned codex, app-server]; only the rest follows `--`.
         self.assertEqual(rpc["launch_argv"], [python, "-I", "-B", mg, "cx", "agentrouter-a", "--",
-                                              "app-server", "--listen", "unix://" + rpc["path"]])
-        self.assertEqual(rpc["argv"][:3], [pins["codex"]["path"], "-c",
-                                           'model_providers.custom.base_url="http://127.0.0.1:3465/v1"'])
+                                              "--listen", "unix://" + rpc["path"]])
+        self.assertEqual(rpc["argv"], [pins["codex"]["path"], "app-server", "-c",
+                                       'model_providers.custom.base_url="http://127.0.0.1:3465/v1"',
+                                       "--listen", "unix://" + rpc["path"]])
         for lane in ("claude_a", "claude_b"):
             client = spec["clients"][lane]
             root = Path(client["native_root"])
@@ -156,6 +160,29 @@ class MaterializedStationTests(unittest.TestCase):
             self.assertNotIn("/account/global-hook", json.dumps(settings))
         self.assertEqual(spec["clients"]["codex"]["argv"][:7], [python, "-I", "-B", mg, "cx", "agentrouter-a", "--"])
         self.assertEqual(self.binding["station_launchers"]["claude"], {"station": "linxi", "key": "linxi-s1"})
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
+    def test_frozen_server_argv_is_not_a_second_standalone_caller(self):
+        # u18 (a824a3f put -c ahead of app-server): the resolver counted the server as a
+        # second Codex client and refused with ambiguous ancestry. Use the real filter.
+        # The private materialized controller's own resolver, as the live client runs it.
+        scripts = Path(self.spec["controller"]) / "scripts"
+        code = ("import json, sys\nsys.path.insert(0, %r)\nfrom mac_upgrade_standalone_identity import collect\n"
+                "try:\n    collect({}, json.loads(sys.argv[1]))\n    print('NO_ERROR')\n"
+                "except Exception as exc:\n    print(type(exc).__name__ + ': ' + str(exc))\n") % str(scripts)
+        # The resolver selects by executable name; this fixture's pinned codex is capture-argv.
+        codex = "/fixture/bin/codex"
+        frozen = [codex, *self.spec["rpc"]["argv"][1:]]
+        tui = {"pid": 2, "ppid": 1, "executable": codex, "argv": [codex, "-c", "x", "--remote", "unix:///s"]}
+        cases = {"frozen": frozen, "a824a3f": [codex, "-c", frozen[3], "app-server", *frozen[4:]]}
+        for name, argv in cases.items():
+            with self.subTest(server=name):
+                chain = [{"pid": 3, "ppid": 2, "executable": codex, "argv": argv}, tui]
+                result = self.run_lane("codex", [self.spec["pins"]["python"]["path"], "-I", "-B", "-c", code, json.dumps(chain)])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # Both must reach the candidate filter (not stop at bootstrap); only a824a3f is ambiguous there.
+                self.assertTrue(result.stdout.startswith("IdentityError: "), result.stdout)
+                self.assertEqual("ambiguous standalone native ancestry" in result.stdout, name == "a824a3f", result.stdout)
 
     def test_changed_station_launch_refuses(self):
         path = Path(self.ref["path"])

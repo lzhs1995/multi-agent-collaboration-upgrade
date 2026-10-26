@@ -129,7 +129,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             executable_pins[name] = artifact_ref(path)
         station = dict(schema=STATION_LAUNCHERS, codex=dict(station_launchers["codex"]),
                        claude=dict(station_launchers["claude"]))
-        station_server_argv(["codex"], station["codex"]["base_url"])
+        station_server_argv(["codex", "app-server"], station["codex"]["base_url"])
         station_argv("python", "mg", ["claude", "--settings", "s"], station=station["claude"]["station"],
                      key=station["claude"]["key"])
     socket_boundary = (boundary_plan(socket, executable_pins["codex"])
@@ -346,7 +346,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             if station is not None:
                 config_files["mg.toml"] = station_config("codex", paths["bin"] / "cmux-codex-wrapper",
                                                          executable_pins["magpie"]["path"], root)
-                config_files["mg-server.toml"] = station_config("codex", executable_pins["codex"]["path"],
+                config_files["mg-server.toml"] = station_config("codex", [executable_pins["codex"]["path"], "app-server"],
                                                                 executable_pins["magpie"]["path"], root)
         else:
             if response_observation:

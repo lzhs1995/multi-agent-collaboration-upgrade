@@ -130,11 +130,12 @@ def station_config(provider, launcher, magpie, native_root, profiles=None):
     require(provider in ("codex", "claude") and (profiles is None) == (provider == "codex"),
             "STATION_LAUNCHER_INVALID")
     lines = ["[magpie]", "binary = " + toml(str(magpie)), ""]
+    launcher = [str(x) for x in launcher] if isinstance(launcher, list) else str(launcher)
     if provider == "codex":
-        lines += ["[codex]", "launcher = " + toml(str(launcher)), 'provider = "custom"',
+        lines += ["[codex]", "launcher = " + toml(launcher), 'provider = "custom"',
                   "home = " + toml(str(native_root))]
     else:
-        lines += ["[claude]", "launcher = " + toml(str(launcher)), "profiles = " + toml(str(profiles))]
+        lines += ["[claude]", "launcher = " + toml(launcher), "profiles = " + toml(str(profiles))]
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -271,10 +272,15 @@ def native_client_argv(provider, wrapper, cwd, native_root, *, session_id=None, 
 
 
 def station_server_argv(native_argv, base_url):
-    """The Codex server's final native argv after `mg cx`: one -c base_url ahead of app-server."""
-    require(isinstance(base_url, str) and re.fullmatch(r"http://127\.0\.0\.1:[0-9]{2,5}", base_url) is not None,
-            "STATION_LAUNCHER_INVALID")
-    return [native_argv[0], "-c", 'model_providers.custom.base_url="%s/v1"' % base_url, *native_argv[1:]]
+    """The Codex server's final native argv after `mg cx`: -c base_url right after app-server.
+
+    The server's launcher is [codex, "app-server"] (app-server takes -c itself),
+    so argv[1] stays "app-server": the controller's caller resolvers recognize
+    the server by exactly that and would otherwise count it as a second client.
+    """
+    require(isinstance(base_url, str) and re.fullmatch(r"http://127\.0\.0\.1:[0-9]{2,5}", base_url) is not None
+            and native_argv[1:2] == ["app-server"], "STATION_LAUNCHER_INVALID")
+    return [native_argv[0], "app-server", "-c", 'model_providers.custom.base_url="%s/v1"' % base_url, *native_argv[2:]]
 
 
 def sandbox_profile(writable, readonly=(), *, tty=None):

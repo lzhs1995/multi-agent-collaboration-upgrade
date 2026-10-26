@@ -93,8 +93,9 @@ def station_rpc(station, socket, codex, python, mg, codex_root):
     argv = [str(codex), "app-server", "--listen", "unix://" + str(socket)]
     if station is None:
         return {"path": str(socket), "argv": argv}
+    # mg-server.toml's launcher is [codex, "app-server"]; only the remaining arguments follow `--`.
     return {"path": str(socket), "argv": station_server_argv(argv, station["codex"]["base_url"]),
-            "launch_argv": station_argv(python, mg, argv, station=station["codex"]["station"]),
+            "launch_argv": station_argv(python, mg, argv[1:], station=station["codex"]["station"]),
             "launch_environment": {"MG_CONFIG": str(Path(codex_root) / "mg-server.toml")}}
 
 
@@ -422,7 +423,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
         require(all(pins[lane + "/" + profile]["sha256"] == pins[lane + "/settings.json"]["sha256"]
                     for lane in GOAL_LANES)
                 and read_regular(pins["codex/mg-server.toml"]["path"]) == station_config(
-                    "codex", pins["codex"]["path"], pins["magpie"]["path"], roots["codex"])
+                    "codex", [pins["codex"]["path"], "app-server"], pins["magpie"]["path"], roots["codex"])
                 and read_regular(pins["codex/mg.toml"]["path"]) == station_config(
                     "codex", pins["codex_wrapper"]["path"], pins["magpie"]["path"], roots["codex"])
                 and all(read_regular(pins[lane + "/mg.toml"]["path"]) == station_config(
