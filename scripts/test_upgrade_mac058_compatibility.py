@@ -118,6 +118,44 @@ class UpstreamTransformTests(unittest.TestCase):
             self.assertEqual(text.count("tty = private_process.terminal(" + subject + ")"), 1, name)
             self.assertIn("import mac_upgrade_process_inventory as private_process", text, name)
 
+    def test_embedded_supervisor_tty_gate_refuses_changed_or_misplaced_reads(self):
+        paths = {name: Path("/offline/mac058") / name
+                 for name in ("state", "controllers", "tmp", "config", "bin")}
+        run = lambda text: transform_live("reconcile_handshake_ack.py", text, paths,
+                                          Path("/offline/mac058/controller"), compatibility=True)[0]
+        original = source("reconcile_handshake_ack.py")
+        read = "    tty = identity.subprocess.run(['/bin/ps', '-p', str(client['pid']), '-o', 'tty='],\n"
+        self.assertEqual(original.count(read), 1)
+        # Same argv in the other quote style is the same read, so it is replaced too.
+        requoted = run(original.replace(read, read.replace("'/bin/ps'", '"/bin/ps"')))
+        self.assertEqual(requoted.count("tty = private_process.terminal(client)"), 1)
+        self.assertNotIn("/bin/ps", requoted)
+        extra = ("\n\ndef other_reader(client, identity):\n"
+                 "    tty = identity.subprocess.run(['/bin/ps', '-p', str(client['pid']), '-o', 'tty='],\n"
+                 "        capture_output=True, text=True, check=True).stdout.strip()\n    return tty\n")
+        for label, mutant in (("missing_ps_read", original.replace("'/bin/ps'", "'/not-supported-ps'")),
+                              ("foreign_subject", original.replace("str(client['pid'])", "str(current['pid'])")),
+                              ("renamed_supervisor", original.replace("def embedded_supervisor(", "def renamed_supervisor(")),
+                              ("second_read_elsewhere", original + extra)):
+            with self.subTest(mutant=label), self.assertRaises((ValueError, ContractError)):
+                run(mutant)
+        valid = run(original)
+        self.assertEqual(valid.count("tty = private_process.terminal(client)"), 1)
+        self.assertNotIn("/bin/ps", valid)
+
+    @unittest.skipUnless(BASE058.parent.parent.joinpath("0.4.34-d333557fb498/source").is_dir(),
+                         "requires the fixed MAC 0.4.34 source")
+    def test_base_without_embedded_supervisor_keeps_reconcile_unchanged(self):
+        old = BASE058.parent.parent / "0.4.34-d333557fb498/source/scripts/reconcile_handshake_ack.py"
+        from upgrade_live_patch import native_readers
+        text = old.read_text()
+        self.assertEqual(native_readers("reconcile_handshake_ack.py", text), text)
+        with self.assertRaises(ValueError):
+            native_readers("reconcile_handshake_ack.py", text + (
+                "\n\ndef other_reader(client, identity):\n"
+                "    tty = identity.subprocess.run(['/bin/ps', '-p', str(client['pid']), '-o', 'tty='],\n"
+                "        capture_output=True, text=True, check=True).stdout.strip()\n    return tty\n"))
+
     @unittest.skipUnless(BASE058.is_dir(), "requires the complete fixed MAC 0.4.58 source")
     def test_complete_base_keeps_only_off_path_setuid_ps_reads(self):
         paths = {name: Path("/offline/mac058") / name

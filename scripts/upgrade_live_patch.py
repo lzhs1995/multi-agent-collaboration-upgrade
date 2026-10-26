@@ -183,12 +183,47 @@ def native_readers(name, text):
                             "from upgrade_native_roots import process_root, binding_root\n"
                             "import upgrade_process_inventory as private_process")
         text = _terminal_reads(text, subjects=("process",))
-    elif name == "reconcile_handshake_ack.py" and "'/bin/ps'" in text:
-        # Older bases have no embedded-supervisor tty read; leave them unchanged.
-        text = replace_once(text, "    import cmux_daemon_identity as identity\n",
-                            "    import cmux_daemon_identity as identity\n"
-                            "    import upgrade_process_inventory as private_process\n")
-        text = _terminal_reads(text, subjects=("client",))
+    elif name == "reconcile_handshake_ack.py":
+        text = _embedded_supervisor_terminal(text)
+    return text
+
+
+def _tty_runs(tree):
+    """Every `tty = ...run(...)` assignment, by enclosing top-level function."""
+    found = []
+    for top in tree.body:
+        for node in ast.walk(top):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "tty"
+                    and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "run"
+                            for c in ast.walk(node.value))):
+                found.append((getattr(top, "name", None), node))
+    return found
+
+
+def _embedded_supervisor_terminal(text):
+    """The embedded-supervisor ACK path reads its own tty once; bases without
+    that function (0.4.34) must have no subprocess tty read at all."""
+    tree = ast.parse(text)
+    supervisors = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "embedded_supervisor"]
+    reads = _tty_runs(tree)
+    if not supervisors:
+        if reads:
+            raise ValueError("terminal read outside the embedded supervisor")
+        return text
+    argv0 = [[c.args[0].elts[0].value for c in ast.walk(node) if isinstance(c, ast.Call) and c.args
+              and isinstance(c.args[0], ast.List) and c.args[0].elts and isinstance(c.args[0].elts[0], ast.Constant)]
+             for _, node in reads]
+    if (len(supervisors) != 1 or [owner for owner, _ in reads] != ["embedded_supervisor"]
+            or argv0 != [["/bin/ps"]]):
+        raise ValueError("expected embedded supervisor terminal read changed")
+    text = replace_once(text, "    import cmux_daemon_identity as identity\n",
+                        "    import cmux_daemon_identity as identity\n"
+                        "    import upgrade_process_inventory as private_process\n")
+    text = _terminal_reads(text, subjects=("client",))
+    after = [(owner, ast.get_source_segment(text, node)) for owner, node in _tty_runs(ast.parse(text))]
+    if after or text.count("tty = private_process.terminal(client)") != 1:
+        raise ValueError("embedded supervisor terminal read not replaced")
     return text
 
 
