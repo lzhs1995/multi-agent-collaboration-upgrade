@@ -103,6 +103,11 @@ def _key(ref):
     return tuple(ref.get(name) for name in ("path", "device", "inode", "offset", "length", "sha256"))
 
 
+def record_key(ref):
+    """Identity of one native record; extra fields a proof carries (session, reception kind) are ignored."""
+    return _key(ref)
+
+
 def landing_refs(reader, fence, end, payload):
     """Exact refs a producer records once its send lands: [first enqueue,] first landing."""
     sha, refs = digest(payload.encode()), []
@@ -373,6 +378,27 @@ def _claim(intent, landed, readers, units, bounds, window, producers, calls):
     return keys, sent["ref"]
 
 
+def registered_producers(registration, run_id):
+    """The frozen producer registration of one run (id -> producer); raises if it is not one."""
+    return _registration(registration, run_id)
+
+
+def lane_producer_sessions(registration, run_id, readers, starts, ends):
+    """Route each registered producer to the run lane holding its session.
+
+    Routing only: _producer_calls still authenticates provider, session id and
+    transcript identity. A producer outside the run's pinned lanes has no pinned
+    interval, so its intents stay unresolved instead of being trusted.
+    """
+    try:
+        producers = _registration(registration, run_id)
+    except ERRORS:
+        return {}
+    return {pid: dict(reader=reader, start=starts[lane], end=ends[lane])
+            for pid, producer in producers.items() for lane, reader in readers.items()
+            if reader.session["session_id"] == producer["session"]["session_id"]}
+
+
 def classify_inputs(journal, registration, run_id, readers, starts, ends, *, producer_sessions,
                     not_before, not_after):
     """Attribute every native input unit of a closed run; unverifiable units stay UNKNOWN.
@@ -389,6 +415,7 @@ def classify_inputs(journal, registration, run_id, readers, starts, ends, *, pro
     producers, entries, calls = {}, [], {}
     try:
         producers = _registration(registration, run_id)
+        require(journal is not None, "no provenance journal was pinned for this run")
         header, entries = _entries(read_ref(journal, "provenance journal"), run_id)
         require(header.get("registration") == registration, "journal is bound to another registration")
     except ERRORS as exc:

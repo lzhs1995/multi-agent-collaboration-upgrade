@@ -75,9 +75,32 @@ METRICS_V3_OUTPUT_EFFECTS = {
                                 "bare_ls_and_arbitrary_wrappers_unknown"},
 }
 
+# Explicit new registration (ROOT R46): every input-bearing native record is a
+# unit, including the queued and multi-block inputs native_text cannot read, and
+# only an exact registered producer-journal join attributes one. The four earlier
+# definitions keep their frozen meaning and byte-for-byte closeout summaries.
+METRICS_V3_INPUT_PROVENANCE = {
+    **METRICS_V3_OUTPUT_EFFECTS,
+    "version": 5,
+    "interventions": "every_input_bearing_native_record_is_a_unit; status_queries_reported_separately; "
+                     "exact_verified_protocol_records_and_registered_communication_excluded; "
+                     "registered_producer_journal_join_attributes_machine_or_registered_operator; "
+                     "any_other_unit_unknown_and_count_null",
+    "input_provenance": "upgrade-input-provenance-v1; per_run_registration_frozen_before_start; "
+                        "journal_runs/<run_id>/input-provenance.jsonl_pinned_by_closeout_summary",
+}
+
 
 def campaign_effect_policy(campaign):
-    return OUTPUT_EFFECT_POLICY if campaign.get("metrics") == METRICS_V3_OUTPUT_EFFECTS else None
+    return (OUTPUT_EFFECT_POLICY if campaign.get("metrics") in (METRICS_V3_OUTPUT_EFFECTS, METRICS_V3_INPUT_PROVENANCE)
+            else None)
+
+
+def input_provenance_registration(campaign, run_id):
+    """The producer registration a v5 campaign froze for one run, else None."""
+    if campaign.get("metrics") != METRICS_V3_INPUT_PROVENANCE:
+        return None
+    return campaign["input_provenance"]["registrations"][run_id]
 
 
 def anchored_ref(path, expected_sha256):
@@ -164,8 +187,20 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
             "only the explicitly bound original CLI sessions may own model calls")
     require(campaign.get("decision_provider") == "rules", "live campaign uses frozen rules provider")
     require(campaign.get("metrics") in ((METRICS,) if version == 2 else
-                                       (METRICS_V3, METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS)),
+                                       (METRICS_V3, METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS,
+                                        METRICS_V3_INPUT_PROVENANCE)),
             "measurement definitions were not frozen")
+    if campaign["metrics"] == METRICS_V3_INPUT_PROVENANCE:
+        provenance = campaign.get("input_provenance")
+        registrations = provenance.get("registrations") if isinstance(provenance, dict) else None
+        require(isinstance(registrations, dict) and set(provenance) == {"registrations"}
+                and set(registrations) == {r["run_id"] for r in campaign.get("runs") or [] if isinstance(r, dict)},
+                "input provenance needs exactly one frozen producer registration per run")
+        from upgrade_input_provenance import registered_producers
+        for run_id, ref in registrations.items():
+            registered_producers(ref, run_id)
+    else:
+        require("input_provenance" not in campaign, "input provenance belongs to its own metric definition")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,
             "approved promotion threshold is 15 percent")
     require(0 < count(campaign.get("checker_timeout_seconds"), "checker timeout") <= 60,

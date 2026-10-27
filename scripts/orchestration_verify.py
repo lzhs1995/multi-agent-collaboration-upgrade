@@ -10,10 +10,10 @@ import statistics
 import time
 from pathlib import Path
 
-from orchestration_campaign import (METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS, ORDER,
-                                    campaign_effect_policy, validate_campaign)
-from orchestration_common import (boot_id, contract_errors, count, file_ref, json_ref, object_sha, parse_time, read_json,
-                                  read_ref, utc_now, write_json, exclusive_lock)
+from orchestration_campaign import (METRICS_V3_COMMUNICATION, METRICS_V3_INPUT_PROVENANCE, METRICS_V3_OUTPUT_EFFECTS,
+                                    ORDER, campaign_effect_policy, input_provenance_registration, validate_campaign)
+from orchestration_common import (boot_id, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
+                                  read_json, read_ref, utc_now, write_json, exclusive_lock)
 from orchestration_contracts import campaign_version, evidence_class
 from orchestration_coordinator import ACTIVE, Coordinator, State
 from orchestration_evidence import verify_protocol
@@ -37,6 +37,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
     readers = {k: NativeReader(s, fixtures=co.fixtures) for k, s in co.campaign["sessions"].items()}
     ends = {k: r.verify_pin(native_end[k]) for k, r in readers.items()}
     allowed = {k: set() for k in readers}
+    allowed_refs = {k: set() for k in readers}
+    registration = input_provenance_registration(co.campaign, co.spec["run_id"])
     terminal = []
     transports = []
     firsts = []
@@ -78,6 +80,12 @@ def derive_run(co, native_end, *, closeout_clock=None):
                                        ends[lane], ends["codex"], fixtures=co.fixtures)
             allowed[lane].update(protocol["notices"])
             allowed["codex"].add(protocol["callback"])
+            if registration is not None:
+                # v5 exempts the exact verified records, never a body a later input can repeat (ROOT R51).
+                from upgrade_input_provenance import record_key
+                allowed_refs[lane].add(record_key(protocol["delivery_record"]))
+                allowed_refs[lane].add(record_key(protocol["preparation"]["handshake_delivery"]["native_proof"]))
+                allowed_refs["codex"].add(record_key(protocol["callback_record"]))
             transports.append(protocol["transport_retries"])
         elif info["mode"] == "local_cli":
             transports.append(0)
@@ -94,6 +102,9 @@ def derive_run(co, native_end, *, closeout_clock=None):
         observations[lane] = reader.action_summary(start, ends[lane], task_id=co.spec["run_id"],
                                       output_root=str(co.root / "work"), allow_empty=True,
                                       effect_policy=campaign_effect_policy(co.campaign))
+        if registration is not None:
+            # v5 classifies every input unit below, after the closeout clock bounds the run.
+            continue
         for ref, record in reader.records(start, ends[lane]):
             text = native_text(record, reader.provider, "user")
             if text is None or text in allowed[lane]:
@@ -117,8 +128,12 @@ def derive_run(co, native_end, *, closeout_clock=None):
         measurement_end = closeout_clock
     else:
         require(closeout_clock is None, "v2 measurements cannot adopt v3 closeout clocks")
+    provenance = None
+    if registration is not None:
+        provenance, unknown, status_queries = _input_units(co, readers, native_end, allowed_refs, registration,
+                                                           not_after=measurement_end["at"])
     communication = None
-    if co.campaign["metrics"] in (METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS):
+    if co.campaign["metrics"] in (METRICS_V3_COMMUNICATION, METRICS_V3_OUTPUT_EFFECTS, METRICS_V3_INPUT_PROVENANCE):
         from upgrade_communication_attribution import attribute_inputs
         communication = attribute_inputs(co.campaign, co.header, native_end, readers,
                                          not_after=measurement_end["at"])
@@ -145,7 +160,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
         states={k: s.value for k, s in states.items()}, contract_pass=success, disarms=disarms,
         metrics=dict(elapsed_seconds=elapsed, elapsed_wall_seconds=elapsed_wall, clock_status=clock_status,
             first_action_seconds=(min(firsts) - parse_time(co.header["started_at"])).total_seconds() if firsts else None,
-            human_interventions=0 if not unknown else None, unclassified_inputs=unknown, status_queries=status_queries,
+            human_interventions=_human_interventions(unknown, provenance),
+            unclassified_inputs=unknown, status_queries=status_queries,
             transport_retries=transport_retries, failed_business_tool_calls=failed_tools,
             retries=None if transport_retries is None else transport_retries + failed_tools,
             provider_auto_retries=provider, failed_api_attempts=sum(v["failed_api_attempts"] for v in observations.values()),
@@ -154,7 +170,48 @@ def derive_run(co, native_end, *, closeout_clock=None):
         result["closeout_clock"] = closeout_clock
     if communication is not None:
         result["metrics"]["automated_communication_inputs"] = communication
+    if provenance is not None:
+        result["metrics"]["input_provenance"] = provenance
     return result
+
+
+def _input_units(co, readers, native_end, allowed_refs, registration, *, not_after):
+    """v5: every input-bearing native unit of the run, with the v2-v4 protocol roles kept.
+
+    Only the exact native records a verified protocol chain pinned are exempt; a
+    later input repeating that same body is not (ROOT R51). Status queries keep
+    their separate v2-v4 role. A unit the registered producer journal attributes is
+    MACHINE or HUMAN_REGISTERED; anything else, including inputs native_text cannot
+    read, stays unknown. The closeout summary holds the complete result, journal pin
+    included, so a later edit to the journal fails verify_run.
+    """
+    from upgrade_input_provenance import classify_inputs, lane_producer_sessions, record_key
+    path = co.root / "input-provenance.jsonl"
+    journal = file_ref(path) if path.exists() else None
+    starts = co.header["native_start"]
+    provenance = classify_inputs(journal, registration, co.spec["run_id"], readers, starts, native_end,
+                                 producer_sessions=lane_producer_sessions(registration, co.spec["run_id"], readers,
+                                                                          starts, native_end),
+                                 not_before=co.header["started_at"], not_after=not_after)
+    # Its journal-level count also treats protocol records and status queries as unknown;
+    # the run's one count is _human_interventions below.
+    provenance.pop("human_interventions")
+    queries = {digest(text.encode()) for text in co.campaign["metrics"]["status_queries"]}
+    unknown, status_queries = [], []
+    for unit in provenance["units"]:
+        if unit["provenance"] != "UNKNOWN" or record_key(unit["ref"]) in allowed_refs[unit["lane"]]:
+            continue
+        (status_queries if unit["payload_sha256"] in queries else unknown).append(unit["ref"])
+    return provenance, unknown, status_queries
+
+
+def _human_interventions(unknown, provenance):
+    if unknown:
+        return None
+    if provenance is None:
+        return 0
+    # Registered operator sends only; one queued input is one intervention, not two units.
+    return len({unit["intent_id"] for unit in provenance["units"] if unit["provenance"] == "HUMAN_REGISTERED"})
 
 
 @contract_errors("whole run")
