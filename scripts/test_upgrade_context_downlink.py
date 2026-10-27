@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import sys
 import tempfile
+import time
 import unittest
 
 import upgrade_context_downlink as downlink
@@ -21,16 +22,21 @@ RELEASE_MANIFEST_SHA256 = "3f6a9647cde9d8b824f01d76c425ce2eedd5111a5806f971f45cb
 OBSERVER_SHA256 = "79e058ae21ba8af81d359c29f6ebb6ffb46ecbb66871780088ec2bf69903f80e"
 INTERPRETER = str(Path(sys.executable).resolve())
 SESSION = "11111111-1111-4111-8111-111111111111"
+NONCE = "0123456789abcdef"
+ACK = f"PREFLIGHT_ACK|u21-fixture|claude:identity|READY|INLINE|{NONCE}"
 
-# Stands in for the shared observer: records how it was run, then prints the verdict the test planned.
+# Stands in for the shared observer: records how it was run, then prints the verdict the test planned
+# (optionally per --snapshot-end, so a window sees the verdict planned for each endpoint).
 FAKE_OBSERVER = r'''
 import json, sys
 from pathlib import Path
+MAX_SCAN = 8 * 1024 * 1024
 root = Path(__file__).resolve().parents[3]
 with (root / "calls.jsonl").open("a") as log:
     log.write(json.dumps(dict(argv=sys.argv[1:], ignore_environment=sys.flags.ignore_environment,
                               dont_write_bytecode=sys.dont_write_bytecode, executable=sys.executable)) + "\n")
 plan = json.loads((root / "plan.json").read_text())
+plan = plan.get("by_end", {}).get(sys.argv[sys.argv.index("--snapshot-end") + 1], plan)
 if plan.get("sleep"):
     import time; time.sleep(plan["sleep"])
 print(plan["stdout"])
@@ -51,17 +57,70 @@ class Fixture:
         self.body_path = self.root / "bodies" / "body.txt"
         self.body_path.parent.mkdir()
         self.body_path.write_text("固定的完整正文。\n" + "body " * 40)
-        raw = self.body_path.read_bytes()
-        self.body = dict(format=SINGLE_LINE_FORMAT, path=str(self.body_path), sha256=digest(raw), bytes=len(raw))
+        body = self.body_path.read_bytes()
+        self.body = dict(format=SINGLE_LINE_FORMAT, path=str(self.body_path), sha256=digest(body), bytes=len(body))
         self.marker = "U2078_U21_HS_claude_a_0123abcd"
         self.wire = _wire(self.marker, self.body)
+        # A real original transcript: metadata before the fence, then the notice and one response after it.
+        self.transcript.parent.mkdir(parents=True)
+        self.transcript.write_bytes(raw(dict(type="system", sessionId=SESSION, subtype="native_metadata")))
+        info = self.transcript.stat()
+        self.pin = dict(path=str(self.transcript), device=info.st_dev, inode=info.st_ino, offset=info.st_size)
+        self.append(self.notice(), self.response())
         self.binding = dict(schema="native-delivery-v1", provider="claude", session_id=SESSION,
                             receipt_contract="native-user-marker-v1", receipt_marker=self.marker,
-                            payload_sha256=digest(self.wire.encode()), transcript=dict(path=str(self.transcript)))
+                            payload_sha256=digest(self.wire.encode()), transcript=dict(self.pin))
         self.journal = self.root / "state" / "message-dispatch-v1" / ("ab" * 32)
         self.attempt = self.write_attempt(1)
         self.evidence = self.root / "evidence" / "claude_a"
         self.publish()
+
+    def append(self, *records):
+        with self.transcript.open("ab") as stream:
+            for record in records:
+                stream.write(record if isinstance(record, bytes) else raw(record))
+        return self.eof()
+
+    def eof(self):
+        return self.transcript.stat().st_size
+
+    def rewrite(self, *records):
+        """Same file (device/inode) and fence; only the records after the fence change."""
+        with self.transcript.open("r+b") as stream:
+            stream.truncate(self.pin["offset"])
+        return self.append(*records)
+
+    def notice(self):
+        return dict(type="attachment", sessionId=SESSION, attachment=dict(type="queued_command", prompt=self.wire))
+
+    def response(self, **changes):
+        value = dict(type="assistant", sessionId=SESSION, uuid="response-body",
+                     message=dict(role="assistant", content=[dict(type="text", text="Full body received.")]))
+        value.update(changes)
+        return value
+
+    def record(self, name="result.json"):
+        """One consumed observation at the current EOF, recorded as the gate would keep it."""
+        self.plan(self.consumed())
+        return write_json(self.root / "evidence" / name, self.observe())
+
+    def order(self, recorded, ack_end=None, **kwargs):
+        receipt = kwargs.pop("handshake", None) or handshake(self.root / "handshake.json", self.binding)
+        return downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt,
+                                  self.eof() if ack_end is None else ack_end, **kwargs)
+
+    def snap(self, end=None):
+        end = self.eof() if end is None else end
+        return end, digest(self.transcript.read_bytes()[self.pin["offset"]:end])
+
+    def slices(self, end):
+        """One proof slice per original record between the fence and end."""
+        data, offset, out = self.transcript.read_bytes(), self.pin["offset"], []
+        for line in data[offset:end].split(b"\n")[:-1]:
+            out.append(dict(path=str(self.transcript), offset=offset, bytes=len(line) + 1,
+                            sha256=digest(line + b"\n")))
+            offset += len(line) + 1
+        return out
 
     def publish(self, **policy):
         files = {str(p.relative_to(self.source)): dict(bytes=p.stat().st_size, sha256=digest(p.read_bytes()))
@@ -75,25 +134,30 @@ class Fixture:
         self.policy = write_json(self.root / "policy.json", value)
         return self.policy
 
+    def fence(self, **transcript):
+        return dict(phase="PASTE_INTENT", native_paste_fence=dict(schema="native-paste-fence-v1",
+                                                                  transcript=dict(self.pin, **transcript)))
+
     def write_attempt(self, number, **changes):
         value = dict(phase="ENTER_SENT", error="MESSAGE_NOT_CONFIRMED", binding=dict(identity="fixture"),
                      native_binding=self.binding, body_reference=self.body,
-                     events=[dict(phase="PASTE_INTENT"), dict(phase="ENTER_SENT")])
+                     events=[self.fence(), dict(phase="ENTER_SENT")])
         value.update(changes)
         return write_json(self.journal / f"attempt-{number:04d}.json", value)
 
-    def consumed(self, **changes):
+    def consumed(self, end=None, **changes):
+        """The observer's verdict for the original bytes up to end (default: current EOF)."""
+        end, sha = self.snap(end)
         value = dict(schema=downlink.OBSERVATION_SCHEMA, observation="MODEL_CONTEXT_CONSUMED", session_id=SESSION,
                      marker=self.marker, wire_sha256=self.binding["payload_sha256"], body=self.body,
                      notice_request_id="request-one", body_request_id="request-two",
-                     body_api_message_sha256="0" * 64, parallel_tool_results=2,
-                     proof_slices=[dict(path=str(self.transcript), offset=10, bytes=20, sha256="1" * 64)],
+                     body_api_message_sha256="0" * 64, parallel_tool_results=2, proof_slices=self.slices(end),
                      native_user_received=False, body_full_read=True, business_accepted=False,
                      official_receipt_published=False, attempt_changed=False, input_operations=0,
                      task_authorized=False, resource_released=False, replay_authorized=False,
                      binding_scope="RECORDED_ORIGINAL_BINDING_NOT_CURRENT_PROCESS_HEALTH",
                      attempt=dict(path=self.attempt["path"], sha256=self.attempt["sha256"]),
-                     snapshot_end=30, snapshot_sha256="2" * 64, historical_receipt_contract="native-user-marker-v1",
+                     snapshot_end=end, snapshot_sha256=sha, historical_receipt_contract="native-user-marker-v1",
                      old_receipt_contract_unchanged=True, current_provider_health="NOT_MEASURED")
         value.update(changes)
         return value
@@ -104,12 +168,20 @@ class Fixture:
                     native_user_received=False, official_receipt_published=False, attempt_changed=False,
                     input_operations=0, replay_authorized=False)
 
-    def plan(self, stdout, rc=0, **extra):
+    @staticmethod
+    def step(stdout, rc=0, **extra):
         text = stdout if isinstance(stdout, str) else json.dumps(stdout, ensure_ascii=False, indent=2)
-        (self.root / "plan.json").write_text(json.dumps(dict(stdout=text, rc=rc, **extra)))
+        return dict(stdout=text, rc=rc, **extra)
 
-    def observe(self, **kwargs):
-        return downlink.observe(self.attempt, self.policy, INTERPRETER, self.evidence, **kwargs)
+    def plan(self, stdout, rc=0, by_end=None, **extra):
+        value = self.step(stdout, rc, **extra)
+        if by_end:
+            value["by_end"] = {str(end): step for end, step in by_end.items()}
+        (self.root / "plan.json").write_text(json.dumps(value))
+
+    def observe(self, end=None, **kwargs):
+        return downlink.observe(self.attempt, self.policy, INTERPRETER, self.evidence,
+                                self.eof() if end is None else end, **kwargs)
 
     def calls(self):
         path = self.root / "calls.jsonl"
@@ -118,6 +190,15 @@ class Fixture:
     def files(self):
         return {str(p): p.read_bytes() for p in sorted(self.root.rglob("*"))
                 if p.is_file() and p.name not in ("calls.jsonl", "plan.json")}
+
+
+def fifo_attempt(f):
+    path = f.root / "fifo.jsonl"
+    os.mkfifo(path)
+    info = os.stat(path)
+    pin = dict(f.pin, path=str(path), device=info.st_dev, inode=info.st_ino)
+    return f.write_attempt(1, native_binding=dict(f.binding, transcript=pin),
+                           events=[f.fence(path=pin["path"], device=pin["device"], inode=pin["inode"])])
 
 
 def copied_observer(f):
@@ -148,7 +229,10 @@ class ContextDownlinkTests(unittest.TestCase):
         self.assertEqual(wire.read_text(), f.wire)
         [call] = f.calls()
         self.assertEqual(call["argv"], ["--attempt", f.attempt["path"], "--attempt-sha256", f.attempt["sha256"],
-                                        "--text-file", str(wire)])
+                                        "--text-file", str(wire), "--snapshot-end", str(f.eof())])
+        end, sha = f.snap()
+        self.assertEqual(result["snapshot"], dict(path=str(f.transcript), device=f.pin["device"], inode=f.pin["inode"],
+                                                  start=f.pin["offset"], end=end, bytes=end - f.pin["offset"], sha256=sha))
         self.assertEqual((call["ignore_environment"], call["dont_write_bytecode"]), (1, True))
         self.assertEqual(result["argv"][:3], [INTERPRETER, "-BE", str(f.source / "scripts/model_context_consumption.py")])
         # The only write is the wire; attempts, body, policy and the release tree are byte-identical.
@@ -198,7 +282,16 @@ class ContextDownlinkTests(unittest.TestCase):
                   ("other_attempt", dict(attempt=dict(path=f.attempt["path"], sha256="4" * 64)), bound),
                   ("other_contract", dict(historical_receipt_contract="native-user-marker-v2"), bound),
                   ("no_slices", dict(proof_slices=[]), bound),
-                  ("other_transcript", dict(proof_slices=[dict(path=str(f.root / "other.jsonl"))]), bound)]
+                  ("other_transcript", dict(proof_slices=[dict(path=str(f.root / "other.jsonl"))]), bound),
+                  # The observer's endpoint and hash must be the ones pinned here before it ran.
+                  ("other_end", dict(snapshot_end=f.eof() - 1), "not of the pinned original snapshot"),
+                  ("other_snapshot", dict(snapshot_sha256="9" * 64), "not of the pinned original snapshot"),
+                  ("slice_past_end", dict(proof_slices=[dict(f.slices(f.eof())[-1], bytes=10 ** 6)]),
+                   "outside the pinned snapshot"),
+                  ("slice_before_fence", dict(proof_slices=[dict(f.slices(f.eof())[0], offset=0)]),
+                   "outside the pinned snapshot"),
+                  ("slice_offset_text", dict(proof_slices=[dict(f.slices(f.eof())[0], offset="1")]),
+                   "outside the pinned snapshot")]
         for name, change, reason in cases:
             with self.subTest(case=name):
                 f.plan(f.consumed(**change))
@@ -234,6 +327,13 @@ class ContextDownlinkTests(unittest.TestCase):
             ("other_schema", lambda: f.publish(schema=downlink.POLICY_SCHEMA + "-v2"), "not v124-shaped"),
             ("other_class", lambda: f.publish(evidence_class="NATIVE_USER_RECEIVED"), "not v124-shaped"),
             ("other_disposition", lambda: f.publish(disposition="REJECTED"), "not v124-shaped"),
+            # The endpoint bound checked here must be the observer's own.
+            ("other_scan_limit", lambda: (observer.write_text(FAKE_OBSERVER.replace("8 * 1024", "4 * 1024")), f.publish()),
+             "different bounded-snapshot limit"),
+            ("no_scan_limit", lambda: (observer.write_text(FAKE_OBSERVER.replace("MAX_SCAN = ", "LIMIT = ")), f.publish()),
+             "has no MAX_SCAN"),
+            ("computed_scan_limit", lambda: (observer.write_text(FAKE_OBSERVER.replace("8 * 1024 * 1024", "2 ** 23")),
+                                             f.publish()), "not a plain integer"),
         )
         for name, change, reason in cases:
             with self.subTest(case=name):
@@ -268,6 +368,21 @@ class ContextDownlinkTests(unittest.TestCase):
             ("existing_other_wire", lambda f: (f.evidence.mkdir(parents=True),
                                                (f.evidence / f"context-wire-{f.marker}.txt").write_text("other")),
              "existing immutable bytes differ"),
+            # The snapshot is read through the one original fence pin, never another file or offset.
+            ("no_fence", lambda f: f.write_attempt(1, events=[dict(phase="ENTER_SENT")]), "one original paste-intent fence"),
+            ("two_fences", lambda f: f.write_attempt(1, events=[f.fence(), f.fence()]), "one original paste-intent fence"),
+            ("other_fence_schema", lambda f: f.write_attempt(1, events=[dict(phase="PASTE_INTENT", native_paste_fence=dict(
+                f.fence()["native_paste_fence"], schema="native-input-fence-v1"))]), "one original paste-intent fence"),
+            ("fence_without_inode", lambda f: f.write_attempt(1, events=[f.fence(inode=None)]),
+             "original fence transcript pin required"),
+            ("fence_other_path", lambda f: f.write_attempt(1, events=[f.fence(path=str(f.root / "other.jsonl"))]),
+             "fence and binding name different transcripts"),
+            ("fence_other_inode", lambda f: f.write_attempt(1, events=[f.fence(inode=f.pin["inode"] + 1)]),
+             "pinned original transcript replaced"),
+            ("fence_mid_record", lambda f: f.write_attempt(1, events=[f.fence(offset=f.pin["offset"] + 3)]),
+             "snapshot start is inside a record"),
+            # A pinned non-regular file (here a FIFO with its own device/inode) is never read as a transcript.
+            ("fence_fifo", lambda f: fifo_attempt(f), "owner/type mismatch"),
         )
         for name, change, reason in cases:
             with self.subTest(case=name):
@@ -302,7 +417,7 @@ class ContextDownlinkTests(unittest.TestCase):
                 ("relative_wire_dir", INTERPRETER, "evidence/claude_a", "canonical absolute path")):
             with self.subTest(case=name):
                 with self.assertRaisesRegex(ContractError, reason):
-                    downlink.observe(f.attempt, f.policy, interpreter, wire_dir)
+                    downlink.observe(f.attempt, f.policy, interpreter, wire_dir, f.eof())
         self.assertEqual(f.calls(), [])
 
     def test_observer_that_does_not_return_in_time_is_refused(self):
@@ -317,12 +432,10 @@ class ContextDownlinkTests(unittest.TestCase):
 
         def cli(**pins):
             args = dict(attempt=f.attempt["path"], attempt_sha256=f.attempt["sha256"], policy=f.policy["path"],
-                        policy_sha256=f.policy["sha256"], interpreter=INTERPRETER, wire_dir=str(f.evidence))
+                        policy_sha256=f.policy["sha256"], interpreter=INTERPRETER, wire_dir=str(f.evidence),
+                        snapshot_end=str(f.eof()))
             args.update(pins)
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                rc = downlink.main(["observe", *[x for k, v in args.items() for x in ("--" + k.replace("_", "-"), v)]])
-            return rc, json.loads(out.getvalue())
+            return run_cli("observe", **args)
 
         rc, value = cli()
         self.assertEqual((rc, value["evidence_class"]), (0, "MODEL_CONTEXT_CONSUMED"))
@@ -333,6 +446,322 @@ class ContextDownlinkTests(unittest.TestCase):
                 self.assertEqual((rc, value["observation"], value["reason"]), (2, "UNVERIFIED", reason))
                 self.assertIs(value["native_user_received"], False)
         self.assertEqual(len(f.calls()), 1)
+        # No endpoint, no observation: the CLI never falls back to the current EOF.
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            downlink.main(["observe", *cli_args(dict(attempt=f.attempt["path"], attempt_sha256=f.attempt["sha256"],
+                                                     policy=f.policy["path"], policy_sha256=f.policy["sha256"],
+                                                     interpreter=INTERPRETER, wire_dir=str(f.evidence)))])
+        self.assertEqual(len(f.calls()), 1)
+
+    def test_snapshot_endpoint_is_explicit_bounded_and_a_complete_record_boundary(self):
+        f = self.f
+        f.plan(f.consumed())
+        start = f.pin["offset"]
+        for name, end, reason in (
+                ("none", None, "outside the bounded window"), ("text", str(f.eof()), "outside the bounded window"),
+                ("bool", True, "outside the bounded window"), ("at_fence", start, "outside the bounded window"),
+                ("before_fence", start - 1, "outside the bounded window"),
+                ("past_window", start + downlink.MAX_SCAN + 1, "outside the bounded window"),
+                ("past_file", f.eof() + 1, "past the original file"),
+                ("mid_record", f.eof() - 1, "not a complete record boundary")):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ContractError, reason):
+                    downlink.observe(f.attempt, f.policy, INTERPRETER, f.evidence, end)
+        self.assertEqual(f.calls(), [])
+        # An earlier complete-record endpoint is observed as itself, not widened to EOF.
+        first = start + len(f.transcript.read_bytes()[start:].split(b"\n")[0]) + 1
+        f.plan(f.consumed(first))
+        self.assertEqual(f.observe(first)["snapshot"]["end"], first)
+
+    def test_verify_reproduces_a_proof_at_its_pinned_endpoint_after_unrelated_growth(self):
+        f = self.f
+        f.plan(f.consumed())
+        recorded = write_json(f.root / "evidence" / "result.json", f.observe())
+        # Later unrelated records neither retract nor widen the recorded proof.
+        f.append(*[dict(type="assistant", sessionId=SESSION, uuid=f"later-{i}") for i in range(3)])
+        self.assertEqual(downlink.verify(recorded, f.policy["sha256"], INTERPRETER), json_ref(recorded))
+        self.assertEqual(f.calls()[-1]["argv"][-2:], ["--snapshot-end", str(json_ref(recorded)["snapshot"]["end"])])
+        value = json_ref(recorded)
+        tampered = dict(
+            other_policy=(dict(value), "8" * 64, INTERPRETER, "bound to another policy"),
+            other_interpreter=(dict(value), f.policy["sha256"], str(f.source / "README.md"), "another interpreter"),
+            no_class=(dict(value, evidence_class=None), f.policy["sha256"], INTERPRETER, "not a recorded context"),
+            no_snapshot=(dict(value, snapshot=None), f.policy["sha256"], INTERPRETER, "no pinned snapshot"),
+            moved_end=(dict(value, snapshot=dict(value["snapshot"], end=f.eof())), f.policy["sha256"], INTERPRETER,
+                       "does not reproduce|not of the pinned"),
+            other_slices=(dict(value, observation=dict(value["observation"], proof_slices=f.slices(f.eof()))),
+                          f.policy["sha256"], INTERPRETER, "does not reproduce"),
+            # A forged wire location would make re-observation write elsewhere; it is refused first.
+            other_wire_dir=(dict(value, wire=dict(value["wire"], path=str(f.root / "elsewhere" / "w.txt"))),
+                            f.policy["sha256"], INTERPRETER, "cannot read .*elsewhere"))
+        for name, (result, policy, interpreter, reason) in tampered.items():
+            with self.subTest(case=name):
+                ref = write_json(f.root / "evidence" / f"tampered-{name}.json", result)
+                with self.assertRaisesRegex(ContractError, reason):
+                    downlink.verify(ref, policy, interpreter)
+        self.assertFalse((f.root / "elsewhere").exists())
+
+    def window(self, hooks=(), deadline=60, **kwargs):
+        """observe_window on a fake clock; each sleep runs the next hook (transcript growth etc.)."""
+        f, clock, pending = self.f, [1000.0], list(hooks)
+
+        def sleep(seconds):
+            self.assertGreater(seconds, 0, "a window never busy-waits")
+            clock[0] += seconds
+            if pending:
+                pending.pop(0)()
+        window = f.root / "evidence" / "window"
+        terminal = downlink.observe_window(f.attempt, f.policy, INTERPRETER, window, deadline_epoch=1000.0 + deadline,
+                                           now=lambda: clock[0], sleep=sleep, **kwargs)
+        return terminal, window
+
+    def test_window_keeps_each_provisional_observation_and_terminalizes_on_the_complete_proof(self):
+        f = self.f
+        early = f.eof()
+        f.plan(f.unverified("FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED"), 2)
+
+        def grow():
+            f.append(dict(type="assistant", sessionId=SESSION, uuid="response-two"))
+            f.plan(f.unverified("x"), 2, by_end={early: f.step(f.unverified("FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED"), 2),
+                                                 f.eof(): f.step(f.consumed())})
+        terminal, window = self.window([lambda: None, grow])
+        self.assertEqual((terminal["evidence_class"], terminal["observation"], terminal["reason"]),
+                         ("MODEL_CONTEXT_CONSUMED", "MODEL_CONTEXT_CONSUMED", None))
+        first, second = (json_ref(ref) for ref in terminal["increments"])
+        self.assertEqual((first["seq"], first["observation"], first["provisional"], first["snapshot_end"]),
+                         (1, "UNVERIFIED", True, early))
+        self.assertIn("FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED", first["reason"])
+        self.assertEqual((second["seq"], second["observation"], second["provisional"], second["reason"]),
+                         (2, "MODEL_CONTEXT_CONSUMED", False, None))
+        self.assertEqual(second["previous_sha256"], terminal["increments"][0]["sha256"])
+        self.assertEqual(first["snapshot_sha256"], f.snap(early)[1])
+        # No re-observation without growth; nothing is ever sent.
+        self.assertEqual([c["argv"][-1] for c in f.calls()], [str(early), str(f.eof())])
+        self.assertTrue(all(json_ref(r)["input_operations"] == 0 for r in terminal["increments"]))
+        self.assertEqual(terminal["snapshot_end"], f.eof())
+        self.assertEqual(downlink.verify(terminal["result"], f.policy["sha256"], INTERPRETER), json_ref(terminal["result"]))
+        self.assertEqual(sorted(p.name for p in window.iterdir()),
+                         [f"context-wire-{f.marker}.txt", "observation-0001.json", "observation-0002.json",
+                          "result.json", "terminal.json"])
+        with self.assertRaisesRegex(ContractError, "never reopened"):
+            self.window()
+
+    def test_window_without_proof_ends_unverified_at_the_real_deadline_or_budget(self):
+        f = self.f
+        f.plan(f.unverified("MATCHING_REAL_RESPONSE_REQUIRED"), 2)
+        terminal, _ = self.window(deadline=12)
+        self.assertEqual((terminal["evidence_class"], terminal["observation"], terminal["result"]), (None, "UNVERIFIED", None))
+        self.assertTrue(terminal["reason"].startswith("deadline reached; last: context not consumed"), terminal["reason"])
+        self.assertEqual((len(terminal["increments"]), len(f.calls())), (1, 1))
+        self.setUp()
+        f = self.f
+        f.plan(f.unverified("MATCHING_REAL_RESPONSE_REQUIRED"), 2)
+        tick = lambda: f.append(dict(type="assistant", sessionId=SESSION, uuid="tick"))
+        terminal, _ = self.window([tick, tick, tick], max_observations=2)
+        self.assertTrue(terminal["reason"].startswith("observation budget exhausted"), terminal["reason"])
+        self.assertEqual((len(terminal["increments"]), len(f.calls())), (2, 2))
+
+    def test_window_terminalizes_at_once_on_any_refusal_other_than_not_yet_consumed(self):
+        cases = (
+            ("resend", lambda f: f.write_attempt(2), "latest original attempt"),
+            ("confirmed_receipt", lambda f: write_json(f.journal / "receipt.json", dict(confirmed=True)),
+             "confirmed native receipt keeps its native evidence"),
+            ("observer_crash", lambda f: f.plan("Traceback", 1), "context observer failed: rc=1"),
+        )
+        for name, change, reason in cases:
+            with self.subTest(case=name):
+                self.setUp()
+                f = self.f
+                f.plan(f.unverified("MATCHING_REAL_RESPONSE_REQUIRED"), 2)
+                grow = lambda f=f, change=change: (f.append(dict(type="assistant", sessionId=SESSION, uuid="x")),
+                                                   change(f))
+                terminal, _ = self.window([grow])
+                self.assertEqual(terminal["observation"], "UNVERIFIED")
+                self.assertTrue(terminal["reason"].startswith("refused: "), terminal["reason"])
+                self.assertIn(reason, terminal["reason"])
+                second = json_ref(terminal["increments"][-1])
+                self.assertEqual((len(terminal["increments"]), second["provisional"]), (2, True))
+
+    def test_window_ends_once_the_bounded_original_window_is_full(self):
+        f = self.f
+        f.plan(f.unverified("MATCHING_REAL_RESPONSE_REQUIRED"), 2)
+        filler = raw(dict(type="assistant", sessionId=SESSION, uuid="filler", pad="x" * downlink.MAX_SCAN))
+        terminal, _ = self.window([lambda: f.append(filler)])
+        self.assertTrue(terminal["reason"].startswith("bounded original window exhausted"), terminal["reason"])
+        self.assertEqual((len(terminal["increments"]), len(f.calls())), (1, 1))
+
+    def test_window_bounds_are_checked_before_anything_is_written(self):
+        f = self.f
+        for name, kwargs, reason in (
+                ("past_deadline", dict(deadline=0), "deadline must be in the next hour"),
+                ("too_far", dict(deadline=3601), "deadline must be in the next hour"),
+                ("fast_interval", dict(interval=0.5), "interval out of bounds"),
+                ("slow_interval", dict(interval=61), "interval out of bounds"),
+                ("no_budget", dict(max_observations=0), "budget out of bounds"),
+                ("big_budget", dict(max_observations=721), "budget out of bounds"),
+                ("float_budget", dict(max_observations=2.0), "budget out of bounds")):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ContractError, reason):
+                    self.window(**kwargs)
+                self.assertFalse((f.root / "evidence" / "window").exists())
+        self.assertEqual(f.calls(), [])
+
+    def test_ack_after_full_body_consumption_is_ordered_in_the_observed_transcript_only(self):
+        f = self.f
+        recorded = f.record()
+        consumed_at = json_ref(recorded)["observation"]["proof_slices"][-1]["offset"]
+        at = f.eof()
+        f.append(ack_record())
+        order = f.order(recorded)
+        self.assertEqual((order["ordering"], order["coordinate_system"], order["receiver_offsets_compared"]),
+                         ("ACK_AFTER_FULL_BODY_CONSUMPTION", "observed_claude_transcript", False))
+        self.assertEqual((order["ack"]["offset"], order["ack"]["path"], order["ack"]["inode"], order["body_consumed_at_offset"]),
+                         (at, str(f.transcript), f.pin["inode"], consumed_at))
+        self.assertEqual((order["native_user_received"], order["input_operations"]), (False, 0))
+        # The response that consumed the full body may itself be the ACK.
+        f.rewrite(f.notice(), ack_record(uuid="response-body"))
+        order = f.order(f.record("result-same.json"))
+        self.assertEqual(order["ack"]["offset"], order["body_consumed_at_offset"])
+
+    def test_ack_before_full_body_consumption_or_ambiguous_is_refused(self):
+        f = self.f
+        for name, records, reason in (
+                ("before", lambda: [f.notice(), ack_record(), f.response()], "ACK precedes full body consumption"),
+                ("before_and_after", lambda: [f.notice(), ack_record(), f.response(), ack_record(uuid="ack-2")],
+                 "more than one exact ACK"),
+                ("twice_after", lambda: [f.notice(), f.response(), ack_record(), ack_record(uuid="ack-2")],
+                 "more than one exact ACK"),
+                ("none", lambda: [f.notice(), f.response()], "exact ACK not in the pinned ACK range")):
+            with self.subTest(case=name):
+                f.rewrite(*records())
+                recorded = f.record(f"result-{name}.json")
+                with self.assertRaisesRegex(ContractError, reason):
+                    f.order(recorded)
+
+    def test_ack_order_first_reproduces_the_observation_it_orders_against(self):
+        f = self.f
+        f.rewrite(f.notice(), ack_record(), f.response())
+        value = json_ref(f.record())
+        # A forged proof that stops before the early ACK must not make that ACK "after" the body.
+        forged = dict(value, observation=dict(value["observation"], proof_slices=value["observation"]["proof_slices"][:1]))
+        with self.assertRaisesRegex(ContractError, "does not reproduce"):
+            f.order(write_json(f.root / "evidence" / "forged.json", forged))
+
+    def test_only_the_exact_native_assistant_ack_counts(self):
+        f = self.f
+        text = lambda line: [dict(type="text", text=line)]
+        near = dict(
+            with_tool=ack_record(message=dict(role="assistant", content=[*text(ACK), dict(type="tool_use", id="t")])),
+            quoted_in_read=dict(type="user", sessionId=SESSION, message=dict(role="user", content=[
+                dict(type="tool_result", tool_use_id="t", content="reply exactly: " + ACK)])),
+            sidechain=ack_record(isSidechain=True), meta=ack_record(isMeta=True), api_error=ack_record(isApiErrorMessage=True),
+            other_session=ack_record(sessionId="22222222-2222-4222-8222-222222222222"),
+            other_nonce=ack_record(ACK.replace(NONCE, "f" * 16)), user_role=ack_record(type="user"),
+            role_user=ack_record(message=dict(role="user", content=[dict(type="text", text=ACK)])),
+            two_texts=ack_record(message=dict(role="assistant", content=[*text(ACK), *text(ACK)])))
+        for name, record in near.items():
+            with self.subTest(near_miss=name):
+                f.rewrite(f.notice(), record, f.response())
+                recorded = f.record(f"result-{name}.json")
+                f.append(ack_record(uuid="true-ack"))
+                self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+        for name, content in (("plain_string", ACK),
+                              ("with_thinking", [dict(type="thinking", thinking="…", signature="s"), *text(ACK)]),
+                              ("with_redacted", [dict(type="redacted_thinking", data="d"), *text(ACK)])):
+            with self.subTest(accepted=name):
+                f.rewrite(f.notice(), f.response())
+                recorded = f.record(f"result-{name}.json")
+                f.append(ack_record(message=dict(role="assistant", content=content)))
+                self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+
+    def test_ack_range_is_explicit_and_a_complete_record_boundary(self):
+        f = self.f
+        recorded = f.record()
+        at = f.eof()
+        f.append(ack_record())
+        for name, end, reason in (("before_ack", at, "exact ACK not in the pinned ACK range"),
+                                  ("text", str(f.eof()), "explicit ACK endpoint required"),
+                                  ("mid_record", f.eof() - 1, "does not end at a record boundary"),
+                                  ("past_file", f.eof() + 1, "past the original file"),
+                                  ("before_window", f.pin["offset"] - 1, "outside the bounded original window")):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ContractError, reason):
+                    f.order(recorded, ack_end=end)
+        # An ACK range is bounded like the snapshot: nothing past the window is searched.
+        f.append(raw(dict(type="system", sessionId=SESSION, pad="x" * downlink.MAX_SCAN)), ack_record(uuid="late"))
+        with self.assertRaisesRegex(ContractError, "outside the bounded original window"):
+            f.order(recorded)
+
+    def test_a_claimed_ack_from_another_file_or_coordinate_is_never_compared(self):
+        f = self.f
+        recorded = f.record()
+        at = f.eof()
+        f.append(ack_record())
+        line = f.transcript.read_bytes()[at:]
+        exact = dict(path=str(f.transcript), offset=at, length=len(line), sha256=digest(line), ack_line=ACK)
+        order = f.order(recorded, observed_ack=write_json(f.root / "ack-observed.json", exact))
+        self.assertEqual(order["observed_ack"]["sha256"], file_ref(f.root / "ack-observed.json")["sha256"])
+        # A Codex receiver record lives in another file; its offset is never ordered against Claude's.
+        codex = dict(exact, path=str(f.root / "codex" / "rollout.jsonl"), offset=at + 10 ** 6)
+        for name, claimed in (("codex_coordinates", codex), ("other_path", dict(exact, path=codex["path"])),
+                              ("other_offset", dict(exact, offset=at - 1)),
+                              ("other_length", dict(exact, length=len(line) + 1)), ("other_sha", dict(exact, sha256="0" * 64)),
+                              ("other_line", dict(exact, ack_line=ACK + " "))):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ContractError, "not this exact record of the observed transcript"):
+                    f.order(recorded, observed_ack=write_json(f.root / f"ack-{name}.json", claimed))
+
+    def test_ack_is_joined_to_this_notice_by_payload_and_nonce(self):
+        f = self.f
+        recorded = f.record()
+        f.append(ack_record())
+        cases = dict(
+            other_payload=dict(handshake_precondition=dict(payload_sha256="0" * 64)), no_precondition=dict(handshake_precondition=None),
+            codex_executor=dict(executor_provider="codex"), other_marker=dict(marker="U2078_U21_HS_claude_b_0123abcd"),
+            short_nonce=dict(ack_nonce="0123"), nonce_not_hex=dict(ack_nonce="Z" * 16),
+            nonce_not_hex_consistent=dict(ack_nonce="Z" * 16, ack_line_expected=ACK.replace(NONCE, "Z" * 16)),
+            line_other_nonce=dict(ack_line_expected=ACK.replace(NONCE, "f" * 16)),
+            other_prefix=dict(ack_line_expected=ACK.replace("PREFLIGHT_ACK", "PREFLIGHT_OK")),
+            not_printable=dict(ack_line_expected=ACK.replace("|READY", "\tREADY")))
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                receipt = handshake(f.root / f"handshake-{name}.json", f.binding, **change)
+                with self.assertRaisesRegex(ContractError, "not this notice's original ACK contract"):
+                    f.order(recorded, handshake=receipt)
+        receipt = handshake(f.root / "handshake-unmarked.json", f.binding)
+        value = json_ref(receipt)
+        value.pop("marker")
+        self.assertEqual(f.order(recorded, handshake=write_json(receipt["path"], value))["ordering"],
+                         "ACK_AFTER_FULL_BODY_CONSUMPTION")
+
+    def test_verify_window_and_ack_cli_print_one_json_result(self):
+        f = self.f
+        recorded = f.record()
+        f.append(ack_record())
+        receipt = handshake(f.root / "handshake.json", f.binding)
+        pins = dict(result=recorded["path"], result_sha256=recorded["sha256"], policy_sha256=f.policy["sha256"],
+                    interpreter=INTERPRETER)
+        self.assertEqual(run_cli("verify", **pins)[0], 0)
+        order = dict(pins, handshake_receipt=receipt["path"], handshake_receipt_sha256=receipt["sha256"], ack_end=f.eof())
+        rc, value = run_cli("ack-order", **order)
+        self.assertEqual((rc, value["ordering"]), (0, "ACK_AFTER_FULL_BODY_CONSUMPTION"))
+        for name, change, reason in (("result_pin", dict(result_sha256="6" * 64), "observation differs from its pin"),
+                                     ("receipt_pin", dict(handshake_receipt_sha256="6" * 64), "handshake receipt differs"),
+                                     ("half_observed", dict(observed_ack=receipt["path"]), "go together")):
+            with self.subTest(case=name):
+                rc, value = run_cli("ack-order", **dict(order, **change))
+                self.assertEqual((rc, value["observation"], value["schema"]), (2, "UNVERIFIED", downlink.ACK_SCHEMA))
+                self.assertIn(reason, value["reason"])
+        f.plan(f.consumed())
+        window = dict(attempt=f.attempt["path"], attempt_sha256=f.attempt["sha256"], policy=f.policy["path"],
+                      policy_sha256=f.policy["sha256"], interpreter=INTERPRETER)
+        rc, value = run_cli("observe-window", **window, window_dir=f.root / "evidence" / "w1", deadline_epoch=time.time() + 30)
+        self.assertEqual((rc, value["evidence_class"], len(value["increments"])), (0, "MODEL_CONTEXT_CONSUMED", 1))
+        f.plan(f.unverified("MATCHING_REAL_RESPONSE_REQUIRED"), 2)
+        rc, value = run_cli("observe-window", **window, window_dir=f.root / "evidence" / "w2",
+                            deadline_epoch=time.time() + 1.2, interval=1)
+        self.assertEqual((rc, value["observation"], value["schema"]), (2, "UNVERIFIED", downlink.WINDOW_SCHEMA))
+        self.assertTrue(value["reason"].startswith("deadline reached"), value["reason"])
 
 
 def raw(obj):
@@ -342,6 +771,32 @@ def raw(obj):
 def api_hash(message):
     return digest(json.dumps(message, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
                              allow_nan=False).encode())
+
+
+def cli_args(args):
+    return [x for k, v in args.items() for x in ("--" + k.replace("_", "-"), str(v))]
+
+
+def run_cli(command, **args):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = downlink.main([command, *cli_args(args)])
+    return rc, json.loads(out.getvalue())
+
+
+def ack_record(line=ACK, **changes):
+    value = dict(type="assistant", sessionId=SESSION, uuid="ack",
+                 message=dict(role="assistant", content=[dict(type="text", text=line)]))
+    value.update(changes)
+    return value
+
+
+def handshake(path, binding, **changes):
+    """The original handshake receipt fields ack-order joins on (mac_harness / upgrade_handshake_capability)."""
+    value = dict(task_id="u21-fixture", executor_provider="claude", ack_nonce=NONCE, ack_line_expected=ACK,
+                 marker=binding["receipt_marker"], handshake_precondition=dict(payload_sha256=binding["payload_sha256"]))
+    value.update(changes)
+    return write_json(path, value)
 
 
 @unittest.skipUnless((RELEASE / "MANIFEST.json").is_file(), "pinned MAC 0.4.76 release is not installed here")
@@ -367,9 +822,13 @@ class PinnedObserverTests(unittest.TestCase):
                 if node.targets[0].id in ("PREFIX", "SUFFIX", "VERSION"):
                     names[node.targets[0].id] = ast.literal_eval(node.value)
         self.prefix_text, self.suffix_text, self.version = names["PREFIX"], names["SUFFIX"], names["VERSION"]
+        self.chains = {}
 
-    def attempt(self, name, cut=None):
-        """One queued-only original attempt with the measured 2.1.303 notice/body chain (optionally cut)."""
+    def attempt(self, name, cut=None, insert=None, final_text="Full body received."):
+        """One queued-only original attempt with the measured 2.1.303 notice/body chain.
+
+        cut keeps only events[:cut]; insert=(index, record) adds one record; the
+        chain's records are kept in self.chains[name] for later appends."""
         home = self.root / name
         native_root = home / "claude"
         transcript = native_root / "projects" / "-task" / (SESSION + ".jsonl")
@@ -406,9 +865,14 @@ class PinnedObserverTests(unittest.TestCase):
         events = [event("attachment", attachment=dict(type="queued_command", prompt=wire)),
                   blob, request, assistant("request-one", "call-hash", [bash]),
                   assistant("request-one", "call-read", [read]), hash_result, read_result,
-                  body_request, assistant("request-two", "response-body", [dict(type="text", text="Full body received.")])]
+                  body_request, assistant("request-two", "response-body", [dict(type="text", text=final_text)])]
+        self.chains[name] = dict(events=events, transcript=transcript, blob=blob, request=request,
+                                 assistant=assistant, event=event)
+        written = events[:cut]
+        if insert is not None:
+            written.insert(*insert)
         prefix = raw(dict(type="system", sessionId=SESSION, subtype="native_metadata"))
-        transcript.write_bytes(prefix + b"".join(raw(obj) for obj in events[:cut]))
+        transcript.write_bytes(prefix + b"".join(raw(obj) for obj in written))
         info = transcript.stat()
         pin = dict(path=str(transcript), device=info.st_dev, inode=info.st_ino, offset=len(prefix),
                    prefix_size=len(prefix), prefix_sha256=digest(prefix), tail_at=0, tail_sha256=digest(prefix),
@@ -430,18 +894,98 @@ class PinnedObserverTests(unittest.TestCase):
             events=[dict(phase="PASTE_INTENT", native_paste_fence=fence), dict(phase="ENTER_SENT")]))
         return attempt, home / "evidence"
 
+    def eof(self, name):
+        return self.chains[name]["transcript"].stat().st_size
+
+    def append(self, name, *records):
+        with self.chains[name]["transcript"].open("ab") as stream:
+            for record in records:
+                stream.write(record if isinstance(record, bytes) else raw(record))
+        return self.eof(name)
+
+    def observe(self, name, attempt, evidence, end=None):
+        return downlink.observe(attempt, self.policy, INTERPRETER, evidence, self.eof(name) if end is None else end)
+
     def test_reviewed_observer_reports_consumption_only_for_the_complete_chain(self):
         attempt, evidence = self.attempt("complete")
-        result = downlink.observe(attempt, self.policy, INTERPRETER, evidence)
+        result = self.observe("complete", attempt, evidence)
         self.assertEqual(result["evidence_class"], "MODEL_CONTEXT_CONSUMED")
         self.assertEqual((result["observation"]["parallel_tool_results"], result["observation"]["native_user_received"]),
                          (2, False))
+        self.assertEqual(result["snapshot"]["sha256"], result["observation"]["snapshot_sha256"])
         for name, cut, reason in (("queued_only", 1, "UNIQUE_EXACT_API_USER_WRAPPER_REQUIRED"),
                                   ("no_body_response", -1, "FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED")):
             with self.subTest(case=name):
                 attempt, evidence = self.attempt(name, cut)
                 with self.assertRaisesRegex(ContractError, "context not consumed: " + reason):
-                    downlink.observe(attempt, self.policy, INTERPRETER, evidence)
+                    self.observe(name, attempt, evidence)
+
+    def test_a_completed_proof_is_frozen_at_its_endpoint_against_later_growth_and_recarriage(self):
+        """ROOT R54-F1/F3 counterexamples against the real observer: the pinned endpoint reproduces."""
+        for name, later, reason in (
+                ("growth", lambda c: raw(dict(type="system", sessionId=SESSION, pad="x" * downlink.MAX_SCAN)),
+                 "outside the bounded window"),
+                ("recarried_tail", lambda c: c["event"]("api-request", id="request-three", querySource="repl_main_thread",
+                                                         tail=[c["blob"]["hash"]]),
+                 "context not consumed: CORRESPONDING_WIRE_REQUEST_REQUIRED"),
+                ("rematerialized_wrapper", lambda c: c["blob"], "context not consumed: UNIQUE_EXACT_API_USER_WRAPPER_REQUIRED")):
+            with self.subTest(case=name):
+                attempt, evidence = self.attempt(name)
+                recorded = write_json(evidence / "result.json", self.observe(name, attempt, evidence))
+                end = json_ref(recorded)["snapshot"]["end"]
+                self.append(name, later(self.chains[name]))
+                with self.assertRaisesRegex(ContractError, reason):
+                    self.observe(name, attempt, evidence)
+                self.assertEqual(downlink.verify(recorded, self.policy["sha256"], INTERPRETER), json_ref(recorded))
+                with self.assertRaisesRegex(ContractError, "not a complete record boundary"):
+                    self.observe(name, attempt, evidence, end - 1)
+
+    def test_an_early_refusal_is_provisional_and_the_window_terminalizes_on_the_later_proof(self):
+        """ROOT R54-F2: refused before the final body response, consumed after it; no input either way."""
+        attempt, evidence = self.attempt("early", -1)
+        with self.assertRaisesRegex(ContractError, "FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED"):
+            self.observe("early", attempt, evidence)
+        clock = [time.time()]
+
+        def sleep(seconds):
+            self.assertGreater(seconds, 0, "a window never busy-waits")
+            clock[0] += seconds
+            self.append("early", self.chains["early"]["events"][-1])
+        terminal = downlink.observe_window(attempt, self.policy, INTERPRETER, evidence / "window",
+                                           deadline_epoch=clock[0] + 60, now=lambda: clock[0], sleep=sleep)
+        first, second = (json_ref(ref) for ref in terminal["increments"])
+        self.assertEqual((terminal["evidence_class"], first["provisional"], second["observation"]),
+                         ("MODEL_CONTEXT_CONSUMED", True, "MODEL_CONTEXT_CONSUMED"))
+        self.assertIn("FULL_BODY_REQUEST_AND_MATCHING_RESPONSE_REQUIRED", first["reason"])
+        self.assertEqual(terminal["snapshot_end"], self.eof("early"))
+        self.assertEqual(downlink.verify(terminal["result"], self.policy["sha256"], INTERPRETER)["evidence_class"],
+                         "MODEL_CONTEXT_CONSUMED")
+
+    def test_ack_order_with_the_real_observer_proof(self):
+        """ROOT R53 cases: an ACK before the body response is refused even though consumption is proven."""
+        def run(name, **attempt_options):
+            attempt, evidence = self.attempt(name, **attempt_options)
+            chain = self.chains[name]
+            recorded = write_json(evidence / "result.json", self.observe(name, attempt, evidence))
+            receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
+            return chain, recorded, receipt
+        ack = lambda chain, rid: chain["assistant"](rid, "ack", [dict(type="text", text=ACK)])
+        chain, recorded, receipt = run("ack_after")
+        self.append("ack_after", ack(chain, "request-two"))
+        order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof("ack_after"))
+        self.assertEqual(order["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+        self.assertGreater(order["ack"]["offset"], order["body_consumed_at_offset"])
+        chain, recorded, receipt = run("ack_same_response", final_text=ACK)
+        order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof("ack_same_response"))
+        self.assertEqual(order["ack"]["offset"], order["body_consumed_at_offset"])
+        # The early ACK answers the notice request, before the body was read; consumption is still proven.
+        early = dict(type="assistant", sessionId=SESSION, version=self.version, requestRef="request-one", uuid="ack",
+                     isSidechain=False, message=dict(type="message", role="assistant", id="msg_ack",
+                                                     content=[dict(type="text", text=ACK)]))
+        chain, recorded, receipt = run("ack_before", insert=(3, early))
+        self.assertEqual(json_ref(recorded)["evidence_class"], "MODEL_CONTEXT_CONSUMED")
+        with self.assertRaisesRegex(ContractError, "ACK precedes full body consumption"):
+            downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof("ack_before"))
 
 
 if __name__ == "__main__":
