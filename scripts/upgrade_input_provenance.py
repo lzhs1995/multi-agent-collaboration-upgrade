@@ -8,10 +8,12 @@ units too, so an input that native_text cannot read never counts as zero.
 Only an intent written behind a pre-send native fence plus a landed entry that
 names the exact native records attributes a unit. Its producer id and kind must
 match the registration pinned before the run, and that producer's registered
-native session must hold exactly one foreground call of the registered sender
-entrypoint whose exact argv binds this intent id, receiver surface and payload
-hash (sender_command), made no later than the intent. A call that only prints,
-searches or reads the id is not a send. The registered kind decides MACHINE or
+native session must hold exactly one helper send, decoded by the shared
+invocation reader, made no later than the intent: the registered helper path,
+this receiver's surface, --request-id equal to the intent id, and a message
+whose recomputed helper notice hashes to the journaled and landed payload.
+A call that only prints, searches, reads or reconciles the id is not a send.
+The registered kind decides MACHINE or
 HUMAN_REGISTERED; the latter is a registered operator session, not a proved
 person. Everything else, including text-only harness injections and
 unjournaled metadata records, stays UNKNOWN. The journal proves what a
@@ -24,11 +26,14 @@ from __future__ import annotations
 import math
 import os
 import re
-import shlex
 from collections import Counter
+from pathlib import Path
+from uuid import UUID
 
+from cmux_prompt_reference import helper_request
 from orchestration_common import (ContractError, canonical, checked_path, digest, exclusive_lock, json_ref,
                                   parse_time, read_ref, read_regular, require, strict_json, utc_now)
+from orchestration_inputs import invocation_calls
 from upgrade_body_read_evidence import calls_and_results, valid_command
 
 JOURNAL_SCHEMA = "upgrade-input-provenance-journal-v1"
@@ -36,6 +41,9 @@ REGISTRATION_SCHEMA = "upgrade-input-producers-v1"
 RESULT_SCHEMA = "upgrade-input-provenance-v1"
 PRODUCER_CLASS = {"upgrade_driver": "MACHINE", "mac_bridge": "MACHINE", "lane_agent": "MACHINE",
                   "operator_console": "HUMAN_REGISTERED"}
+TRANSPORTS = ("cmux_helper",)
+HELPER_NAMES = ("cmux-agent", "cmux_agent_adapter.py")
+HELPER_MODES = ("send", "ask")
 CLASSES = ("HUMAN_REGISTERED", "MACHINE", "UNKNOWN")
 INTENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{15,127}")
 GENESIS = "0" * 64
@@ -137,17 +145,54 @@ def _registration(ref, run_id):
         require(isinstance(session, dict) and session.get("provider") in ("claude", "codex")
                 and isinstance(session.get("session_id"), str) and isinstance(session.get("transcript"), dict),
                 "registered producer session required")
-        entry = producer.get("entrypoint")
-        require(isinstance(entry, list) and entry and all(isinstance(a, str) and a for a in entry)
-                and os.path.isabs(entry[0]), "registered sender entrypoint must be an absolute argv")
-        found[producer["id"]] = producer
+        found[producer["id"]] = dict(producer, transport=_transport(producer.get("transport")))
     return found
 
 
-def sender_command(producer, intent_id, surface_uuid, payload_sha256):
-    """The one exact command line a registered sender runs for one intent."""
-    return shlex.join([*producer["entrypoint"], "--intent-id", intent_id, "--surface", surface_uuid,
-                       "--payload-sha256", payload_sha256])
+def _transport(value):
+    """The frozen wrapper a registered producer sends through, and its payload inputs.
+
+    Only the shared helper transport is recognised: its request payload is a pure
+    function of (identity, mode, message, request_id, home), so a verifier can
+    recompute the exact bytes a receiver must land instead of trusting the sender.
+    """
+    require(isinstance(value, dict) and value.get("kind") in TRANSPORTS, "registered sender transport required")
+    helper, home = value.get("helper"), value.get("home")
+    require(isinstance(helper, str) and os.path.isabs(helper)
+            and os.path.basename(helper) in HELPER_NAMES, "registered helper must be an absolute shared helper path")
+    require(isinstance(home, str) and os.path.isabs(home), "registered helper home must be absolute")
+    caller, workspace = value.get("caller_surface_uuid"), value.get("workspace_uuid")
+    require(_uuid(caller) and _uuid(workspace), "registered caller surface and workspace uuids required")
+    return dict(kind=value["kind"], helper=helper, home=home,
+                caller_surface_uuid=_uuid(caller), workspace_uuid=_uuid(workspace))
+
+
+def _uuid(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(UUID(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def expected_payload(producer, reader, *, mode, message, request_id):
+    """The exact single-line notice this transport makes a receiver land.
+
+    Recomputed from the registered transport and the receiver's own pinned
+    identity, so a producer cannot assert a payload it did not actually compose.
+    """
+    transport = producer["transport"]
+    session = reader.session
+    identity = dict(workspace_uuid=transport["workspace_uuid"],
+                    caller_surface_uuid=transport["caller_surface_uuid"],
+                    target_surface_uuid=_uuid(session.get("surface_uuid")),
+                    target_pane_uuid=_uuid(session.get("pane_uuid")))
+    require(identity["target_surface_uuid"] and identity["target_pane_uuid"],
+            "receiver surface and pane uuids required")
+    require(_uuid(session.get("workspace_uuid")) == transport["workspace_uuid"], "WORKSPACE_MISMATCH")
+    require(mode in HELPER_MODES, "helper mode is not a send")
+    return helper_request(identity, mode, message, request_id, home=Path(transport["home"]))["payload"]
 
 
 def _producer_calls(producer, supplied):
@@ -196,16 +241,19 @@ class ProvenanceJournal:
             os.fsync(stream.fileno())
         return entry
 
-    def intent(self, *, intent_id, producer, lane, reader, fence, payload, purpose=""):
+    def intent(self, *, intent_id, producer, lane, reader, fence, mode, message, purpose=""):
         """Record one send before it happens; fence is the receiver snapshot taken before the send.
 
-        The producer's registered session must already hold the one tool call naming intent_id.
+        The producer's registered session must already hold the one helper call that
+        sends message with --request-id intent_id; the journal keeps only the hash of
+        the notice that call makes the receiver land, never the message text.
         """
         require(isinstance(intent_id, str) and INTENT_ID.fullmatch(intent_id), "run-unique intent id required")
         pid = producer.get("id") if isinstance(producer, dict) else None
         registered = self.producers.get(pid) if isinstance(pid, str) else None
         require(registered is not None and registered["kind"] == producer.get("kind"), "registered producer required")
-        require(isinstance(payload, str) and isinstance(purpose, str), "exact payload text required")
+        require(isinstance(message, str) and isinstance(purpose, str), "exact message text required")
+        payload = expected_payload(registered, reader, mode=mode, message=message, request_id=intent_id)
         reader.verify_pin(fence)
         with exclusive_lock(self._lock(), wait_seconds=5):
             return self._append(dict(kind="intent", intent_id=intent_id,
@@ -222,11 +270,54 @@ class ProvenanceJournal:
                                      at=utc_now()))
 
 
-def _sends(call, command):
+def _foreground(call, item):
+    """The decoded send is the call's whole, direct foreground command.
+
+    The shared reader splits shell control operators, so it also decodes a send
+    after `false &&`, `true ||` or `;`, inside a pipeline, backgrounded with `&`
+    or nested in another shell. None of those proves the send ran (ROOT R48):
+    admit only one shell frame whose segment is the entire tool command, run as
+    a direct foreground tool invocation (valid_command).
+    """
+    arguments = (item.get("native_tool") or {}).get("arguments")
+    command = arguments.get("cmd", arguments.get("command")) if isinstance(arguments, dict) else None
+    frames = item.get("shell") or []
     try:
-        return valid_command(call["name"], call["args"], command)
-    except (ValueError, TypeError):
+        return (isinstance(command, str) and len(frames) == 1
+                and frames[0].get("segment", "").strip() == command.strip()
+                and valid_command(call["name"], call["args"], command))
+    except ERRORS:
         return False
+
+
+def _sends(call, producer, reader, intent_id, payload_sha256):
+    """Whether one native tool call is the helper send of exactly this intent.
+
+    Decoded by the shared invocation reader (orchestration_inputs.invocation_calls);
+    printing, reading or reconciling the id, another wrapper path, another
+    receiver or another payload is not a send of this intent.
+    """
+    try:
+        decoded = invocation_calls(call["name"], call["args"])
+    except ERRORS:
+        return False
+    for item in decoded:
+        frames = item.get("shell") or [{}]
+        # expected_payload requires the receiver's own surface uuid and a send/ask mode, so a
+        # surfaceless broadcast or a reconcile (no --request-id) never matches.
+        if (item.get("kind") != "helper"
+                or frames[-1].get("entrypoint") != producer["transport"]["helper"]
+                or _uuid(item.get("surface")) != _uuid(reader.session.get("surface_uuid"))
+                or item.get("request_id") != intent_id or not _foreground(call, item)):
+            continue
+        try:
+            payload = expected_payload(producer, reader, mode=item["operation"], message=item["text"],
+                                       request_id=intent_id)
+        except ERRORS:
+            continue
+        if digest(payload.encode()) == payload_sha256:
+            return True
+    return False
 
 
 def _claim(intent, landed, readers, units, bounds, window, producers, calls):
@@ -250,9 +341,8 @@ def _claim(intent, landed, readers, units, bounds, window, producers, calls):
     require(pid in calls, "PRODUCER_SESSION_UNREADABLE")
     payload = intent.get("payload_sha256")
     require(isinstance(payload, str) and re.fullmatch(r"[0-9a-f]{64}", payload), "PAYLOAD_SHA256_INVALID")
-    command = sender_command(registered, ident, reader.session["surface_uuid"], payload)
-    # Calls that print, search or read the id never match the exact foreground sender command.
-    sending = [call for call in calls[pid] if _sends(call, command)]
+    # _foreground admits at most one send per call: the call's whole command.
+    sending = [call for call in calls[pid] if _sends(call, registered, reader, ident, payload)]
     require(len(sending) == 1, "ONE_SENDING_INVOCATION_REQUIRED")
     sent = sending[0]
     require(isinstance(sent["call_id"], str) and sent["call_id"]

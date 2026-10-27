@@ -1,19 +1,24 @@
 """Exact producer-journal joins; synthetic native files stay offline."""
 import json
 import os
+import shlex
 import shutil
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
 
+from cmux_prompt_reference import helper_request
 from orchestration_common import ContractError, canonical, digest, file_ref, utc_now, write_json
 from test_orchestration_native import NativeFixture
-from upgrade_input_provenance import (REGISTRATION_SCHEMA, ProvenanceJournal, classify_inputs, landing_refs,
-                                      sender_command)
+from upgrade_input_provenance import (REGISTRATION_SCHEMA, ProvenanceJournal, classify_inputs, expected_payload,
+                                      landing_refs)
 
-DRIVER = dict(kind="upgrade_driver", id="driver-1", entrypoint=["/fixture/bin/python3", "/fixture/send_notice.py"])
-OPERATOR = dict(kind="operator_console", id="console-1", entrypoint=["/fixture/bin/console-relay"])
+DRIVER = dict(kind="upgrade_driver", id="driver-1")
+OPERATOR = dict(kind="operator_console", id="console-1")
+# The shared helper as production calls it (upgrade_communication_plan): rtk proxy <helper> send ...
+HELPER = "/fixture/mac/scripts/cmux_agent_adapter.py"
+HOME = "/fixture/home"
 
 
 def iid(short):
@@ -26,11 +31,14 @@ class Run:
     def __init__(self, base):
         self.base = base = Path(base).resolve()
         self.lanes, self.controllers = {}, {}
+        self.workspace = str(uuid.uuid4())
         for group, name, provider in (("lanes", "codex", "codex"), ("lanes", "claude_a", "claude"),
                                       ("controllers", "driver-1", "claude"), ("controllers", "console-1", "claude")):
             (base / name).mkdir()
             fixture = NativeFixture(base / name, provider, session_id=str(uuid.uuid4()))
-            fixture.session["surface_uuid"] = str(uuid.uuid4())
+            # Upper case as cmux reports it; the helper canonicalises identity to lower case.
+            fixture.session.update(surface_uuid=str(uuid.uuid4()).upper(), pane_uuid=str(uuid.uuid4()),
+                                   workspace_uuid=self.workspace)
             getattr(self, group)[name] = fixture
         self.readers = {lane: f.reader for lane, f in self.lanes.items()}
         self.starts = {lane: r.snapshot() for lane, r in self.readers.items()}
@@ -44,8 +52,15 @@ class Run:
         f = self.controllers[pid]
         return dict(provider="claude", session_id=f.session["session_id"], transcript=f.session["transcript"])
 
+    def transport_of(self, pid, **override):
+        return dict(dict(kind="cmux_helper", helper=HELPER, home=HOME, workspace_uuid=self.workspace,
+                         caller_surface_uuid=self.controllers[pid].session["surface_uuid"]), **override)
+
+    def registered(self, producer):
+        return dict(producer, session=self.session_of(producer["id"]), transport=self.transport_of(producer["id"]))
+
     def register(self, name, run_id="run-1", extra=()):
-        producers = [dict(p, session=self.session_of(p["id"])) for p in (DRIVER, OPERATOR)]
+        producers = [self.registered(p) for p in (DRIVER, OPERATOR)]
         return write_json(self.base / name, dict(schema=REGISTRATION_SCHEMA, run_id=run_id,
                                                  producers=[*producers, *extra]))
 
@@ -57,24 +72,30 @@ class Run:
                 type="tool_use", id=call_id or "toolu_" + uuid.uuid4().hex, name=name,
                 input=args if args is not None else dict(command=command))])))
 
-    def command(self, short, payload, *, lane="codex", producer=DRIVER):
-        return sender_command(producer, iid(short), self.readers[lane].session["surface_uuid"],
-                              digest(payload.encode()))
+    def command(self, short, message, *, lane="codex", reader=None, operation="send", ident=None):
+        """The production helper argv for one intent (upgrade_communication_plan's shape)."""
+        reader = reader or self.readers[lane]
+        return shlex.join(["rtk", "proxy", HELPER, operation, reader.session["surface_uuid"],
+                           "--request-id", ident or iid(short), message])
 
-    def intent(self, short, *, lane, payload, reader=None, fence=None, producer=DRIVER, call=True):
+    def notice(self, short, message, *, lane="codex", reader=None, producer=DRIVER, ident=None):
+        """The exact notice that helper send makes the receiver land."""
+        return expected_payload(self.journal.producers[producer["id"]], reader or self.readers[lane],
+                                mode="send", message=message, request_id=ident or iid(short))
+
+    def intent(self, short, *, lane, message, reader=None, fence=None, producer=DRIVER, call=True):
         reader = reader or self.readers[lane]
         fence = fence or reader.snapshot()
         if call:
-            self.call(producer["id"], sender_command(producer, iid(short), reader.session["surface_uuid"],
-                                                     digest(payload.encode())))
+            self.call(producer["id"], self.command(short, message, reader=reader))
         return self.journal.intent(intent_id=iid(short), producer=producer, lane=lane, reader=reader,
-                                   fence=fence, payload=payload, purpose="fixture")
+                                   fence=fence, mode="send", message=message, purpose="fixture")
 
     def landed(self, short, refs):
         return self.journal.landed(intent_id=iid(short), refs=refs)
 
     def deliver(self, text):
-        return lambda: self.user("codex", [dict(type="input_text", text=text)])
+        return self.user("codex", [dict(type="input_text", text=text)])
 
     def sessions(self):
         return {pid: dict(reader=f.reader, start=self.producer_starts[pid], end=f.reader.snapshot())
@@ -100,12 +121,14 @@ class Run:
                                                attachment=dict(type="queued_command", prompt=text)))
         return enqueue, landing
 
-    def send(self, lane, short, payload, deliver, *, producer=DRIVER, landed=True, call=True):
+    def send(self, lane, short, message, deliver, *, producer=DRIVER, landed=True, call=True):
+        """Intent, then deliver(notice) lands the helper's exact notice, then the landed entry."""
         reader = self.readers[lane]
         fence = reader.snapshot()
-        self.intent(short, lane=lane, payload=payload, fence=fence, producer=producer, call=call)
-        deliver()
-        refs = landing_refs(reader, fence, reader.snapshot(), payload)
+        self.intent(short, lane=lane, message=message, fence=fence, producer=producer, call=call)
+        notice = self.notice(short, message, lane=lane, producer=producer)
+        deliver(notice)
+        refs = landing_refs(reader, fence, reader.snapshot(), notice)
         if landed:
             self.landed(short, refs)
         return refs
@@ -153,8 +176,8 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_exact_machine_joins_close_the_gate_at_zero(self):
         run = self.run_fixture()
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
-        run.send("claude_a", "n2", "NOTICE n2", lambda: run.queued("NOTICE n2"))
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
+        run.send("claude_a", "n2", "NOTICE n2", run.queued)
         result = run.classify()
         self.assertEqual([(u["kind"], u["provenance"], u["intent_id"]) for u in result["units"]],
                          [("message", "MACHINE", iid("n1")), ("enqueue", "MACHINE", iid("n2")),
@@ -166,8 +189,8 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_only_a_journaled_operator_input_counts_as_human(self):
         run = self.run_fixture()
-        run.send("claude_a", "h1", "operator h1", lambda: run.queued("operator h1"), producer=OPERATOR)
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+        run.send("claude_a", "h1", "operator h1", run.queued, producer=OPERATOR)
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
         result = run.classify()
         self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=2, MACHINE=1, UNKNOWN=0))
         # The enqueue and its landing are one intervention.
@@ -175,7 +198,7 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_unjournaled_input_beside_joined_input_keeps_the_gate_unknown(self):
         run = self.run_fixture()
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
         run.user("codex", [dict(type="input_text", text="typed by someone")])
         result = run.classify()
         self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=1, UNKNOWN=1))
@@ -186,7 +209,7 @@ class InputProvenanceTests(unittest.TestCase):
                              ("sha256", "0" * 64), ("path", "/elsewhere.jsonl")):
             with self.subTest(field=field):
                 run = self.run_fixture()
-                refs = run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"), landed=False)
+                refs = run.send("codex", "n1", "NOTICE n1", run.deliver, landed=False)
                 forged = dict(refs[0])
                 forged[field] = forged[field] + value if isinstance(value, int) else value
                 run.landed("n1", [forged])
@@ -198,19 +221,21 @@ class InputProvenanceTests(unittest.TestCase):
         def lane_swap(run):
             other = run.readers["codex"]
             fence = other.snapshot()
-            run.intent("n1", lane="claude_a", payload="NOTICE n1")
-            run.user("codex", [dict(type="input_text", text="NOTICE n1")])
-            run.landed("n1", landing_refs(other, fence, other.snapshot(), "NOTICE n1"))
+            run.intent("n1", lane="claude_a", message="NOTICE n1")
+            notice = run.notice("n1", "NOTICE n1", lane="claude_a")
+            run.deliver(notice)
+            run.landed("n1", landing_refs(other, fence, other.snapshot(), notice))
 
         def session_swap(run):
             claude = run.readers["claude_a"]
             fence = claude.snapshot()
-            run.intent("n1", lane="codex", reader=claude, fence=fence, payload="NOTICE n1")
-            run.queued("NOTICE n1")
-            run.landed("n1", landing_refs(claude, fence, claude.snapshot(), "NOTICE n1"))
+            run.intent("n1", lane="codex", reader=claude, fence=fence, message="NOTICE n1")
+            notice = run.notice("n1", "NOTICE n1", reader=claude)
+            run.queued(notice)
+            run.landed("n1", landing_refs(claude, fence, claude.snapshot(), notice))
 
         def surface_swap(run):
-            run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+            run.send("codex", "n1", "NOTICE n1", run.deliver)
             # The run header pins another surface for this lane.
             run.lanes["codex"].session["surface_uuid"] = str(uuid.uuid4())
 
@@ -230,13 +255,15 @@ class InputProvenanceTests(unittest.TestCase):
         """An intent the writer would refuse, appended as a forger could; driver-1 still runs the exact send."""
         reader, ident = run.readers["codex"], ident or iid("n1")
         fence = reader.snapshot()
+        notice = run.notice(None, "NOTICE n1", ident=ident)
         if call:
-            run.call("driver-1", sender_command(DRIVER, ident, reader.session["surface_uuid"], digest(b"NOTICE n1")))
+            run.call("driver-1", run.command(None, "NOTICE n1", ident=ident))
         run.journal._append(dict(kind="intent", intent_id=ident, producer=producer, lane="codex",
             session_id=reader.session["session_id"], surface_uuid=reader.session["surface_uuid"],
-            fence=fence, payload_sha256=digest(b"NOTICE n1"), payload_bytes=9, purpose="", at=utc_now()))
-        run.user("codex", [dict(type="input_text", text="NOTICE n1")])
-        run.journal.landed(intent_id=ident, refs=landing_refs(reader, fence, reader.snapshot(), "NOTICE n1"))
+            fence=fence, payload_sha256=digest(notice.encode()), payload_bytes=len(notice.encode()),
+            purpose="", at=utc_now()))
+        run.deliver(notice)
+        run.journal.landed(intent_id=ident, refs=landing_refs(reader, fence, reader.snapshot(), notice))
 
     def test_producer_must_be_registered_and_have_invoked_the_send(self):
         later = "2099-01-01T00:00:00Z"
@@ -245,7 +272,7 @@ class InputProvenanceTests(unittest.TestCase):
             return run.command("n1", "NOTICE n1")
 
         def unsent(run):
-            run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"), call=False)
+            run.send("codex", "n1", "NOTICE n1", run.deliver, call=False)
 
         def call_in_other_session(run):
             run.call("console-1", exact(run))
@@ -262,10 +289,33 @@ class InputProvenanceTests(unittest.TestCase):
 
         def retried(run):
             run.call("driver-1", exact(run))
-            run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+            run.send("codex", "n1", "NOTICE n1", run.deliver)
 
-        # R44: one call that prints, echoes, searches or writes the id, runs the command in the
-        # background, or runs lookalike argv is not the send; each is checked alone.
+        def sent_twice_in_one_call(run):
+            run.call("driver-1", exact(run) + " && " + exact(run))
+            unsent(run)
+
+        # R48: the reader decodes a send after a control operator, in a pipeline, backgrounded or in
+        # a nested shell, but none proves the helper ran in the foreground; only the whole command does.
+        controlflow = {
+            "false_and": lambda run: "false && " + exact(run),
+            "true_or": lambda run: "true || " + exact(run),
+            "shell_background": lambda run: exact(run) + " &",
+            "sequenced": lambda run: "true; " + exact(run),
+            "piped": lambda run: exact(run) + " | cat",
+            "shell_wrapped": lambda run: shlex.join(["bash", "-c", exact(run)]),
+            "nested_false_and": lambda run: shlex.join(["bash", "-c", "false && " + exact(run)]),
+        }
+
+        def flow(spell):
+            return lambda run: (run.call("driver-1", spell(run)), unsent(run))
+
+        def surface(run):
+            return run.readers["codex"].session["surface_uuid"]
+
+        # R44: one call that prints, echoes, searches, reconciles or writes the id, runs the send in
+        # the background or through another wrapper path, or sends another intent, receiver or
+        # payload is not the send; each is checked alone. The shared invocation reader decodes them.
         mentions = {
             "printf_literal": lambda run: run.call("driver-1", "printf '%s' 'literal reference " + iid("n1") + "'"),
             "echo_command": lambda run: run.call("driver-1", "echo " + exact(run)),
@@ -273,7 +323,13 @@ class InputProvenanceTests(unittest.TestCase):
             "other_payload": lambda run: run.call("driver-1", run.command("n1", "another payload")),
             "other_surface": lambda run: run.call("driver-1", run.command("n1", "NOTICE n1", lane="claude_a")),
             "other_intent": lambda run: run.call("driver-1", run.command("n1X", "NOTICE n1")),
-            "trailing_space": lambda run: run.call("driver-1", exact(run) + " "),
+            "reconcile": lambda run: run.call("driver-1", shlex.join(["rtk", "proxy", HELPER, "reconcile", surface(run),
+                                                                       "--intent", iid("n1")])),
+            "broadcast": lambda run: run.call("driver-1", shlex.join(["rtk", "proxy", HELPER, "broadcast",
+                                                                       "--request-id", iid("n1"), "NOTICE n1"])),
+            "other_helper_path": lambda run: run.call("driver-1", exact(run).replace(
+                HELPER, "/elsewhere/scripts/cmux_agent_adapter.py")),
+            "dynamic_surface": lambda run: run.call("driver-1", exact(run).replace(surface(run), '"$SURFACE"')),
             "extra_flag": lambda run: run.call("driver-1", exact(run) + " --dry-run"),
             "background": lambda run: run.call("driver-1", None, args=dict(command=exact(run), run_in_background=True)),
             "written_not_run": lambda run: run.call("driver-1", None, name="Write",
@@ -307,6 +363,8 @@ class InputProvenanceTests(unittest.TestCase):
             ("call_in_other_session", call_in_other_session, "ONE_SENDING_INVOCATION_REQUIRED"),
             ("typed_not_invoked", typed_not_invoked, "ONE_SENDING_INVOCATION_REQUIRED"),
             ("retried", retried, "ONE_SENDING_INVOCATION_REQUIRED"),
+            ("sent_twice_in_one_call", sent_twice_in_one_call, "ONE_SENDING_INVOCATION_REQUIRED"),
+            *(("controlflow_" + name, flow(spell), "ONE_SENDING_INVOCATION_REQUIRED") for name, spell in controlflow.items()),
             *(("mention_" + name, only(mention), "ONE_SENDING_INVOCATION_REQUIRED") for name, mention in mentions.items()),
             ("call_after_intent", call_after_intent, "SENDING_INVOCATION_OUTSIDE_INTENT_WINDOW"),
             ("stale_call", stale_call, "SENDING_INVOCATION_OUTSIDE_INTENT_WINDOW"),
@@ -320,29 +378,79 @@ class InputProvenanceTests(unittest.TestCase):
                 self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=1))
                 self.assertIsNone(result["human_interventions"])
                 self.assertEqual([u["reason"] for u in result["unresolved"]], [reason])
-        # Control: the exact send is the evidence, and later calls that only quote the id leave it valid.
+        # Control: every spelling of the same send is the evidence, and later calls that only quote
+        # the id leave it valid. The shared reader decodes the argv, so wrapper shape cannot matter.
+        # An undecodable neighbouring call is not a send and does not hide the real one.
         run = self.run_fixture()
-        sent = run.call("driver-1", exact(run))
+        run.call("driver-1", None, args="{not json")
+        run.call("driver-1", exact(run))
         unsent(run)
-        run.call("driver-1", "grep " + iid("n1") + " /fixture/provenance.jsonl", at=later)
-        result = run.classify()
-        self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=1, UNKNOWN=0))
-        self.assertEqual(result["units"][0]["producer_call"], sent)
+        self.assertEqual(run.classify()["counts"], dict(HUMAN_REGISTERED=0, MACHINE=1, UNKNOWN=0))
+        spellings = dict(
+            exact=lambda run: exact(run),
+            trailing_space=lambda run: exact(run) + " ",
+            bare_helper=lambda run: exact(run).replace("rtk proxy ", "", 1),
+            python_helper=lambda run: exact(run).replace("rtk proxy ", "/fixture/bin/python3 ", 1),
+            leading_space=lambda run: "  " + exact(run),
+        )
+        for name, spelling in spellings.items():
+            with self.subTest(spelling=name):
+                run = self.run_fixture()
+                sent = run.call("driver-1", spelling(run))
+                unsent(run)
+                run.call("driver-1", "grep " + iid("n1") + " /fixture/provenance.jsonl", at=later)
+                result = run.classify()
+                self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=1, UNKNOWN=0))
+                self.assertEqual(result["units"][0]["producer_call"], sent)
+        run = self.run_fixture()
         reader = run.readers["codex"]
-        for producer, ident, message in ((dict(kind="upgrade_driver", id="not-in-any-registry"), iid("n2"),
-                                          "registered producer"),
-                                         (dict(kind="operator_console", id="driver-1"), iid("n2"), "registered producer"),
-                                         (DRIVER, "n2", "run-unique intent id")):
-            with self.subTest(writer=producer["id"] + ":" + ident):
-                with self.assertRaisesRegex(ContractError, message):
+        for producer, ident, mode, expected in (
+                (dict(kind="upgrade_driver", id="not-in-any-registry"), iid("n2"), "send", "registered producer"),
+                (dict(kind="operator_console", id="driver-1"), iid("n2"), "send", "registered producer"),
+                (DRIVER, "n2", "send", "run-unique intent id"),
+                (DRIVER, iid("n2"), "broadcast", "helper mode is not a send")):
+            with self.subTest(writer=producer["id"] + ":" + ident + ":" + mode):
+                with self.assertRaisesRegex(ContractError, expected):
                     run.journal.intent(intent_id=ident, producer=producer, lane="codex", reader=reader,
-                                       fence=reader.snapshot(), payload="x")
+                                       fence=reader.snapshot(), mode=mode, message="x")
+
+    def test_notice_is_the_helpers_own_request_for_the_receivers_pinned_identity(self):
+        run = self.run_fixture()
+        reader = run.readers["codex"]
+        driver = run.controllers["driver-1"].session
+        # Oracle: the shared helper's own pure request builder, given the identity it would resolve.
+        identity = dict(workspace_uuid=run.workspace, caller_surface_uuid=driver["surface_uuid"].lower(),
+                        target_surface_uuid=reader.session["surface_uuid"].lower(),
+                        target_pane_uuid=reader.session["pane_uuid"])
+        oracle = helper_request(identity, "send", "NOTICE n1", iid("n1"), home=Path(HOME))
+        self.assertEqual(run.notice("n1", "NOTICE n1"), oracle["payload"])
+        self.assertTrue(oracle["body_reference"]["path"].startswith(HOME + "/"))
+        for name, change, writer, reason in (
+                ("no_pane", dict(pane_uuid=None), "pane uuids required", "ONE_SENDING_INVOCATION_REQUIRED"),
+                ("other_workspace", dict(workspace_uuid=str(uuid.uuid4())), "WORKSPACE_MISMATCH",
+                 "ONE_SENDING_INVOCATION_REQUIRED")):
+            with self.subTest(receiver=name):
+                run = self.run_fixture()
+                reader = run.readers["codex"]
+                kept = dict(reader.session)
+                reader.session.update(change)
+                with self.assertRaisesRegex(ContractError, writer):
+                    run.journal.intent(intent_id=iid("n2"), producer=DRIVER, lane="codex", reader=reader,
+                                       fence=reader.snapshot(), mode="send", message="x")
+                reader.session.clear()
+                reader.session.update(kept)
+                run.send("codex", "n1", "NOTICE n1", run.deliver)
+                # The verifier recomputes the notice from the receiver identity the run pins.
+                reader.session.update(change)
+                result = run.classify()
+                self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=1))
+                self.assertEqual([u["reason"] for u in result["unresolved"]], [reason])
 
     def test_producer_session_must_be_supplied_and_be_the_registered_one(self):
         for name in ("missing", "swapped"):
             with self.subTest(case=name):
                 run = self.run_fixture()
-                run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"), call=False)
+                run.send("codex", "n1", "NOTICE n1", run.deliver, call=False)
                 run.call("console-1", run.command("n1", "NOTICE n1"))
                 sessions = run.sessions()
                 if name == "missing":
@@ -356,16 +464,16 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_registration_must_be_the_one_the_journal_was_opened_with(self):
         run = self.run_fixture()
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
-        other = run.register("producers-2.json", extra=[dict(DRIVER, id="driver-2", session=run.session_of("driver-1"))])
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
+        other = run.register("producers-2.json", extra=[dict(run.registered(DRIVER), id="driver-2")])
         foreign = run.register("producers-3.json", run_id="run-2")
-        # A bare command name would bind whatever PATH resolves at send time.
-        relative = run.register("producers-4.json", extra=[dict(DRIVER, id="driver-3", entrypoint=["send_notice.py"],
-                                                                session=run.session_of("driver-1"))])
-        with self.assertRaisesRegex(ContractError, "absolute argv"):
+        # A bare helper name would bind whatever PATH resolves at send time.
+        relative = run.register("producers-4.json", extra=[dict(run.registered(DRIVER), id="driver-3",
+            transport=run.transport_of("driver-1", helper="cmux_agent_adapter.py"))])
+        with self.assertRaisesRegex(ContractError, "absolute shared helper path"):
             ProvenanceJournal(run.base / "relative.jsonl", "run-1", relative)
         for registration, reason in ((other, "another registration"), (foreign, "foreign producer registration"),
-                                     (relative, "absolute argv")):
+                                     (relative, "absolute shared helper path")):
             with self.subTest(reason=reason):
                 result = run.classify(registration=registration)
                 self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=1))
@@ -373,24 +481,38 @@ class InputProvenanceTests(unittest.TestCase):
                 self.assertIn(reason, result["unresolved"][0]["reason"])
         with self.assertRaisesRegex(ContractError, "another registration"):
             ProvenanceJournal(run.path, "run-1", other)
+        # The transport is the wrapper whose argv the shared reader decodes; each field is load-bearing.
+        bad = (("missing", None, "registered sender transport required"),
+               ("other_kind", run.transport_of("driver-1", kind="bridge_submit_text"), "registered sender transport required"),
+               ("other_program", run.transport_of("driver-1", helper="/fixture/bin/send_notice.py"),
+                "absolute shared helper path"),
+               ("relative_home", run.transport_of("driver-1", home="home"), "home must be absolute"),
+               ("caller_not_uuid", run.transport_of("driver-1", caller_surface_uuid="surface:3"), "uuids required"),
+               ("no_workspace", run.transport_of("driver-1", workspace_uuid=None), "uuids required"))
+        for index, (name, transport, reason) in enumerate(bad):
+            with self.subTest(transport=name):
+                registration = run.register("producers-bad-%d.json" % index,
+                                            extra=[dict(run.registered(DRIVER), id="driver-9", transport=transport)])
+                with self.assertRaisesRegex(ContractError, reason):
+                    ProvenanceJournal(run.base / ("bad-%d.jsonl" % index), "run-1", registration)
 
     def test_backfilled_or_reordered_intent_attributes_nothing(self):
         def fence_after_record(run):
-            ref = run.user("codex", [dict(type="input_text", text="NOTICE n1")])
-            run.intent("n1", lane="codex", payload="NOTICE n1")
+            ref = run.deliver(run.notice("n1", "NOTICE n1"))
+            run.intent("n1", lane="codex", message="NOTICE n1")
             run.landed("n1", [ref])
 
         def record_older_than_intent(run):
-            run.intent("n1", lane="codex", payload="NOTICE n1")
+            run.intent("n1", lane="codex", message="NOTICE n1")
             ref = run.append("codex", dict(type="response_item", timestamp="2026-01-01T00:00:00Z", payload=dict(
-                type="message", role="user", content=[dict(type="input_text", text="NOTICE n1")])))
+                type="message", role="user", content=[dict(type="input_text", text=run.notice("n1", "NOTICE n1"))])))
             run.landed("n1", [ref])
 
         def landed_before_intent(run):
             fence = run.readers["codex"].snapshot()
-            ref = run.user("codex", [dict(type="input_text", text="NOTICE n1")])
+            ref = run.deliver(run.notice("n1", "NOTICE n1"))
             run.landed("n1", [ref])
-            run.intent("n1", lane="codex", fence=fence, payload="NOTICE n1")
+            run.intent("n1", lane="codex", fence=fence, message="NOTICE n1")
 
         for case, reason in ((fence_after_record, "REF_BEFORE_FENCE_OR_UNORDERED"),
                              (record_older_than_intent, "NATIVE_RECORD_OUTSIDE_INTENT_WINDOW"),
@@ -403,10 +525,24 @@ class InputProvenanceTests(unittest.TestCase):
                 self.assertEqual([u["reason"] for u in result["unresolved"]], [reason])
 
     def test_identical_text_never_picks_a_winner(self):
+        # The helper binds --request-id into the notice, so two real sends of the same message are
+        # distinguishable; a journal that claims one payload for two intents still attributes nothing.
         run = self.run_fixture()
-        typed = lambda: run.user("codex", [dict(type="input_text", text="same")])
-        run.send("codex", "n1", "same", typed)
-        run.send("codex", "n2", "same", typed)
+        run.send("codex", "n1", "same", run.deliver)
+        run.send("codex", "n2", "same", run.deliver)
+        result = run.classify()
+        self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=2, UNKNOWN=0))
+        self.assertEqual([u["intent_id"] for u in result["units"]], [iid("n1"), iid("n2")])
+        run = self.run_fixture()
+        reader = run.readers["codex"]
+        notice, fence = run.notice("n1", "same"), reader.snapshot()
+        for short in ("n1", "n2"):
+            run.call("driver-1", run.command("n1", "same"))
+            run.journal._append(dict(kind="intent", intent_id=iid(short), producer=DRIVER, lane="codex",
+                session_id=reader.session["session_id"], surface_uuid=reader.session["surface_uuid"],
+                fence=fence, payload_sha256=digest(notice.encode()), payload_bytes=len(notice.encode()),
+                purpose="", at=utc_now()))
+            run.journal.landed(intent_id=iid(short), refs=[run.deliver(notice)])
         result = run.classify()
         self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=2))
         self.assertEqual([u["reason"] for u in result["unresolved"]], ["PAYLOAD_NOT_RUN_UNIQUE"] * 2)
@@ -415,8 +551,8 @@ class InputProvenanceTests(unittest.TestCase):
         for pick, machine in ((0, 1), (1, 0)):
             with self.subTest(pick=pick):
                 run = self.run_fixture()
-                run.intent("n1", lane="codex", payload="NOTICE n1")
-                refs = [run.user("codex", [dict(type="input_text", text="NOTICE n1")]) for _ in range(2)]
+                run.intent("n1", lane="codex", message="NOTICE n1")
+                refs = [run.deliver(run.notice("n1", "NOTICE n1")) for _ in range(2)]
                 run.landed("n1", [refs[pick]])
                 result = run.classify()
                 self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=machine, UNKNOWN=2 - machine))
@@ -447,30 +583,30 @@ class InputProvenanceTests(unittest.TestCase):
                              (reformatted, "noncanonical")):
             with self.subTest(case=case.__name__):
                 run = self.run_fixture()
-                run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+                run.send("codex", "n1", "NOTICE n1", run.deliver)
                 case(run)
                 result = run.classify()
                 self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=1))
                 self.assertEqual(result["unresolved"][0]["intent_id"], None)
                 self.assertIn(reason, result["unresolved"][0]["reason"])
         run = self.run_fixture()
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
         pinned = file_ref(run.path)
-        run.intent("n2", lane="codex", payload="late")
+        run.intent("n2", lane="codex", message="late")
         result = run.classify(pinned)
         self.assertEqual(result["counts"]["UNKNOWN"], 1)
         self.assertIn("hash/size mismatch", result["unresolved"][0]["reason"])
 
     def test_unlanded_or_enqueue_only_intent_attributes_nothing(self):
         run = self.run_fixture()
-        run.send("claude_a", "n1", "NOTICE n1", lambda: run.queued("NOTICE n1"), landed=False)
+        run.send("claude_a", "n1", "NOTICE n1", run.queued, landed=False)
         result = run.classify()
         self.assertEqual(result["unlanded_intents"], [iid("n1")])
         self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=2))
         run = self.run_fixture()
         sid = run.lanes["claude_a"].session["session_id"]
-        enqueue = lambda: run.append("claude_a", dict(type="queue-operation", operation="enqueue",
-                                                       content="NOTICE n1", sessionId=sid, timestamp=utc_now()))
+        enqueue = lambda notice: run.append("claude_a", dict(type="queue-operation", operation="enqueue",
+                                                              content=notice, sessionId=sid, timestamp=utc_now()))
         self.assertEqual(len(run.send("claude_a", "n1", "NOTICE n1", enqueue)), 1)
         result = run.classify()
         self.assertEqual(result["counts"], dict(HUMAN_REGISTERED=0, MACHINE=0, UNKNOWN=1))
@@ -491,7 +627,7 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_replaced_native_transcript_fails_closed(self):
         run = self.run_fixture()
-        run.send("codex", "n1", "NOTICE n1", run.deliver("NOTICE n1"))
+        run.send("codex", "n1", "NOTICE n1", run.deliver)
         ends = {lane: r.snapshot() for lane, r in run.readers.items()}
         sessions = run.sessions()
         path = run.lanes["codex"].path
@@ -504,16 +640,19 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_writer_chains_entries_and_never_stores_payload_text(self):
         run = self.run_fixture()
-        run.send("codex", "n1", "payload text stays out",
-                 lambda: run.user("codex", [dict(type="input_text", text="payload text stays out")]))
+        run.send("codex", "n1", "payload text stays out", run.deliver)
         raw = run.path.read_bytes()
         entries = [json.loads(line) for line in raw.split(b"\n")[:-1]]
         self.assertEqual([(e["kind"], e["seq"]) for e in entries], [("header", 0), ("intent", 1), ("landed", 2)])
+        notice = run.notice("n1", "payload text stays out")
         self.assertNotIn(b"payload text stays out", raw)
+        self.assertNotIn(notice.encode(), raw)
         self.assertEqual(os.stat(run.path).st_mode & 0o777, 0o600)
         intent = entries[1]
+        # The journal binds the helper's exact notice, which wraps the message in a body reference.
+        self.assertTrue(notice.startswith("STATUS: MESSAGE_REFERENCE_V2 CMUX_HELPER_"))
         self.assertEqual((intent["producer"], intent["payload_sha256"]),
-                         (dict(id="driver-1", kind="upgrade_driver"), digest(b"payload text stays out")))
+                         (dict(id="driver-1", kind="upgrade_driver"), digest(notice.encode())))
         ProvenanceJournal(run.path, "run-1", run.registration)
         with self.assertRaisesRegex(ContractError, "foreign"):
             ProvenanceJournal(run.path, "run-2", run.registration)
