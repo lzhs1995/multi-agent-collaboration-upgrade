@@ -47,11 +47,19 @@ raise SystemExit(plan["rc"])
 class Fixture:
     """A fake release tree plus one original queued-only Claude attempt."""
 
-    def __init__(self, root):
+    def __init__(self, root, sequential=False):
         self.root = Path(root).resolve()
         self.source = self.root / "release" / "source"
         (self.source / "scripts").mkdir(parents=True)
         (self.source / "scripts" / "model_context_consumption.py").write_text(FAKE_OBSERVER)
+        # (policy schema, evidence class, observer script, observer output schema) of the class under test.
+        if sequential:
+            (self.source / "scripts" / "model_context_sequential.py").write_text(FAKE_OBSERVER)
+            self.kind = (downlink.SEQUENTIAL_POLICY_SCHEMA, downlink.SEQUENTIAL_EVIDENCE_CLASS,
+                         "model_context_sequential.py", downlink.SEQUENTIAL_OBSERVATION_SCHEMA)
+        else:
+            self.kind = (downlink.POLICY_SCHEMA, "MODEL_CONTEXT_CONSUMED", "model_context_consumption.py",
+                         downlink.OBSERVATION_SCHEMA)
         (self.source / "README.md").write_text("fixture release\n")
         self.transcript = self.root / "claude" / "projects" / "-task" / (SESSION + ".jsonl")
         self.body_path = self.root / "bodies" / "body.txt"
@@ -126,9 +134,9 @@ class Fixture:
         files = {str(p.relative_to(self.source)): dict(bytes=p.stat().st_size, sha256=digest(p.read_bytes()))
                  for p in sorted(self.source.rglob("*")) if p.is_file()}
         manifest = write_json(self.root / "release" / "MANIFEST.json", dict(version="fixture", files=files))
-        observer = file_ref(self.source / "scripts" / "model_context_consumption.py")
-        value = dict(schema=downlink.POLICY_SCHEMA, disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
-                     evidence_class="MODEL_CONTEXT_CONSUMED", native_user_evidence_class="NATIVE_USER_RECEIVED",
+        observer = file_ref(self.source / "scripts" / self.kind[2])
+        value = dict(schema=self.kind[0], disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
+                     evidence_class=self.kind[1], native_user_evidence_class="NATIVE_USER_RECEIVED",
                      complete_source=str(self.source), source_manifest=manifest, observer=observer)
         value.update(policy)
         self.policy = write_json(self.root / "policy.json", value)
@@ -148,7 +156,7 @@ class Fixture:
     def consumed(self, end=None, **changes):
         """The observer's verdict for the original bytes up to end (default: current EOF)."""
         end, sha = self.snap(end)
-        value = dict(schema=downlink.OBSERVATION_SCHEMA, observation="MODEL_CONTEXT_CONSUMED", session_id=SESSION,
+        value = dict(schema=self.kind[3], observation=self.kind[1], session_id=SESSION,
                      marker=self.marker, wire_sha256=self.binding["payload_sha256"], body=self.body,
                      notice_request_id="request-one", body_request_id="request-two",
                      body_api_message_sha256="0" * 64, parallel_tool_results=2, proof_slices=self.slices(end),
@@ -164,7 +172,7 @@ class Fixture:
 
     def unverified(self, reason):
         # The shared CLI's own refusal envelope.
-        return dict(schema=downlink.OBSERVATION_SCHEMA, observation="UNVERIFIED", reason=reason,
+        return dict(schema=self.kind[3], observation="UNVERIFIED", reason=reason,
                     native_user_received=False, official_receipt_published=False, attempt_changed=False,
                     input_operations=0, replay_authorized=False)
 
@@ -1055,6 +1063,105 @@ class PinnedObserverTests(unittest.TestCase):
         self.assertEqual(json_ref(recorded)["evidence_class"], "MODEL_CONTEXT_CONSUMED")
         with self.assertRaisesRegex(ContractError, "ACK precedes full body consumption"):
             downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof("ack_before"))
+
+
+class SequentialContextClassTests(unittest.TestCase):
+    """The owner40 0.4.78 sequential class is bound only by its own policy; v1 records keep their exact shape."""
+
+    def fixture(self, sequential=True):
+        temp = tempfile.TemporaryDirectory(prefix="context-downlink-seq-")
+        self.addCleanup(temp.cleanup)
+        return Fixture(temp.name, sequential=sequential)
+
+    def test_sequential_policy_runs_its_own_observer_and_records_its_own_class(self):
+        f = self.fixture()
+        f.plan(f.consumed())
+        result = f.observe()
+        self.assertEqual((result["schema"], result["evidence_class"]),
+                         (downlink.RESULT_SCHEMA, downlink.SEQUENTIAL_EVIDENCE_CLASS))
+        self.assertEqual(result["argv"][:3], [INTERPRETER, "-BE", str(f.source / "scripts/model_context_sequential.py")])
+        self.assertEqual((result["release"]["evidence_class"], result["release"]["observation_schema"]),
+                         (downlink.SEQUENTIAL_EVIDENCE_CLASS, downlink.SEQUENTIAL_OBSERVATION_SCHEMA))
+        [call] = f.calls()
+        self.assertEqual((call["ignore_environment"], call["dont_write_bytecode"]), (1, True))
+        recorded = write_json(f.root / "evidence" / "result.json", result)
+        self.assertEqual(downlink.verify(recorded, f.policy["sha256"], INTERPRETER), json_ref(recorded))
+        f.append(ack_record())
+        self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+
+    def test_classes_never_cross_between_policies_and_observer_outputs(self):
+        def v1_output(f):
+            return dict(f.consumed(), schema=downlink.OBSERVATION_SCHEMA, observation="MODEL_CONTEXT_CONSUMED")
+        cases = (
+            # A sequential policy accepts only the sequential observer's own schema and verdict.
+            ("v1_output_under_v2_policy", True, lambda f: f.plan(v1_output(f)), "unexpected context observer output"),
+            ("v1_verdict_in_v2_schema", True, lambda f: f.plan(f.consumed(observation="MODEL_CONTEXT_CONSUMED")),
+             "unexpected context observer verdict"),
+            ("v2_policy_with_v1_class", True,
+             lambda f: (f.plan(f.consumed()), f.publish(evidence_class="MODEL_CONTEXT_CONSUMED")),
+             "not v124-shaped or v168-sequential-shaped"),
+            ("v2_policy_pointing_at_v1_observer", True,
+             lambda f: (f.plan(f.consumed()), f.publish(observer=file_ref(f.source / "scripts/model_context_consumption.py"))),
+             "not the manifest's observer"),
+            ("v2_release_without_v1_module", True,
+             lambda f: ((f.source / "scripts/model_context_consumption.py").unlink(), f.plan(f.consumed()), f.publish()),
+             "release has no v1 observer module"),
+            # A v1 policy never yields the sequential class, even when its observer prints it.
+            ("v2_output_under_v1_policy", False,
+             lambda f: f.plan(dict(f.consumed(), schema=downlink.SEQUENTIAL_OBSERVATION_SCHEMA,
+                                   observation=downlink.SEQUENTIAL_EVIDENCE_CLASS)), "unexpected context observer output"),
+            ("v2_verdict_in_v1_schema", False,
+             lambda f: f.plan(f.consumed(observation=downlink.SEQUENTIAL_EVIDENCE_CLASS)),
+             "unexpected context observer verdict"),
+            ("v1_policy_with_v2_class", False,
+             lambda f: (f.plan(f.consumed()), f.publish(evidence_class=downlink.SEQUENTIAL_EVIDENCE_CLASS)),
+             "not v124-shaped or v168-sequential-shaped"),
+        )
+        for name, sequential, change, reason in cases:
+            with self.subTest(case=name):
+                f = self.fixture(sequential)
+                change(f)
+                with self.assertRaisesRegex(ContractError, reason):
+                    f.observe()
+
+    def test_recorded_sequential_proof_reproduces_only_under_its_own_policy_and_class(self):
+        f = self.fixture()
+        recorded = f.record()
+        value = json_ref(recorded)
+        self.assertEqual(value["evidence_class"], downlink.SEQUENTIAL_EVIDENCE_CLASS)
+        calls = len(f.calls())
+        with self.assertRaisesRegex(ContractError, "bound to another policy"):
+            downlink.verify(recorded, "7" * 64, INTERPRETER)
+        self.assertEqual(len(f.calls()), calls)
+        # Relabeling a recorded sequential proof as the v1 class cannot reproduce.
+        forged = write_json(f.root / "evidence" / "forged.json", dict(value, evidence_class="MODEL_CONTEXT_CONSUMED"))
+        with self.assertRaisesRegex(ContractError, "does not reproduce"):
+            downlink.verify(forged, f.policy["sha256"], INTERPRETER)
+        forged = write_json(f.root / "evidence" / "forged-unknown.json", dict(value, evidence_class="OTHER"))
+        with self.assertRaisesRegex(ContractError, "not a recorded context observation"):
+            downlink.verify(forged, f.policy["sha256"], INTERPRETER)
+
+    def test_v1_records_keep_their_exact_original_release_shape(self):
+        f = self.fixture(sequential=False)
+        result = json_ref(f.record())
+        self.assertEqual(set(result["release"]), {"policy", "manifest", "observer", "source"})
+        self.assertEqual(result["evidence_class"], "MODEL_CONTEXT_CONSUMED")
+
+    def test_window_and_cli_terminalize_on_the_sequential_class(self):
+        f = self.fixture()
+        f.plan(f.consumed())
+        window = dict(attempt=f.attempt["path"], attempt_sha256=f.attempt["sha256"], policy=f.policy["path"],
+                      policy_sha256=f.policy["sha256"], interpreter=INTERPRETER)
+        rc, value = run_cli("observe-window", **window, window_dir=f.root / "evidence" / "w1", deadline_epoch=time.time() + 30)
+        self.assertEqual((rc, value["evidence_class"], value["observation"]),
+                         (0, downlink.SEQUENTIAL_EVIDENCE_CLASS, downlink.SEQUENTIAL_EVIDENCE_CLASS))
+        [increment] = value["increments"]
+        self.assertEqual(json_ref(increment)["observation"], downlink.SEQUENTIAL_EVIDENCE_CLASS)
+        f.plan(f.unverified("COMPLETE_READ_HASH_CHAIN_REQUIRED_WITHIN_BATCH_BUDGET"), 2)
+        rc, value = run_cli("observe-window", **window, window_dir=f.root / "evidence" / "w2",
+                            deadline_epoch=time.time() + 1.2, interval=1)
+        self.assertEqual((rc, value["observation"], value["evidence_class"]), (2, "UNVERIFIED", None))
+        self.assertTrue(value["reason"].startswith("deadline reached"), value["reason"])
 
 
 if __name__ == "__main__":

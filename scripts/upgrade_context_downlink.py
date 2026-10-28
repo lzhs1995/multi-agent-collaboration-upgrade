@@ -21,6 +21,13 @@ transcript growth can neither invent nor retract a completed proof. Until that
 endpoint holds a complete proof, `observe-window` keeps each read-only
 observation as its own increment and terminalizes on proof or the real deadline
 (R54-F2); re-observation sends no input, pastes nothing and presses no key.
+
+A second, separately bound policy (owner40 0.4.78, R76/V168) accepts the
+sequential form, where the hash call and the full-body Read land in
+consecutive requests: it runs that release's model_context_sequential.py and
+records MODEL_CONTEXT_SEQUENTIALLY_CONSUMED. Each recorded observation keeps
+the class of the policy that produced it; a v1 policy never yields the
+sequential class, and recorded v1 proofs reproduce unchanged.
 """
 from __future__ import annotations
 
@@ -47,6 +54,13 @@ WINDOW_SCHEMA = "upgrade-context-downlink-window-v1"
 INCREMENT_SCHEMA = "upgrade-context-downlink-increment-v1"
 ACK_SCHEMA = "upgrade-context-downlink-ack-order-v1"
 EVIDENCE_CLASS = "MODEL_CONTEXT_CONSUMED"
+SEQUENTIAL_POLICY_SCHEMA = "prospective-claude-model-context-sequential-receipt-policy-v2"
+SEQUENTIAL_OBSERVATION_SCHEMA = "model-context-sequential-consumption-observation-v2"
+SEQUENTIAL_EVIDENCE_CLASS = "MODEL_CONTEXT_SEQUENTIALLY_CONSUMED"
+# policy schema -> (evidence class, observer script, observer output schema); each class comes only from its own policy.
+CLASSES = {POLICY_SCHEMA: (EVIDENCE_CLASS, "model_context_consumption.py", OBSERVATION_SCHEMA),
+           SEQUENTIAL_POLICY_SCHEMA: (SEQUENTIAL_EVIDENCE_CLASS, "model_context_sequential.py",
+                                      SEQUENTIAL_OBSERVATION_SCHEMA)}
 OBSERVER_TIMEOUT_SECONDS = 60
 # The observer's own bounded-snapshot limit; asserted against its source.
 MAX_SCAN = 8 * 1024 * 1024
@@ -72,10 +86,12 @@ def _source_files(root):
 def pinned_release(policy_ref):
     """The reviewed policy, its complete release source and its observer; any drift refuses."""
     policy = json_ref(policy_ref, "context policy")
-    require(policy.get("schema") == POLICY_SCHEMA
+    kind = CLASSES.get(policy.get("schema"))
+    require(kind is not None
             and policy.get("disposition") == "ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING"
-            and policy.get("evidence_class") == EVIDENCE_CLASS
-            and policy.get("native_user_evidence_class") == "NATIVE_USER_RECEIVED", "context policy is not v124-shaped")
+            and policy.get("evidence_class") == kind[0]
+            and policy.get("native_user_evidence_class") == "NATIVE_USER_RECEIVED",
+            "context policy is not v124-shaped or v168-sequential-shaped")
     source = checked_path(policy.get("complete_source"))
     manifest_ref = policy.get("source_manifest")
     manifest = json_ref(manifest_ref, "release manifest")
@@ -89,14 +105,26 @@ def pinned_release(policy_ref):
         require(isinstance(pin, dict) and pin.get("bytes") == len(raw) and pin.get("sha256") == digest(raw),
                 f"release file differs from its manifest: {name}")
     observer_ref = policy.get("observer")
-    observer = source / "scripts" / "model_context_consumption.py"
-    require(isinstance(observer_ref, dict) and observer_ref.get("path") == str(observer)
-            and observer_ref.get("sha256") == files["scripts/model_context_consumption.py"]["sha256"]
-            and observer_ref.get("bytes") == files["scripts/model_context_consumption.py"]["bytes"],
+    name = "scripts/" + kind[1]
+    observer = source / name
+    require(name in files and isinstance(observer_ref, dict) and observer_ref.get("path") == str(observer)
+            and observer_ref.get("sha256") == files[name]["sha256"]
+            and observer_ref.get("bytes") == files[name]["bytes"],
             "policy observer is not the manifest's observer")
+    # The sequential observer imports the v1 module and reads the same bounded window.
+    require("scripts/model_context_consumption.py" in files, "release has no v1 observer module")
     require(_observer_constant(source / "scripts" / "model_context_consumption.py", "MAX_SCAN") == MAX_SCAN,
             "release observer uses a different bounded-snapshot limit")
-    return dict(policy=dict(policy_ref), manifest=dict(manifest_ref), observer=dict(observer_ref), source=str(source))
+    release = dict(policy=dict(policy_ref), manifest=dict(manifest_ref), observer=dict(observer_ref), source=str(source))
+    if kind[0] != EVIDENCE_CLASS:
+        # A v1 release keeps exactly its original four keys, so recorded v1 proofs still reproduce.
+        release.update(evidence_class=kind[0], observation_schema=kind[2])
+    return release
+
+
+def _kind(release):
+    """(evidence class, observer output schema) of a pinned release; a v1 release carries neither key."""
+    return release.get("evidence_class", EVIDENCE_CLASS), release.get("observation_schema", OBSERVATION_SCHEMA)
 
 
 def _integer(node):
@@ -229,10 +257,11 @@ def observe(attempt_ref, policy_ref, interpreter, wire_dir, snapshot_end, *, tim
         raise ContractError("context observer timed out") from exc
     require(done.returncode in (0, 2), f"context observer failed: rc={done.returncode}")
     value = strict_json(done.stdout, "context observation")
-    require(isinstance(value, dict) and value.get("schema") == OBSERVATION_SCHEMA, "unexpected context observer output")
+    evidence_class, observation_schema = _kind(release)
+    require(isinstance(value, dict) and value.get("schema") == observation_schema, "unexpected context observer output")
     require(all(value.get(k) is False for k in NEVER[:4]) and value.get("input_operations") == 0,
             "context observer claimed more than an observation")
-    if value.get("observation") != EVIDENCE_CLASS:
+    if value.get("observation") != evidence_class:
         require(done.returncode == 2 and value.get("observation") == "UNVERIFIED", "unexpected context observer verdict")
         raise ContractError("context not consumed: " + str(value.get("reason")))
     require(done.returncode == 0, "consumption verdict without a successful exit")
@@ -251,7 +280,7 @@ def observe(attempt_ref, policy_ref, interpreter, wire_dir, snapshot_end, *, tim
     require(all(type(s.get("offset")) is int and type(s.get("bytes")) is int
                 and snapshot["start"] <= s["offset"] and s["offset"] + s["bytes"] <= snapshot["end"] for s in slices),
             "context proof slice lies outside the pinned snapshot")
-    return dict(schema=RESULT_SCHEMA, evidence_class=EVIDENCE_CLASS, attempt=dict(attempt_ref), receipt=receipt,
+    return dict(schema=RESULT_SCHEMA, evidence_class=evidence_class, attempt=dict(attempt_ref), receipt=receipt,
                 snapshot=snapshot, wire=wire_ref, release=release, interpreter=str(interpreter), argv=argv,
                 observation=value)
 
@@ -266,7 +295,8 @@ def verify(result_ref, policy_sha256, interpreter, *, timeout=OBSERVER_TIMEOUT_S
     name (1A38 O1).
     """
     recorded = json_ref(result_ref, "context observation")
-    require(recorded.get("schema") == RESULT_SCHEMA and recorded.get("evidence_class") == EVIDENCE_CLASS,
+    require(recorded.get("schema") == RESULT_SCHEMA
+            and recorded.get("evidence_class") in {kind[0] for kind in CLASSES.values()},
             "not a recorded context observation")
     release, snapshot, wire = recorded.get("release"), recorded.get("snapshot"), recorded.get("wire")
     attempt, receipt = recorded.get("attempt"), recorded.get("receipt")
@@ -355,7 +385,7 @@ def _increment(window, attempt_ref, transcript, end, result, reason, increments,
         sha = None
     previous = increments[-1]["sha256"] if increments else None
     value = dict(schema=INCREMENT_SCHEMA, seq=len(increments) + 1, observed_at_epoch=at, attempt=dict(attempt_ref),
-                 snapshot_end=end, snapshot_sha256=sha, observation=EVIDENCE_CLASS if result else "UNVERIFIED",
+                 snapshot_end=end, snapshot_sha256=sha, observation=result["evidence_class"] if result else "UNVERIFIED",
                  reason=reason, provisional=result is None, previous_sha256=previous,
                  native_user_received=False, input_operations=0)
     return write_bytes_once(window / f"observation-{len(increments) + 1:04d}.json", canonical(value))
@@ -365,8 +395,8 @@ def _finish(window, attempt_ref, deadline_epoch, interval, increments, result, r
     """Terminalize the window exactly once; a consumed result is kept as its own file for verify."""
     result_ref = write_bytes_once(window / "result.json", canonical(result)) if result else None
     value = dict(schema=WINDOW_SCHEMA, attempt=dict(attempt_ref), deadline_epoch=deadline_epoch, interval=interval,
-                 increments=increments, evidence_class=EVIDENCE_CLASS if result else None,
-                 observation=EVIDENCE_CLASS if result else "UNVERIFIED", reason=reason, result=result_ref,
+                 increments=increments, evidence_class=result["evidence_class"] if result else None,
+                 observation=result["evidence_class"] if result else "UNVERIFIED", reason=reason, result=result_ref,
                  snapshot_end=result["snapshot"]["end"] if result else None,
                  snapshot_sha256=result["snapshot"]["sha256"] if result else None,
                  native_user_received=False, input_operations=0, finished_at=utc_now())
@@ -519,7 +549,7 @@ def main(argv=None):
                               native_user_received=False, input_operations=0), ensure_ascii=False))
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 2 if args.command == "observe-window" and result["evidence_class"] != EVIDENCE_CLASS else 0
+    return 2 if args.command == "observe-window" and result["evidence_class"] is None else 0
 
 
 if __name__ == "__main__":
