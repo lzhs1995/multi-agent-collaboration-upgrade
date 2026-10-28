@@ -19,13 +19,79 @@ import uuid
 from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref,
                                   read_ref, read_regular, utc_now, write_json)
 from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
-from upgrade_startup_contract import child_budget_enabled, response_observation_enabled, validate_startup
+from upgrade_startup_contract import (child_budget_enabled, pre_exec_hold_enabled,
+                                      response_observation_enabled, validate_startup)
 from upgrade_socket_boundary import binding_boundary
+
+HOLD_POLL_SECONDS = 0.5
+HOLD_DEADLINE_SECONDS = 24 * 3600
 
 
 def require(value, message):
     if not value:
         raise ContractError(message)
+
+
+def hold(ref, spec, binding, lane, launched):
+    """Wait before any native exec or server start until one exact release names this lane.
+
+    The held record is exclusive and stays as the hold artifact. A release that
+    names another lane's record, another startup or another workspace never
+    releases this one; stop and the deadline end the hold without exec.
+    """
+    control = Path(binding["state_root"]) / "startup"
+    record = json_ref(launched, "client launch record")
+    held = write_json(control / (lane + "-held.json"), dict(
+        schema="upgrade-client-held-v1", startup=ref, lane=lane, held_at=utc_now(), launched=launched,
+        workspace_uuid=record["workspace_uuid"], surface_uuid=record["surface_uuid"],
+        tty=os.ttyname(0) if os.isatty(0) else None, native_exec=0, server_starts=0,
+        input_operations=0), exclusive=True)
+    path, deadline = control / "release.json", time.monotonic() + HOLD_DEADLINE_SECONDS
+    while True:
+        require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
+        if path.exists():
+            # One read: the digest and the parsed value come from the same bytes.
+            raw = read_regular(path)
+            release = json.loads(raw)
+            require(release.get("schema") == "upgrade-client-release-v1" and release.get("startup") == ref
+                    and release.get("workspace_uuid") == record["workspace_uuid"]
+                    and (release.get("held") or {}).get(lane) == held, "RELEASE_DOES_NOT_NAME_THIS_LANE")
+            return dict(path=str(path), sha256=digest(raw), bytes=len(raw))
+        require(time.monotonic() < deadline, "PRE_EXEC_HOLD_DEADLINE: no release, no exec")
+        time.sleep(HOLD_POLL_SECONDS)
+
+
+def release(ref, spec, binding, receipt_path, receipt_sha256):
+    """Write the one release after the exact exclusion receipt names every held lane.
+
+    The receipt is the maintainer's frozen exclusion evidence: it must name the
+    workspace and every held surface in the uppercase form written to the
+    shared configuration. Releasing twice is refused by the exclusive write.
+    """
+    require(pre_exec_hold_enabled(binding), "PRE_EXEC_HOLD_NOT_BOUND")
+    require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
+    receipt = file_ref(checked_path(receipt_path))
+    require(receipt["sha256"] == receipt_sha256, "EXCLUSION_RECEIPT_PIN_CHANGED")
+    text = read_ref(receipt, "exclusion receipt").decode("utf-8")
+    control = Path(binding["state_root"]) / "startup"
+    held, workspaces = {}, set()
+    for lane in LANES:
+        ref_held = file_ref(control / (lane + "-held.json"))
+        value = json_ref(ref_held, lane + " held record")
+        record = json_ref(value["launched"], lane + " launch record")
+        require(value.get("schema") == "upgrade-client-held-v1" and value.get("startup") == ref
+                and value.get("lane") == lane and value.get("native_exec") == 0
+                and record.get("lane") == lane and record.get("surface_uuid") == value.get("surface_uuid")
+                and record.get("workspace_uuid") == value.get("workspace_uuid"), "HELD_RECORD_CHANGED")
+        require(value["surface_uuid"].upper() in text, "EXCLUSION_RECEIPT_OMITS_SURFACE")
+        held[lane] = ref_held
+        workspaces.add(value["workspace_uuid"])
+    require(len(workspaces) == 1, "HELD_LANES_SPAN_WORKSPACES")
+    workspace = workspaces.pop()
+    require(workspace.upper() in text, "EXCLUSION_RECEIPT_OMITS_WORKSPACE")
+    return write_json(control / "release.json", dict(
+        schema="upgrade-client-release-v1", startup=ref, workspace_uuid=workspace, held=held,
+        exclusion_receipt=receipt, released_at=utc_now(), input_operations=0), exclusive=True)
 
 
 def load_startup(path, sha256):
@@ -158,7 +224,11 @@ def start_client(ref, spec, binding, lane):
                   pid=process["pid"], birth=process["birth"], surface_uuid=surface,
                   workspace_uuid=workspace, native_root=client["native_root"],
                   planned_session_id=client.get("session_id"), provider=client["provider"])
-    write_json(Path(binding["state_root"]) / "startup" / (lane + ".json"), record, exclusive=True)
+    launched = write_json(Path(binding["state_root"]) / "startup" / (lane + ".json"), record, exclusive=True)
+    if pre_exec_hold_enabled(binding):
+        # Held before chdir, the Codex server and exec: the pane's exact UUIDs
+        # exist, but no native client, provider request or input does yet.
+        hold(ref, spec, binding, lane, launched)
     os.chdir(spec["work_root"])
     os.umask(0o077)
     if lane == "codex":
@@ -171,12 +241,15 @@ def start_client(ref, spec, binding, lane):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("experiment-launch", "experiment-client", "experiment-inspect"))
+    parser.add_argument("command", choices=("experiment-launch", "experiment-client", "experiment-inspect",
+                                            "experiment-release"))
     parser.add_argument("--startup", required=True)
     parser.add_argument("--startup-sha256", required=True)
     parser.add_argument("--spawn", action="store_true")
     parser.add_argument("--spawn-authorized", action="store_true")
     parser.add_argument("--lane", choices=LANES)
+    parser.add_argument("--receipt")
+    parser.add_argument("--receipt-sha256")
     args = parser.parse_args(argv)
     try:
         source = Path(__file__).resolve().parent.parent
@@ -198,6 +271,10 @@ def main(argv=None):
         elif args.command == "experiment-inspect":
             from upgrade_live_inspect import inspect
             value = inspect(ref, spec, binding)
+            print(json.dumps(value, ensure_ascii=False, indent=2))
+        elif args.command == "experiment-release":
+            require(args.receipt and args.receipt_sha256, "EXCLUSION_RECEIPT_REQUIRED")
+            value = release(ref, spec, binding, args.receipt, args.receipt_sha256)
             print(json.dumps(value, ensure_ascii=False, indent=2))
         else:
             require(args.lane is not None, "STARTUP_LANE_REQUIRED")

@@ -23,7 +23,7 @@ from upgrade_live_runtime import RELEASE_MANIFEST_SCHEMA, release_members
 from upgrade_materialize import hook_config, rendered_helper
 from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
-    CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY,
+    CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY, PRE_EXEC_HOLD,
     bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
     pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
@@ -79,10 +79,12 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
                      continuity_registration=False, child_budget=False, startup_continuity=False,
-                     station_launchers=None):
+                     station_launchers=None, pre_exec_hold=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
-    "claude": {"station", "key"}} launches every lane and the Codex server through mg."""
+    "claude": {"station", "key"}} launches every lane and the Codex server through mg.
+    pre_exec_hold: every lane waits before any native exec until an exact release."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
@@ -252,6 +254,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["child_budget"] = CHILD_POLICY
     if startup_continuity:
         binding["startup_continuity"] = STARTUP_CONTINUITY
+    if pre_exec_hold:
+        binding["pre_exec_hold"] = PRE_EXEC_HOLD
     if station is not None:
         binding["station_launchers"] = station
     verify_tree(source_pin)

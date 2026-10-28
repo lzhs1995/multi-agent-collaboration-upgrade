@@ -32,6 +32,15 @@ RESPONSE_OBSERVER_PIN = "claude_response_observer"
 CONTINUITY_REGISTRATION = "private-current-v1"
 CONTINUITY_CURRENT_PIN = "mac_upgrade_private_current"
 STARTUP_CONTINUITY = "original-startup-failure-v1"
+PRE_EXEC_HOLD = "held-uuid-release-v1"
+
+
+def pre_exec_hold_enabled(binding):
+    """Clients wait before any native exec until an exact release names them."""
+    if "pre_exec_hold" not in binding:
+        return False
+    require(binding["pre_exec_hold"] == PRE_EXEC_HOLD, "STARTUP_PRE_EXEC_HOLD_CHANGED")
+    return True
 
 
 def startup_continuity_enabled(binding):
