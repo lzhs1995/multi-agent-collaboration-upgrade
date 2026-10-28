@@ -501,6 +501,64 @@ class ContextDownlinkTests(unittest.TestCase):
                     downlink.verify(ref, policy, interpreter)
         self.assertFalse((f.root / "elsewhere").exists())
 
+    def test_journal_facts_that_are_not_observer_inputs_do_not_retract_a_recorded_proof(self):
+        """1A38 O1: an unconfirmed receipt is no evidence either way, before or after the observation."""
+        f = self.f
+        f.plan(f.consumed())
+        recorded = write_json(f.root / "evidence" / "result.json", f.observe())
+        end = json_ref(recorded)["snapshot"]["end"]
+        receipt = f.journal / "receipt.json"
+        for state in ("NATIVE_QUEUED", "NATIVE_PENDING"):
+            write_json(receipt, dict(confirmed=False, state=state))
+            self.assertEqual(downlink.verify(recorded, f.policy["sha256"], INTERPRETER), json_ref(recorded))
+        # The ACK order is judged against the same reproduced proof.
+        f.append(ack_record())
+        self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+        # A proof recorded beside an unconfirmed receipt keeps reproducing once that receipt is gone.
+        beside = write_json(f.root / "evidence" / "result-beside.json", f.observe(end))
+        self.assertEqual(json_ref(beside)["receipt"], file_ref(receipt))
+        receipt.unlink()
+        self.assertEqual(downlink.verify(beside, f.policy["sha256"], INTERPRETER), json_ref(beside))
+        self.assertEqual(len(f.calls()), 6)
+        value = json_ref(beside)
+        for name, forged in (("text", "receipt.json"), ("extra_key", dict(value["receipt"], confirmed=False))):
+            with self.subTest(receipt=name):
+                ref = write_json(f.root / "evidence" / f"forged-receipt-{name}.json", dict(value, receipt=forged))
+                with self.assertRaisesRegex(ContractError, "recorded receipt is not a pinned file reference"):
+                    downlink.verify(ref, f.policy["sha256"], INTERPRETER)
+        self.assertEqual(len(f.calls()), 6)
+
+    def test_a_changed_or_superseded_attempt_or_a_later_confirmed_receipt_is_refused_by_name(self):
+        for name, change, reason in (
+                ("confirmed_receipt", lambda f: write_json(f.journal / "receipt.json", dict(confirmed=True)),
+                 "confirmed native receipt keeps its native evidence"),
+                # Stranded-compose recovery appends to the same original attempt file.
+                ("attempt_rewritten", lambda f: f.write_attempt(1, events=[
+                    f.fence(), dict(phase="ENTER_SENT"), dict(phase="EXTRA_ENTER_INTENT", recovery="stranded_compose")]),
+                 "original attempt changed or was removed"),
+                ("attempt_removed", lambda f: Path(f.attempt["path"]).unlink(), "original attempt changed or was removed"),
+                ("later_attempt", lambda f: f.write_attempt(2), "journal gained a later attempt")):
+            with self.subTest(case=name):
+                self.setUp()
+                f = self.f
+                f.plan(f.consumed())
+                recorded = write_json(f.root / "evidence" / "result.json", f.observe())
+                f.append(ack_record())
+                change(f)
+                with self.assertRaisesRegex(ContractError, reason):
+                    downlink.verify(recorded, f.policy["sha256"], INTERPRETER)
+                with self.assertRaisesRegex(ContractError, reason):
+                    f.order(recorded)
+                # Refused before the observer runs again.
+                self.assertEqual(len(f.calls()), 1)
+        self.setUp()
+        f = self.f
+        f.plan(f.consumed())
+        value = json_ref(write_json(f.root / "evidence" / "result.json", f.observe()))
+        ref = write_json(f.root / "evidence" / "no-attempt.json", dict(value, attempt=None))
+        with self.assertRaisesRegex(ContractError, "observation has no pinned attempt"):
+            downlink.verify(ref, f.policy["sha256"], INTERPRETER)
+
     def window(self, hooks=(), deadline=60, **kwargs):
         """observe_window on a fake clock; each sleep runs the next hook (transcript growth etc.)."""
         f, clock, pending = self.f, [1000.0], list(hooks)
@@ -939,6 +997,17 @@ class PinnedObserverTests(unittest.TestCase):
                 self.assertEqual(downlink.verify(recorded, self.policy["sha256"], INTERPRETER), json_ref(recorded))
                 with self.assertRaisesRegex(ContractError, "not a complete record boundary"):
                     self.observe(name, attempt, evidence, end - 1)
+
+    def test_a_frozen_proof_survives_unconfirmed_receipt_drift_but_not_a_confirmed_native_receipt(self):
+        """1A38 O1 with the real observer, which never reads receipt.json."""
+        attempt, evidence = self.attempt("receipt")
+        recorded = write_json(evidence / "result.json", self.observe("receipt", attempt, evidence))
+        receipt = Path(attempt["path"]).parent / "receipt.json"
+        write_json(receipt, dict(confirmed=False, state="NATIVE_QUEUED"))
+        self.assertEqual(downlink.verify(recorded, self.policy["sha256"], INTERPRETER), json_ref(recorded))
+        write_json(receipt, dict(confirmed=True))
+        with self.assertRaisesRegex(ContractError, "confirmed native receipt keeps its native evidence"):
+            downlink.verify(recorded, self.policy["sha256"], INTERPRETER)
 
     def test_an_early_refusal_is_provisional_and_the_window_terminalizes_on_the_later_proof(self):
         """ROOT R54-F2: refused before the final body response, consumed after it; no input either way."""

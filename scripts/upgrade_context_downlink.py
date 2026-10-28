@@ -257,21 +257,35 @@ def observe(attempt_ref, policy_ref, interpreter, wire_dir, snapshot_end, *, tim
 
 
 def verify(result_ref, policy_sha256, interpreter, *, timeout=OBSERVER_TIMEOUT_SECONDS):
-    """Reproduce one recorded observation at its own pinned endpoint, never a later EOF."""
+    """Reproduce one recorded observation at its own pinned endpoint, never a later EOF.
+
+    Journal facts that are not observer inputs do not retract the proof: an
+    unconfirmed receipt that later appears, changes or goes away is no evidence
+    either way. A changed or superseded original attempt, and a native receipt
+    confirmed since (the notice then keeps its native evidence), are refused by
+    name (1A38 O1).
+    """
     recorded = json_ref(result_ref, "context observation")
     require(recorded.get("schema") == RESULT_SCHEMA and recorded.get("evidence_class") == EVIDENCE_CLASS,
             "not a recorded context observation")
     release, snapshot, wire = recorded.get("release"), recorded.get("snapshot"), recorded.get("wire")
+    attempt, receipt = recorded.get("attempt"), recorded.get("receipt")
     require(isinstance(release, dict) and isinstance(release.get("policy"), dict)
             and release["policy"].get("sha256") == policy_sha256, "observation is bound to another policy")
     require(recorded.get("interpreter") == str(checked_path(interpreter)), "observation used another interpreter")
     require(isinstance(snapshot, dict) and isinstance(wire, dict) and isinstance(wire.get("path"), str),
             "observation has no pinned snapshot")
+    require(isinstance(attempt, dict) and isinstance(attempt.get("path"), str), "observation has no pinned attempt")
+    require(receipt is None or (isinstance(receipt, dict) and set(receipt) == {"path", "sha256", "bytes"}),
+            "recorded receipt is not a pinned file reference")
     # The recorded wire must already exist as pinned, so re-observing never writes a new file anywhere.
     read_ref(wire, "recorded wire")
-    again = observe(recorded.get("attempt"), release["policy"], interpreter, Path(wire["path"]).parent,
+    refs = [file_ref(path) for path in sorted(checked_path(Path(attempt["path"]).parent).glob("attempt-*.json"))]
+    require(dict(attempt) in refs, "the original attempt changed or was removed after this observation")
+    require(refs[-1] == dict(attempt), "the journal gained a later attempt after this observation")
+    again = observe(attempt, release["policy"], interpreter, Path(wire["path"]).parent,
                     snapshot.get("end"), timeout=timeout)
-    require(json.loads(json.dumps(again, ensure_ascii=False)) == recorded,
+    require(json.loads(json.dumps(dict(again, receipt=None), ensure_ascii=False)) == dict(recorded, receipt=None),
             "observation does not reproduce at its pinned endpoint")
     return recorded
 
@@ -283,8 +297,10 @@ def observe_window(attempt_ref, policy_ref, interpreter, evidence_dir, *, deadli
     Each observer run at a new complete-record endpoint is preserved as its own
     increment. A not-yet-consumed verdict stays provisional and is re-observed
     only after the original transcript grows; the window terminalizes once on a
-    complete proof, on any other refusal, or at the real deadline. Nothing here
-    sends input, re-pastes, presses a key or retries the original notice.
+    complete proof, on any other refusal, or at the real deadline. The deadline
+    is checked between observations, so the last one may end up to the observer
+    timeout after it. Nothing here sends input, re-pastes, presses a key or
+    retries the original notice.
     """
     started = now()
     low, high = WINDOW_LIMITS["interval"]
