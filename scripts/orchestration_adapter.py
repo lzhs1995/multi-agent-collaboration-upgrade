@@ -16,7 +16,7 @@ from orchestration_common import ContractError, contract_errors, read_ref, verif
 
 MAINTENANCE_MODULES = frozenset({
     "orchestration_adapter", "orchestration_maintenance", "orchestration_campaign",
-    "orchestration_common", "orchestration_coordinator", "orchestration_evidence",
+    "orchestration_binding", "orchestration_common", "orchestration_coordinator", "orchestration_evidence",
     "orchestration_freeze", "orchestration_native", "orchestration_preparation",
     "orchestration_transport", "orchestration_disarm", "orchestration_verify",
     "orchestration_planner", "orchestration_workload", "orchestration_inputs",
