@@ -239,8 +239,15 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
         require(isinstance(actual, str) and actual and actual == session.get("model"), "frozen model differs from original CLI evidence")
     for node in plan["nodes"]:
         lane = node["executor"]
-        require(node.get("execution_kind") == ("local_cli" if lane == "codex" else "delegated_cli"),
-                "unsupported execution ownership")
+        if lane is None:
+            # A deliberately unbound node derives both values from the lane the
+            # separate pre-claim bind step chooses, so freezing either here
+            # would pre-commit the node to a provider before it is bound.
+            require(node.get("execution_kind") is None and node.get("transport") is None,
+                    "unbound node must not freeze an execution kind")
+        else:
+            require(node.get("execution_kind") == ("local_cli" if lane == "codex" else "delegated_cli"),
+                    "unsupported execution ownership")
         node_output(root / "runs" / "scope-check", node)
         deliverables = node.get("deliverables")
         require(isinstance(deliverables, list) and deliverables and len(deliverables) == len(set(deliverables)),

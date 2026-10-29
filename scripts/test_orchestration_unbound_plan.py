@@ -5,9 +5,13 @@ Every PlanError text is asserted against validate_plan directly, because
 boundary and would hide the plan-level wording.
 """
 import copy
+import tempfile
 import unittest
 
+from orchestration_campaign import validate_campaign
+from orchestration_common import ContractError, json_ref, write_json
 from orchestration_planner import PlanError, UNBOUND_EXECUTOR_POLICY, build_schedule, validate_plan
+from orchestration_test_support import CampaignFixture
 
 
 def v2_plan():
@@ -42,6 +46,16 @@ def unbound_node(key="unbound", deps=()):
 
 
 class UnboundPlanTests(unittest.TestCase):
+    def campaign_fixture(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return CampaignFixture(directory.name, strategies=("omo",), version=3, arm="B")
+
+    @staticmethod
+    def save(f):
+        f.campaign["plan"] = write_json(f.root / "plan.json", f.plan)
+        f.save()
+
     def test_unbound_executor_requires_the_named_opt_in(self):
         plan = v2_plan()
         plan["nodes"] = [unbound_node("intake")]
@@ -103,6 +117,45 @@ class UnboundPlanTests(unittest.TestCase):
         with self.assertRaises(PlanError) as refusal:
             validate_plan(plan)
         self.assertEqual(str(refusal.exception), "review.transport must be claude_code_cli")
+
+    def test_campaign_refuses_a_frozen_execution_kind_on_an_unbound_node(self):
+        f = self.campaign_fixture()
+        node = unbound_node(deps=())
+        node["write_scope"] = "unbound"
+        node["execution_kind"] = "local_cli"
+        f.plan["unbound_executor_policy"] = UNBOUND_EXECUTOR_POLICY
+        f.plan["nodes"].append(node)
+        self.save(f)
+        # Layer one: a mixed triple never reaches the campaign loop, because
+        # validate_campaign normalizes through validate_plan first and
+        # @contract_errors rewrites the PlanError at that boundary.
+        with self.assertRaisesRegex(ContractError, r"malformed or unavailable evidence \(PlanError\)"):
+            validate_campaign(f.ref, fixtures=True)
+        # Layer two: the complete null triple is what the campaign now accepts.
+        # Before this commit the same bytes failed "unsupported execution
+        # ownership", because lane None matched neither frozen pairing.
+        f.plan["nodes"][-1]["execution_kind"] = None
+        self.save(f)
+        campaign = validate_campaign(f.ref, fixtures=True)
+        self.assertEqual(campaign["plan"], f.campaign["plan"])
+        frozen = validate_plan(json_ref(campaign["plan"]))
+        self.assertEqual([n["id"] for n in frozen["nodes"] if n["executor"] is None], ["unbound"])
+
+    def test_plan_error_text_is_asserted_against_validate_plan_directly(self):
+        plan = v2_plan()
+        plan["unbound_executor_policy"] = UNBOUND_EXECUTOR_POLICY
+        node = unbound_node()
+        node["transport"] = "codex_cli"
+        plan["nodes"].append(node)
+        with self.assertRaises(PlanError) as refusal:
+            validate_plan(copy.deepcopy(plan))
+        self.assertEqual(str(refusal.exception), "unbound must freeze a complete null executor triple")
+        f = self.campaign_fixture()
+        f.plan = plan
+        self.save(f)
+        with self.assertRaises(ContractError) as rewritten:
+            validate_campaign(f.ref, fixtures=True)
+        self.assertNotIn("null executor triple", str(rewritten.exception))
 
     def test_build_schedule_refuses_an_unbound_graph(self):
         plan = v2_plan()
