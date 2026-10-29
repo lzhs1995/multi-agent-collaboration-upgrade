@@ -137,6 +137,81 @@ class Runner:
             _, data = co.state()
             return publish_continuation_locked(co, key, data[key])
 
+    def _publisher_pin(self):
+        """This entrypoint's own frozen bytes, inside the pinned adapter closure.
+
+        The publisher is not separately sha-bound: it *is* the adapter entry
+        point, so the existing adapter closure sha pins it. Re-measuring the
+        file here states which bytes published a decision without inventing a
+        second, competing pin.
+        """
+        key = "scripts/orchestration_run.py"
+        entry = self.campaign["adapter"]["files"].get(key)
+        require(isinstance(entry, dict), "the frozen adapter must contain its own run entrypoint")
+        path = Path(self.campaign["adapter"]["path"]) / key
+        pin = file_ref(path)
+        require(pin["sha256"] == entry["sha256"] and pin["bytes"] == entry["bytes"],
+                "the decision publisher differs from the frozen adapter closure")
+        return dict(path=pin["path"], sha256=pin["sha256"])
+
+    def _advice_pin(self, co, key, advice_sha256):
+        """The advice this decision cites, or an asserted absence on the off arm."""
+        directory = co.root / "nodes" / key / "advice"
+        if advice_sha256 is None:
+            require(not directory.exists() or not any(directory.iterdir()),
+                    "a decision citing no advice cannot be published beside a published advice body")
+            return None
+        require(len(advice_sha256) == 64 and all(c in "0123456789abcdef" for c in advice_sha256),
+                "the cited advice pin must be a sha256")
+        pin = file_ref(directory / (advice_sha256 + ".txt"))
+        require(pin["sha256"] == advice_sha256, "the cited advice is not the advice this run published")
+        return pin
+
+    def publish_decision(self, run_id, key, fields):
+        """Exclusively create one decision in the run tree and print its envelope.
+
+        The decision file used to be authored by the supervisor outside the run
+        tree. It is published here instead, so that one fixed, closure-pinned
+        entrypoint creates it and a native call/result pair can be joined to
+        that creation (design Q10/Q18 superseded by increment section 3).
+        ``decided_at`` is deliberately left null: the honest decision time is
+        the native timestamp of this call's own success record, which only the
+        join can supply, and a self-written stamp must not stand in for it.
+        """
+        from orchestration_binding import (DECISION_FIELDS, DECISION_SCHEMA, check_decision, is_unbound,
+                                           validate_decision)
+        from orchestration_campaign import DECISION_ARGUMENTS, NO_ADVICE, decision_argument_fields
+        co = self.co(run_id)
+        require(key in co.nodes, "unknown frozen node")
+        require(set(fields) == set(DECISION_ARGUMENTS), "the publisher needs exactly its frozen field set")
+        require(is_unbound(co.nodes[key]), "only a deliberately unbound frozen node gets a published decision")
+        advice_sha256 = None if fields["advice_sha256"] == NO_ADVICE else fields["advice_sha256"]
+        path = co.root / "decisions" / (key + ".json")
+        with exclusive_lock(co.root / "nodes" / key / "runner.lock"), co.state_lock(new_work=True):
+            co._gate(new_work=True)
+            states, _ = co.state()
+            require(states[key] == State.PENDING, "a decision is published before the node is claimed")
+            require(not (co.root / "claims" / (key + ".json")).exists(),
+                    "original claim intent exists; observe only")
+            require(not path.exists(), "original published decision exists; observe only")
+            advice = self._advice_pin(co, key, advice_sha256)
+            publisher = self._publisher_pin()
+            value = dict(schema=DECISION_SCHEMA, run_id=run_id, node_id=key, decided_at=None,
+                         advice_sha256=advice_sha256,
+                         supervisor_session=self.campaign["sessions"]["codex"]["session_id"],
+                         **{name: fields[name] for name in DECISION_ARGUMENTS if name != "advice_sha256"})
+            # Every refusal precedes the one write, so a refused publication
+            # leaves no file that a retry would mistake for an original.
+            check_decision(value, run_id, key)
+            require(decision_argument_fields(value) == fields,
+                    "the published decision does not reproduce its own pinned call fields")
+            ref = write_json(path, value, exclusive=True)
+            require(validate_decision(ref, run_id, key) == value, "published decision bytes changed")
+            return dict(schema="orchestration-decision-publication-v1", run_id=run_id, node_id=key,
+                        supervisor_session=value["supervisor_session"],
+                        decision=dict(path=ref["path"], bytes=ref["bytes"], sha256=ref["sha256"]),
+                        publisher=publisher, inputs=dict(campaign=self.ref, advice=advice))
+
     def _upgrade_features(self):
         require(campaign_version(self.campaign) != 3 or self.campaign["arm"] == "B",
                 "A1 uses native supervisor scheduling; upgrade drafts/advice/continuation are B-only")
@@ -362,10 +437,10 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "publish-decision", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
-    node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "accept", "resume-accept",
+    node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "publish-decision", "accept", "resume-accept",
                     "block", "failure-candidate", "settle", "resume-settle", "disarm"}
     for action in actions:
         sub = commands.add_parser(action)
@@ -375,6 +450,14 @@ def main(argv=None):
             sub.add_argument("--node", required=True)
         if action in ("accept", "settle"):
             sub.add_argument("--marker", required=True)
+        if action == "publish-decision":
+            # Every field is required: an omitted advice pin must not be able
+            # to turn an on-arm decision into an off-arm one by accident.
+            # A separate dest: the decision field "action" must never overwrite
+            # the subcommand stored in args.action.
+            from orchestration_campaign import DECISION_ARGUMENTS
+            for name in DECISION_ARGUMENTS:
+                sub.add_argument("--" + name.replace("_", "-"), dest="decision_" + name, required=True)
         if action == "block":
             sub.add_argument("--reason", required=True)
         if action == "failure-candidate":
@@ -406,6 +489,10 @@ def main(argv=None):
             result = runner.wait_permit(args.run, args.timeout_seconds)
         elif action == "advance":
             result = runner.advance(args.run, max_steps=args.max_steps, max_seconds=args.max_seconds)
+        elif action == "publish-decision":
+            from orchestration_campaign import DECISION_ARGUMENTS
+            result = runner.publish_decision(args.run, args.node,
+                                             {name: getattr(args, "decision_" + name) for name in DECISION_ARGUMENTS})
         elif action in ("accept", "settle"):
             result = getattr(runner, action)(args.run, args.node, args.marker)
         elif action.startswith("resume-"):

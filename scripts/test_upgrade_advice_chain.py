@@ -24,7 +24,9 @@ DOCUMENTED_PREDICATES = {"advice_session_consistent", "advice_read_evidence", "r
                          "decision_cites_this_advice", "binding_cites_decision", "route_within_recomputed",
                          "ordered_chain", "off_arm_has_no_advice_file", "off_arm_worker_requests_zero",
                          "off_arm_has_no_advice_read", "fallback_not_counted_as_consumed",
-                         "advice_read_attempts"}
+                         "advice_read_attempts", "decision_publish_evidence",
+                         "publish_call_is_the_frozen_script", "publication_pins_the_decision",
+                         "publish_follows_the_read"}
 
 
 def suggesting_transport(request):

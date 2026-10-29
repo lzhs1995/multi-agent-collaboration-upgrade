@@ -241,7 +241,12 @@ def decision_route_recomputed(decision, candidates) -> bool:
 
 def validate_decision(ref, run_id, node_id) -> dict:
     """Read the supervisor's decision file; refuse before anything is written."""
-    decision = json_ref(ref, "original bind decision")
+    return check_decision(json_ref(ref, "original bind decision"), run_id, node_id)
+
+
+def check_decision(decision, run_id, node_id) -> dict:
+    """The same checks on an in-memory value, so a publisher refuses before writing."""
+    require(isinstance(decision, dict), "bind decision must be a JSON object")
     require(set(decision) == DECISION_FIELDS, "bind decision fields changed")
     require(decision["schema"] == DECISION_SCHEMA, "bind decision schema changed")
     require(globals()["decision_matches_run_node"](decision, run_id, node_id),
