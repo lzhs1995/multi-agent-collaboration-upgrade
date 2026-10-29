@@ -47,6 +47,16 @@ class DecisionProvider(Protocol):
 
 HARD_GATES = ("authorized", "identity_verified", "scope_valid", "evidence_verified")
 PURPOSES = {"route", "completion", "scope", "dangerous_operation"}
+UNBOUND_PENDING_BIND = "UNBOUND_PENDING_BIND"
+
+
+def deliberately_unbound(context: dict[str, Any]) -> bool:
+    """A frozen node that deliberately carries no executor, said explicitly.
+
+    The fact is an explicit context key, never a missing or None ``executor``:
+    a context-assembly bug must not become the benign unbound path.
+    """
+    return context.get("executor_binding") == UNBOUND_PENDING_BIND
 
 
 class RulesProvider:
@@ -67,6 +77,12 @@ class RulesProvider:
                 return Decision(Outcome.DENY, "unsupported executor/provider binding", 1, refs)
             if not isinstance(available, (list, tuple)) or any(x not in providers for x in available):
                 return Decision(Outcome.DENY, "route includes an unsupported executor", 1, refs)
+            binding = context.get("executor_binding")
+            if deliberately_unbound(context):
+                return Decision(Outcome.ESCALATE,
+                                "the frozen node is deliberately unbound; bind it before claiming", 1, refs)
+            if binding is not None and binding not in providers:
+                return Decision(Outcome.DENY, "unsupported executor binding fact", 1, refs)
             if preferred not in available:
                 return Decision(Outcome.ESCALATE, "the assigned existing session is unavailable", 1, refs)
             return Decision(Outcome.ALLOW, "assigned existing CLI session is ready", 1, refs, preferred)
