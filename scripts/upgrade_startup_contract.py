@@ -196,6 +196,34 @@ def readiness_command(controller, python, rtk, lane):
                       str(Path(controller) / "scripts/mac_upgrade_client_probe.py"), "--lane", lane])
 
 
+# Both u22 Claude lanes (claude-opus-5) appended a literal " 2>&1" to the pinned
+# probe, so the exact-equality matcher counted 0 calls and reported
+# READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED for 15+ minutes while Codex, which
+# ran the exact form, became ready. This closed set admits that one rewrite and
+# nothing else for this command only; it is not shell normalization.
+READINESS_COMMAND_SUFFIXES = ("", " 2>&1")
+
+
+def readiness_command_forms(command):
+    """The closed set of executed strings that count as this pinned probe.
+
+    Exactly two: the readiness command, and the readiness command followed by
+    the literal " 2>&1". Any other redirection, pipe, ";", "&&", second command,
+    comment, extra whitespace or quoting change stays a different command.
+    """
+    require(isinstance(command, str) and bool(command), "STARTUP_READINESS_COMMAND_REQUIRED")
+    return tuple(command + suffix for suffix in READINESS_COMMAND_SUFFIXES)
+
+
+def is_readiness_command(executed, command):
+    """True when one executed shell string is an accepted form of the probe.
+
+    Every form is a string, so a missing or non-string executed command is
+    never one of them.
+    """
+    return executed in readiness_command_forms(command)
+
+
 def bootstrap_continuation(controller, python, rtk):
     """Original bounded Codex continuation, reusable in pinned lane duties."""
     bootstrap = shlex.join([str(rtk), "proxy", python, "-I", "-B",

@@ -237,6 +237,59 @@ class StartupFailureEvidenceTests(unittest.TestCase):
             startup_failure_evidence(native, session, "codex", self.spec, self.startup,
                                      task_id="original-task", now=1792540900)
 
+    def reset_journal(self):
+        self.journal.path.write_bytes(self.journal.path.read_bytes().splitlines(keepends=True)[0])
+
+    def failure_with_probe(self, executed):
+        """One original pre-probe failure journal that also carries an exec call."""
+        turn = str(uuid.uuid4())
+        self.journal.append(dict(type="event_msg", timestamp="2026-10-21T00:00:00Z",
+            payload=dict(type="task_started", turn_id=turn)))
+        self.journal.append(dict(type="turn_context", timestamp="2026-10-21T00:00:01Z",
+            payload=dict(turn_id=turn, model="test-model")))
+        prompt = readiness_prompt(self.spec["controller"], "/pinned/python", "/pinned/rtk", "codex")
+        self.prompt = self.journal.append(self.journal.message("user", prompt, at="2026-10-21T00:00:02Z"))
+        self.journal.append(dict(type="response_item", timestamp="2026-10-21T00:00:03Z",
+            payload=dict(type="custom_tool_call", name="functions.exec", call_id="probe-call",
+                input="text(await tools.exec_command("
+                      + json.dumps({"cmd": executed, "login": False}) + "));\n")))
+        self.journal.append(dict(type="event_msg", timestamp="2026-10-21T00:00:04Z",
+            payload=dict(type="task_complete", turn_id=turn, last_agent_message=None,
+                error=dict(message="Original native failure",
+                    codex_error_info={"http_connection_failed": {"http_status_code": 402}}))))
+        return dict(self.journal.session, transcript=native._pin_file(self.journal.path, "codex",
+                        self.journal.session["session_id"]))
+
+    def test_continuity_guard_refuses_both_accepted_probe_forms(self):
+        """The guard must see the same call readiness evidence counts, so a
+        probe that already ran with a trailing " 2>&1" still blocks fallback."""
+        from upgrade_startup_contract import readiness_command
+        from upgrade_startup_continuity import startup_failure_evidence
+        command = readiness_command(self.spec["controller"], "/pinned/python", "/pinned/rtk", "codex")
+        for executed in (command, command + " 2>&1"):
+            with self.subTest(executed=executed):
+                self.reset_journal()
+                session = self.failure_with_probe(executed)
+                with self.assertRaisesRegex(ContractError, "STARTUP_FAILURE_PROBE_ALREADY_EXECUTED"):
+                    startup_failure_evidence(native, session, "codex", self.spec, self.startup,
+                                             task_id="original-task", now=1792540900)
+
+    def test_continuity_guard_is_not_blocked_by_another_command(self):
+        # Positive control for the guard above: a rewrite outside the closed set
+        # is a different command, so the original pre-probe failure still proves.
+        from upgrade_startup_contract import readiness_command
+        from upgrade_startup_continuity import startup_failure_evidence
+        command = readiness_command(self.spec["controller"], "/pinned/python", "/pinned/rtk", "codex")
+        for suffix in (" 2>&1 | cat", " 2>&1; true", " 2>/dev/null", " >/tmp/x 2>&1",
+                       " 2>&1 2>&1", "  2>&1", " 2>&1 # comment"):
+            with self.subTest(suffix=suffix):
+                self.reset_journal()
+                session = self.failure_with_probe(command + suffix)
+                value = startup_failure_evidence(native, session, "codex", self.spec, self.startup,
+                                                 task_id="original-task", now=1792540900)
+                self.assertEqual(value["outcome"]["http_status"], 402)
+                self.assertFalse(value["adoption_proven"])
+
     def test_unknown_string_bool_retryable_or_ambiguous_status_remains_insufficient(self):
         from upgrade_startup_continuity import startup_failure_evidence
         for status in ("402", True, 429, 502, 200, 600):

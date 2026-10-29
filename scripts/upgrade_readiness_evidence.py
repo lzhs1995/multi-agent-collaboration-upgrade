@@ -13,7 +13,8 @@ import uuid
 
 from orchestration_common import (ContractError, digest, file_ref, json_ref, parse_time, read_regular,
                                   require, strict_json)
-from upgrade_startup_contract import GOAL_SCHEMA, pressure_startup_prompt, readiness_command, readiness_prompt
+from upgrade_startup_contract import (GOAL_SCHEMA, is_readiness_command, pressure_startup_prompt,
+                                      readiness_command, readiness_prompt)
 
 
 def native_records(native, session):
@@ -37,27 +38,40 @@ def native_records(native, session):
             yield ref, record
 
 
-def command_in_tool(arguments, command):
-    """Match executed shell arguments; assistant prose is never an input here."""
+def executed_command(arguments):
+    """The one complete shell string these tool arguments executed, or None.
+
+    Shape only; the caller decides which commands count. A comment, quoted
+    example or a second call must not become readiness evidence.
+    """
     if isinstance(arguments, dict):
-        return arguments.get("cmd", arguments.get("command")) == command
+        executed = arguments.get("cmd", arguments.get("command"))
+        return executed if isinstance(executed, str) else None
     if isinstance(arguments, str):
         try:
             parsed = json.loads(arguments)
         except ValueError:
-            # Only the single complete shell invocation is admitted. A comment,
-            # quoted example or a second call must not become readiness evidence.
             match = re.fullmatch(r"\s*text\(\s*await\s+tools\.exec_command\((\{.*\})\)\s*\);?\s*",
                                  arguments, re.DOTALL)
             if match is None:
-                return False
+                return None
             try:
                 parsed = json.loads(match[1])
             except ValueError:
-                return False
+                return None
         # A JSON string containing example code is data, not an executed call.
-        return isinstance(parsed, dict) and command_in_tool(parsed, command)
-    return False
+        return executed_command(parsed) if isinstance(parsed, dict) else None
+    return None
+
+
+def command_in_tool(arguments, command):
+    """Match executed shell arguments; assistant prose is never an input here.
+
+    The readiness command is accepted in its two closed forms only (see
+    readiness_command_forms): the exact command, or the exact command plus a
+    literal " 2>&1". Every readiness consumer of this command uses this matcher.
+    """
+    return is_readiness_command(executed_command(arguments), command)
 
 
 def completed_probe(value, lane, spec):
@@ -200,6 +214,11 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
             r"\s*text\(\s*await\s+tools\.exec_command\((\{.*\})\)\s*\);?\s*",
             args, re.DOTALL) is None:
         return None
+    # The native argv must carry the very string this wrapper asked for, so the
+    # outer call and the nested execution can never disagree about the form.
+    executed = executed_command(args)
+    if not is_readiness_command(executed, command):
+        return None
     inside = [(ref, row) for ref, row in records
               if call["record"]["offset"] < ref["offset"] < result_ref["offset"]]
     if any(row.get("type") == "response_item" and row.get("payload", {}).get("type")
@@ -223,10 +242,10 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
             or not isinstance(item.get("id"), str) or not item["id"].startswith("exec-")
             or not isinstance(argv, list) or len(argv) != 3
             or argv[0] not in ("/bin/zsh", "/bin/bash", "/bin/sh")
-            or argv[1:] != ["-c", command]
+            or argv[1:] != ["-c", executed]
             or not completed_probe(item.get("aggregated_output"), "codex", spec)):
         return None
-    return dict(id=item["id"], name="Bash", arguments={"command": command},
+    return dict(id=item["id"], name="Bash", arguments={"command": executed},
                 startup=call["startup"], record=ref, turn_id=event["turn_id"])
 
 

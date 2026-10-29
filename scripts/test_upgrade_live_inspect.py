@@ -19,8 +19,15 @@ from upgrade_client_isolation import LANES
 import upgrade_live_entry as entry
 import upgrade_live_inspect as subject
 import upgrade_readiness_evidence as evidence
-from upgrade_startup_contract import (GOAL_SCHEMA, native_goal_condition, pressure_startup_prompt,
-                                     readiness_command, readiness_prompt)
+from upgrade_startup_contract import (GOAL_SCHEMA, is_readiness_command, native_goal_condition,
+                                     pressure_startup_prompt, readiness_command,
+                                     readiness_command_forms, readiness_prompt)
+
+# The closed set every readiness consumer of this command must share, and the
+# rewrites that stay a different command. Shared by the call-site tests below.
+ACCEPTED_SUFFIXES = ("", " 2>&1")
+REFUSED_SUFFIXES = (" 2>&1 | cat", " 2>&1; true", " 2>/dev/null", " >/tmp/x 2>&1",
+                    " 2>&1 2>&1", "  2>&1", " 2>&1 # comment", " 2>&1 && true")
 
 
 class ReadinessTests(unittest.TestCase):
@@ -37,20 +44,32 @@ class ReadinessTests(unittest.TestCase):
         self.startup = write_json(self.root / "startup.json", {"offline_fixture": True})
         self.binding = dict(state_root=str(self.root))
 
-    def fixture(self, lane):
+    def fixture(self, lane, *, executed=None, banner=False, codex_arguments="wrapper"):
+        """executed: the exact string the client ran, when it is not the pinned
+        command itself. banner: the real u22 rtk notice before the probe JSON."""
         provider = "codex" if lane == "codex" else "claude"
         sid = str(uuid.uuid4())
         session = dict(provider=provider, session_id=sid,
                        transcript=dict(path=str(self.root / (sid + ".jsonl"))))
         command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", lane)
+        ran = command if executed is None else executed
         prompt = readiness_prompt(self.controller, "/pinned/python", "/pinned/rtk", lane)
-        arguments = ("text(await tools.exec_command(" + json.dumps({"cmd": command, "login": False}) + "));\n"
-                     if lane == "codex" else {"command": command})
+        if lane != "codex":
+            arguments = {"command": ran, "timeout": 180000}
+        elif codex_arguments == "wrapper":
+            arguments = "text(await tools.exec_command(" + json.dumps({"cmd": ran, "login": False}) + "));\n"
+        else:
+            arguments = {"cmd": ran, "login": False}
         call = dict(id="readiness-call", name="functions.exec" if lane == "codex" else "Bash",
                     arguments=arguments, startup=self.startup)
         probe = dict(status="UPGRADE_READINESS_TOOL_COMPLETED", lane=lane,
             native_root=self.spec["clients"][lane]["native_root"], controller=self.controller,
             adoption_proven=False, input_operations=0)
+        body = json.dumps(probe)
+        if banner:
+            # The exact first line every u22 probe result carried.
+            body = ("[rtk] /!\\ No hook installed — run `rtk init -g` for automatic "
+                    "token savings\n" + body)
         if lane == "codex":
             rows = [
                 {"type": "turn_context", "payload": {"model": "frozen-model"}},
@@ -60,7 +79,7 @@ class ReadinessTests(unittest.TestCase):
                     "name": call["name"], "input": arguments, "call_id": call["id"]}},
                 {"type": "response_item", "payload": {"type": "custom_tool_call_output",
                     "call_id": call["id"], "output": "Script completed\nOutput:\n" +
-                    json.dumps({"exit_code": 0, "output": json.dumps(probe)})}},
+                    json.dumps({"exit_code": 0, "output": body})}},
             ]
         else:
             rows = [
@@ -69,7 +88,7 @@ class ReadinessTests(unittest.TestCase):
                     "model": "frozen-model", "content": [{"type": "tool_use", "id": call["id"],
                         "name": "Bash", "input": arguments}]}},
                 {"type": "user", "sessionId": sid, "message": {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": call["id"], "content": json.dumps(probe)}]}},
+                    {"type": "tool_result", "tool_use_id": call["id"], "content": body}]}},
             ]
         records = [(dict(path=session["transcript"]["path"], offset=100 * n, length=100), row)
                    for n, row in enumerate(rows)]
@@ -205,6 +224,73 @@ class ReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "AUTOMATIC_PRE_POST_HOOKS"):
             self.check_goal(fixture)
 
+    def tool_shapes(self, ran):
+        """The argument shapes the three call sites actually read."""
+        return {"claude_bash": {"command": ran, "timeout": 180000},
+                "codex_dict": {"cmd": ran, "login": False},
+                "codex_wrapper": "text(await tools.exec_command("
+                                 + json.dumps({"cmd": ran, "login": False}) + "));\n"}
+
+    def test_closed_set_is_two_literal_forms_and_takes_only_a_real_command(self):
+        command, accepted, refused = self.readiness_variants("claude_a")
+        self.assertEqual(readiness_command_forms(command), (command, command + " 2>&1"))
+        self.assertEqual(list(readiness_command_forms(command)), accepted)
+        for executed in accepted:
+            self.assertIs(is_readiness_command(executed, command), True)
+        # A missing or non-string executed string is not one of the two forms.
+        for executed in refused + [None, 7, [command], {"command": command}]:
+            with self.subTest(executed=executed):
+                self.assertIs(is_readiness_command(executed, command), False)
+        for empty in ("", None):
+            with self.subTest(command=empty):
+                with self.assertRaisesRegex(ContractError, "STARTUP_READINESS_COMMAND_REQUIRED"):
+                    readiness_command_forms(empty)
+
+    def test_only_a_real_tool_argument_shape_carries_an_executed_command(self):
+        # The closed set widens the accepted command, never the shapes that may
+        # carry one: prose, a bare string and a non-string value stay no command.
+        command, accepted, _ = self.readiness_variants("codex")
+        for arguments in (command, command + " 2>&1", "// " + command, {"cmd": [command]},
+                          {"command": None}, {"command": 7}, {}, [command], None, 7):
+            with self.subTest(arguments=arguments):
+                self.assertIsNone(evidence.executed_command(arguments))
+                self.assertFalse(evidence.command_in_tool(arguments, command))
+        for ran in accepted:
+            for arguments in self.tool_shapes(ran).values():
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(evidence.executed_command(arguments), ran)
+
+    def test_every_matcher_of_this_command_agrees_on_one_physical_call(self):
+        # No matcher may accept what another rejects: readiness evidence, the
+        # inspector re-export and the startup-continuity guard are one predicate.
+        import upgrade_startup_continuity as continuity
+        matchers = {"readiness_evidence": evidence.command_in_tool,
+                    "live_inspect": subject.command_in_tool,
+                    "startup_continuity": continuity.command_in_tool}
+        self.assertEqual(len(set(matchers.values())), 1)
+        for lane in LANES:
+            command, accepted, refused = self.readiness_variants(lane)
+            for ran, expected in [(x, True) for x in accepted] + [(x, False) for x in refused]:
+                for site, arguments in self.tool_shapes(ran).items():
+                    for name, matcher in matchers.items():
+                        with self.subTest(lane=lane, executed=ran, site=site, matcher=name):
+                            self.assertIs(matcher(arguments, command), expected)
+
+    def test_installed_private_copy_keeps_the_same_closed_set(self):
+        from upgrade_live_patch import private_imports
+        import orchestration_common
+        import upgrade_startup_contract
+        source = Path(evidence.__file__).resolve()
+        rendered, namespace = private_imports(source.read_text()), {}
+        aliases = {"mac_upgrade_common": orchestration_common,
+                   "mac_upgrade_startup_contract": upgrade_startup_contract}
+        with patch.dict(sys.modules, aliases):
+            exec(compile(rendered, "mac_upgrade_readiness_evidence.py", "exec"), namespace)
+        command, accepted, refused = self.readiness_variants("claude_a")
+        for ran, expected in [(x, True) for x in accepted] + [(x, False) for x in refused]:
+            with self.subTest(executed=ran):
+                self.assertIs(namespace["command_in_tool"]({"command": ran}, command), expected)
+
     def test_prose_comment_failure_or_pending_result_is_not_success(self):
         session, rows, call, hooks, launches, probe = self.fixture("codex")
         command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", "codex")
@@ -216,6 +302,91 @@ class ReadinessTests(unittest.TestCase):
                        {"session_id": 9, "output": json.dumps(probe)},
                        "Process exited with code 2\n" + json.dumps(probe)):
             self.assertFalse(subject.completed_probe(output, "codex", self.spec))
+
+    def readiness_variants(self, lane):
+        """The pinned command, its two accepted forms, and rewrites that are not it."""
+        command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", lane)
+        accepted = [command + suffix for suffix in ACCEPTED_SUFFIXES]
+        refused = [command + suffix for suffix in REFUSED_SUFFIXES]
+        refused.append("# run the pinned probe\n" + command + " 2>&1")
+        refused.append(command.replace(" --lane", "  --lane"))
+        return command, accepted, refused
+
+    def check(self, fixture, lane):
+        session, rows, _, _, launches, _ = fixture
+        with patch.object(evidence, "native_records", return_value=iter(rows)):
+            return subject.readiness_evidence(None, session, lane, self.spec,
+                                              self.startup, self.binding, launches)
+
+    def test_u22_claude_bash_probe_with_trailing_redirect_is_the_same_call(self):
+        """u22 23:14:04Z/23:14:52Z: both Claude lanes appended " 2>&1" to the
+        pinned probe, so exact equality kept call_count at 0 for 15+ minutes."""
+        for lane in ("claude_a", "claude_b"):
+            _, accepted, _ = self.readiness_variants(lane)
+            for ran in accepted:
+                with self.subTest(lane=lane, executed=ran):
+                    fixture = self.fixture(lane, executed=ran, banner=True)
+                    result = self.check(fixture, lane)
+                    self.assertEqual(result["call_id"], fixture[2]["id"])
+                    self.assertEqual(len(result["hooks"]["PreToolUse"]), 1)
+                    self.assertEqual(len(result["hooks"]["PostToolUse"]), 1)
+
+    def test_codex_exec_accepts_both_forms_in_both_argument_shapes(self):
+        _, accepted, _ = self.readiness_variants("codex")
+        for shape in ("wrapper", "dict"):
+            for ran in accepted:
+                with self.subTest(shape=shape, executed=ran):
+                    fixture = self.fixture("codex", executed=ran, banner=True, codex_arguments=shape)
+                    self.assertEqual(self.check(fixture, "codex")["call_id"], fixture[2]["id"])
+
+    def test_every_other_rewrite_of_the_probe_is_not_this_call(self):
+        for lane, shape in (("claude_a", "wrapper"), ("claude_b", "wrapper"),
+                            ("codex", "wrapper"), ("codex", "dict")):
+            _, _, refused = self.readiness_variants(lane)
+            for ran in refused:
+                with self.subTest(lane=lane, shape=shape, executed=ran):
+                    fixture = self.fixture(lane, executed=ran, banner=True, codex_arguments=shape)
+                    with self.assertRaisesRegex(ContractError, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+                        self.check(fixture, lane)
+
+    def test_the_probe_quoted_as_json_data_is_not_a_call(self):
+        # Widening the command never widens what may carry one: both forms
+        # quoted as a JSON string stay data, as the wrapper or on their own.
+        _, accepted, _ = self.readiness_variants("codex")
+        for ran in accepted:
+            for quote in (lambda payload, ran: json.dumps(payload), lambda payload, ran: json.dumps(ran)):
+                with self.subTest(executed=ran, quoted=quote(None, "x")):
+                    fixture = self.fixture("codex", executed=ran, banner=True)
+                    rows = fixture[1]
+                    payload = rows[2][1]["payload"]
+                    payload["input"] = quote(payload["input"], ran)
+                    with self.assertRaisesRegex(ContractError, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+                        self.check(fixture, "codex")
+
+    def test_hooks_must_bind_the_form_the_call_executed_not_any_accepted_form(self):
+        # The hook payload is the real observed input, so it must carry the one
+        # form this call ran; the other accepted form is a different call.
+        _, accepted, _ = self.readiness_variants("claude_a")
+        for ran, other in ((accepted[0], accepted[1]), (accepted[1], accepted[0])):
+            with self.subTest(executed=ran, hook_input=other):
+                fixture = self.fixture("claude_a", executed=ran, banner=True)
+                for path, value in fixture[3]:
+                    value["payload"].update(tool_input={"command": other, "timeout": 180000})
+                    write_json(path, value)
+                with self.assertRaisesRegex(ContractError, "AUTOMATIC_PRE_POST_HOOKS_NOT_CORRELATED"):
+                    self.check(fixture, "claude_a")
+
+    def test_one_exact_and_one_redirected_call_are_two_calls_not_one(self):
+        lane = "claude_a"
+        command, accepted, _ = self.readiness_variants(lane)
+        fixture = self.fixture(lane, executed=accepted[1], banner=True)
+        rows = fixture[1]
+        second = copy.deepcopy(rows[1])
+        second[1]["message"]["content"][0].update(id="second-readiness-call",
+                                                  input={"command": command, "timeout": 180000})
+        rows.insert(2, (dict(second[0], offset=150), second[1]))
+        with self.assertRaisesRegex(ContractError, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+            self.check(fixture, lane)
 
     def test_manual_hook_wrong_session_pid_birth_config_or_call_fails(self):
         session, rows, call, hooks, launches, _ = self.fixture("claude_a")
@@ -236,20 +407,21 @@ class ReadinessTests(unittest.TestCase):
                 subject.readiness_evidence(None, session, "claude_a", self.spec,
                                            self.startup, self.binding, launches)
 
-    def nested_fixture(self):
-        session, rows, call, hooks, launches, probe = self.fixture("codex")
+    def nested_fixture(self, *, executed=None):
+        session, rows, call, hooks, launches, probe = self.fixture("codex", executed=executed)
         command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", "codex")
+        ran = command if executed is None else executed
         turn = str(uuid.uuid4())
         rows[0][1]["payload"].update(turn_id=turn)
         rows[2][1]["payload"]["internal_chat_message_metadata_passthrough"] = {"turn_id": turn}
         item = dict(type="CommandExecution", id="exec-native-command", source="unified_exec_startup",
-                    command=["/bin/zsh", "-c", command], status="completed", exit_code=0,
+                    command=["/bin/zsh", "-c", ran], status="completed", exit_code=0,
                     stdout=json.dumps(probe), stderr="", aggregated_output=json.dumps(probe))
         event = dict(type="event_msg", payload=dict(type="item_completed",
                      thread_id=session["session_id"], turn_id=turn, item=item))
         rows.insert(3, (dict(rows[2][0], offset=250, length=10), event))
         for path, value in hooks:
-            value["payload"].update(tool_use_id=item["id"], tool_name="Bash", tool_input={"command": command})
+            value["payload"].update(tool_use_id=item["id"], tool_name="Bash", tool_input={"command": ran})
             write_json(path, value)
         return session, rows, call, hooks, launches, probe
 
@@ -258,6 +430,41 @@ class ReadinessTests(unittest.TestCase):
         with patch.object(evidence, "native_records", return_value=iter(rows)):
             return subject.readiness_evidence(None, session, "codex", self.spec,
                                               self.startup, self.binding, launches)
+
+    def test_nested_call_site_accepts_both_forms_and_refuses_the_same_rewrites(self):
+        command, accepted, refused = self.readiness_variants("codex")
+        for ran in accepted:
+            with self.subTest(executed=ran):
+                result = self.check_nested(self.nested_fixture(executed=ran))
+                self.assertEqual(result["native_command"]["id"], "exec-native-command")
+        for ran in refused:
+            with self.subTest(executed=ran):
+                with self.assertRaisesRegex(ContractError, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+                    self.check_nested(self.nested_fixture(executed=ran))
+
+    def test_nested_argv_must_carry_the_form_the_wrapper_asked_for(self):
+        # One physical call: the wrapper's exact command and an argv that added
+        # " 2>&1" are not the same execution, even though both forms are accepted.
+        for wrapper, argv in ((None, 1), (1, None)):
+            with self.subTest(wrapper=wrapper, argv=argv):
+                _, accepted, _ = self.readiness_variants("codex")
+                fixture = self.nested_fixture(executed=accepted[wrapper or 0])
+                fixture[1][3][1]["payload"]["item"]["command"][2] = accepted[argv or 0]
+                with self.assertRaises(ContractError):
+                    self.check_nested(fixture)
+
+    def test_nested_predicate_refuses_a_wrapper_that_ran_another_command(self):
+        # Called directly: a self-consistent wrapper/argv pair for some other
+        # command is still not this probe, whatever its output claims.
+        command, _, _ = self.readiness_variants("codex")
+        other = command + " 2>&1 | cat"
+        fixture = self.nested_fixture(executed=other)
+        session, rows, call, _, _, _ = fixture
+        call = dict(call, arguments=rows[2][1]["payload"]["input"],
+                    turn_id=rows[3][1]["payload"]["turn_id"], record=rows[2][0])
+        records = [(ref, row) for ref, row in rows if row["type"] in ("event_msg", "response_item")]
+        self.assertIsNone(subject.nested_readiness_command(
+            records, call, rows[4][0], session, command, self.spec))
 
     def test_nested_native_command_correlates_automatic_bash_hooks(self):
         fixture = self.nested_fixture()
