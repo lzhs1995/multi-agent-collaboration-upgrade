@@ -47,13 +47,19 @@ raise SystemExit(plan["rc"])
 class Fixture:
     """A fake release tree plus one original queued-only Claude attempt."""
 
-    def __init__(self, root, sequential=False):
+    def __init__(self, root, sequential=False, causal=False):
         self.root = Path(root).resolve()
         self.source = self.root / "release" / "source"
         (self.source / "scripts").mkdir(parents=True)
         (self.source / "scripts" / "model_context_consumption.py").write_text(FAKE_OBSERVER)
         # (policy schema, evidence class, observer script, observer output schema) of the class under test.
-        if sequential:
+        if causal:
+            # The causal observer imports the sequential correlator, which imports the v1 module.
+            (self.source / "scripts" / "model_context_sequential.py").write_text(FAKE_OBSERVER)
+            (self.source / "scripts" / "model_context_causal.py").write_text(FAKE_OBSERVER)
+            self.kind = (downlink.CAUSAL_POLICY_SCHEMA, downlink.CAUSAL_EVIDENCE_CLASS,
+                         "model_context_causal.py", downlink.CAUSAL_OBSERVATION_SCHEMA)
+        elif sequential:
             (self.source / "scripts" / "model_context_sequential.py").write_text(FAKE_OBSERVER)
             self.kind = (downlink.SEQUENTIAL_POLICY_SCHEMA, downlink.SEQUENTIAL_EVIDENCE_CLASS,
                          "model_context_sequential.py", downlink.SEQUENTIAL_OBSERVATION_SCHEMA)
@@ -135,9 +141,18 @@ class Fixture:
                  for p in sorted(self.source.rglob("*")) if p.is_file()}
         manifest = write_json(self.root / "release" / "MANIFEST.json", dict(version="fixture", files=files))
         observer = file_ref(self.source / "scripts" / self.kind[2])
-        value = dict(schema=self.kind[0], disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
-                     evidence_class=self.kind[1], native_user_evidence_class="NATIVE_USER_RECEIVED",
-                     complete_source=str(self.source), source_manifest=manifest, observer=observer)
+        if self.kind[1] == downlink.CAUSAL_EVIDENCE_CLASS:
+            # owner40's v215 reply shape: a source publication with its own contract, no policy fields.
+            self.contract = dict(class_name=downlink.CAUSAL_EVIDENCE_CLASS, scope="PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY",
+                                 default_old_observers_unchanged=True)
+            self.published = dict(schema="source-only-immutable-publication-v1", source=str(self.source),
+                                  manifest=manifest, causal=observer)
+            value = dict(schema=self.kind[0], status="PROSPECTIVE_SOURCE_PUBLISHED_REQUIRED_CHECKS_PASS",
+                         source_publication=self.published, causal_contract=self.contract)
+        else:
+            value = dict(schema=self.kind[0], disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
+                         evidence_class=self.kind[1], native_user_evidence_class="NATIVE_USER_RECEIVED",
+                         complete_source=str(self.source), source_manifest=manifest, observer=observer)
         value.update(policy)
         self.policy = write_json(self.root / "policy.json", value)
         return self.policy
@@ -1162,6 +1177,245 @@ class SequentialContextClassTests(unittest.TestCase):
                             deadline_epoch=time.time() + 1.2, interval=1)
         self.assertEqual((rc, value["observation"], value["evidence_class"]), (2, "UNVERIFIED", None))
         self.assertTrue(value["reason"].startswith("deadline reached"), value["reason"])
+
+
+class CausalContextClassTests(unittest.TestCase):
+    """The owner40 0.4.80 causal class is bound only by owner40's own v215 publication reply."""
+
+    def fixture(self, sequential=False, causal=True):
+        temp = tempfile.TemporaryDirectory(prefix="context-downlink-causal-")
+        self.addCleanup(temp.cleanup)
+        return Fixture(temp.name, sequential=sequential, causal=causal)
+
+    def test_causal_publication_runs_its_own_observer_and_records_its_own_class(self):
+        f = self.fixture()
+        f.plan(f.consumed())
+        result = f.observe()
+        self.assertEqual((result["schema"], result["evidence_class"]),
+                         (downlink.RESULT_SCHEMA, downlink.CAUSAL_EVIDENCE_CLASS))
+        self.assertEqual(result["argv"][:3], [INTERPRETER, "-BE", str(f.source / "scripts/model_context_causal.py")])
+        release = result["release"]
+        self.assertEqual((release["evidence_class"], release["observation_schema"], release["observer"],
+                          release["manifest"], release["source"]),
+                         (downlink.CAUSAL_EVIDENCE_CLASS, downlink.CAUSAL_OBSERVATION_SCHEMA, f.published["causal"],
+                          f.published["manifest"], f.published["source"]))
+        [call] = f.calls()
+        self.assertEqual((call["ignore_environment"], call["dont_write_bytecode"]), (1, True))
+        recorded = write_json(f.root / "evidence" / "result.json", result)
+        self.assertEqual(downlink.verify(recorded, f.policy["sha256"], INTERPRETER), json_ref(recorded))
+        f.append(ack_record())
+        self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+
+    def test_causal_class_never_crosses_with_the_other_policies_or_observer_outputs(self):
+        output = lambda f, schema, observation: dict(f.consumed(), schema=schema, observation=observation)
+        republish = lambda f, **fields: (f.plan(f.consumed()), f.publish(**fields))
+        cases = (
+            # The causal publication accepts only the causal observer's own schema and verdict.
+            ("sequential_output_under_causal", "causal", lambda f: f.plan(output(
+                f, downlink.SEQUENTIAL_OBSERVATION_SCHEMA, downlink.SEQUENTIAL_EVIDENCE_CLASS)),
+             "unexpected context observer output"),
+            ("sequential_verdict_in_causal_schema", "causal",
+             lambda f: f.plan(f.consumed(observation=downlink.SEQUENTIAL_EVIDENCE_CLASS)),
+             "unexpected context observer verdict"),
+            ("publication_pointing_at_the_sequential_observer", "causal", lambda f: republish(
+                f, source_publication=dict(f.published, causal=file_ref(f.source / "scripts/model_context_sequential.py"))),
+             "not the manifest's observer"),
+            # Only the published-and-checked reply binds; the earlier authorization (v1 ruling) does not.
+            ("authorized_but_unpublished_ruling", "causal", lambda f: republish(
+                f, status="PROSPECTIVE_CAUSAL_JOIN_FIX_AUTHORIZED_OLD_U24_UNCHANGED"),
+             "not the v215 causal successor publication"),
+            ("contract_of_another_class", "causal", lambda f: republish(
+                f, causal_contract=dict(f.contract, class_name=downlink.SEQUENTIAL_EVIDENCE_CLASS)),
+             "not the v215 causal successor publication"),
+            ("contract_beyond_new_bindings", "causal", lambda f: republish(
+                f, causal_contract=dict(f.contract, scope="HISTORICAL_WINDOWS")),
+             "not the v215 causal successor publication"),
+            ("contract_replacing_old_observers", "causal", lambda f: republish(
+                f, causal_contract=dict(f.contract, default_old_observers_unchanged=False)),
+             "not the v215 causal successor publication"),
+            ("contract_missing", "causal", lambda f: republish(f, causal_contract=None),
+             "not the v215 causal successor publication"),
+            ("publication_of_another_schema", "causal", lambda f: republish(
+                f, source_publication=dict(f.published, schema="installed-release-v1")),
+             "not the v215 causal successor publication"),
+            ("publication_missing", "causal", lambda f: republish(f, source_publication=None),
+             "not the v215 causal successor publication"),
+            # A policy-shaped file restating the publication cannot stand in for owner40's reply.
+            ("policy_fields_in_place_of_the_publication", "causal", lambda f: republish(
+                f, status=None, source_publication=None, causal_contract=None,
+                disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING", evidence_class=downlink.CAUSAL_EVIDENCE_CLASS,
+                native_user_evidence_class="NATIVE_USER_RECEIVED", complete_source=str(f.source),
+                source_manifest=f.published["manifest"], observer=f.published["causal"]),
+             "not the v215 causal successor publication"),
+            ("release_without_sequential_module", "causal", lambda f: (
+                (f.source / "scripts/model_context_sequential.py").unlink(), republish(f)),
+             "release has no sequential observer module"),
+            ("release_without_v1_module", "causal", lambda f: (
+                (f.source / "scripts/model_context_consumption.py").unlink(), republish(f)),
+             "release has no v1 observer module"),
+            # The sequential and v1 policies never yield the causal class, even when their observers print it.
+            ("causal_output_under_sequential_policy", "sequential", lambda f: f.plan(output(
+                f, downlink.CAUSAL_OBSERVATION_SCHEMA, downlink.CAUSAL_EVIDENCE_CLASS)),
+             "unexpected context observer output"),
+            ("causal_verdict_in_sequential_schema", "sequential",
+             lambda f: f.plan(f.consumed(observation=downlink.CAUSAL_EVIDENCE_CLASS)),
+             "unexpected context observer verdict"),
+            ("sequential_policy_claiming_the_causal_class", "sequential",
+             lambda f: republish(f, evidence_class=downlink.CAUSAL_EVIDENCE_CLASS),
+             "not v124-shaped or v168-sequential-shaped"),
+            ("causal_output_under_v1_policy", "v1", lambda f: f.plan(output(
+                f, downlink.CAUSAL_OBSERVATION_SCHEMA, downlink.CAUSAL_EVIDENCE_CLASS)),
+             "unexpected context observer output"),
+            ("v1_policy_claiming_the_causal_class", "v1",
+             lambda f: republish(f, evidence_class=downlink.CAUSAL_EVIDENCE_CLASS),
+             "not v124-shaped or v168-sequential-shaped"),
+        )
+        for name, mode, change, reason in cases:
+            with self.subTest(case=name):
+                f = self.fixture(sequential=mode == "sequential", causal=mode == "causal")
+                change(f)
+                with self.assertRaisesRegex(ContractError, reason):
+                    f.observe()
+
+    def test_recorded_causal_proof_reproduces_only_under_its_own_publication_and_class(self):
+        f = self.fixture()
+        recorded = f.record()
+        value = json_ref(recorded)
+        self.assertEqual(value["evidence_class"], downlink.CAUSAL_EVIDENCE_CLASS)
+        calls = len(f.calls())
+        with self.assertRaisesRegex(ContractError, "bound to another policy"):
+            downlink.verify(recorded, "7" * 64, INTERPRETER)
+        self.assertEqual(len(f.calls()), calls)
+        # Relabeling a recorded causal proof as either older class cannot reproduce.
+        for name, label in (("as-sequential", downlink.SEQUENTIAL_EVIDENCE_CLASS), ("as-v1", "MODEL_CONTEXT_CONSUMED")):
+            with self.subTest(label=label):
+                forged = write_json(f.root / "evidence" / f"forged-{name}.json", dict(value, evidence_class=label))
+                with self.assertRaisesRegex(ContractError, "does not reproduce"):
+                    downlink.verify(forged, f.policy["sha256"], INTERPRETER)
+        # The recorded reply is pinned by its bytes; a changed publication cannot re-verify the old record.
+        f.publish(causal_contract=dict(f.contract, scope="HISTORICAL_WINDOWS"))
+        with self.assertRaisesRegex(ContractError, "context policy: file hash/size mismatch"):
+            downlink.verify(recorded, value["release"]["policy"]["sha256"], INTERPRETER)
+
+    def test_window_and_cli_terminalize_on_the_causal_class(self):
+        f = self.fixture()
+        f.plan(f.consumed())
+        window = dict(attempt=f.attempt["path"], attempt_sha256=f.attempt["sha256"], policy=f.policy["path"],
+                      policy_sha256=f.policy["sha256"], interpreter=INTERPRETER)
+        rc, value = run_cli("observe-window", **window, window_dir=f.root / "evidence" / "w1", deadline_epoch=time.time() + 30)
+        self.assertEqual((rc, value["evidence_class"], value["observation"]),
+                         (0, downlink.CAUSAL_EVIDENCE_CLASS, downlink.CAUSAL_EVIDENCE_CLASS))
+        [increment] = value["increments"]
+        self.assertEqual(json_ref(increment)["observation"], downlink.CAUSAL_EVIDENCE_CLASS)
+        rc, again = run_cli("verify", result=value["result"]["path"], result_sha256=value["result"]["sha256"],
+                            policy_sha256=f.policy["sha256"], interpreter=INTERPRETER)
+        self.assertEqual((rc, again["evidence_class"]), (0, downlink.CAUSAL_EVIDENCE_CLASS))
+
+
+# owner40's exact v215 reply; its source publication is the complete 0.4.80 tree it pins.
+CAUSAL_REPLY = (Path.home() / "Documents/cnm/tasks/02_Word_review/handoff/claude29-wip-20261018/u2078/r13"
+                / "SURFACE40-REPLY-u24-observer-causal-order-v2.json")
+CAUSAL_REPLY_SHA256 = "7bcbf02558e1d814bc2a48e9d4fc1910bfcb5e841c513b1c85576cb2360a6cbd"
+
+
+@unittest.skipUnless(CAUSAL_REPLY.is_file(), "owner40's v215 causal publication is not present here")
+class PinnedCausalObserverTests(unittest.TestCase):
+    """Runs owner40's published 0.4.80 causal observer, unchanged, on the measured two-batch chain."""
+
+    # The same original attempt/transcript builder as the 0.4.76 tests; only the chain after the fence differs.
+    attempt, eof, append = PinnedObserverTests.attempt, PinnedObserverTests.eof, PinnedObserverTests.append
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="context-downlink-causal-real-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.policy = file_ref(CAUSAL_REPLY)
+        self.assertEqual(self.policy["sha256"], CAUSAL_REPLY_SHA256)
+        release = downlink.pinned_release(self.policy)
+        names = {}
+        for node in ast.parse(Path(release["source"], "scripts/model_context_consumption.py").read_bytes()).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                if node.targets[0].id in ("PREFIX", "SUFFIX", "VERSION"):
+                    names[node.targets[0].id] = ast.literal_eval(node.value)
+        self.prefix_text, self.suffix_text, self.version = names["PREFIX"], names["SUFFIX"], names["VERSION"]
+        self.chains = {}
+        # The same release under the separately bound sequential class, as the contrast observer.
+        sequential = file_ref(Path(release["source"], "scripts/model_context_sequential.py"))
+        self.sequential = write_json(self.root / "sequential-policy.json", dict(
+            schema=downlink.SEQUENTIAL_POLICY_SCHEMA, disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
+            evidence_class=downlink.SEQUENTIAL_EVIDENCE_CLASS, native_user_evidence_class="NATIVE_USER_RECEIVED",
+            complete_source=release["source"], source_manifest=release["manifest"], observer=sequential))
+
+    def observe(self, name, attempt, evidence, policy=None):
+        return downlink.observe(attempt, policy or self.policy, INTERPRETER, evidence, self.eof(name))
+
+    def chain(self, name, inverted=True, change=None):
+        """One original attempt whose transcript carries the measured two-batch chain (hash, then Read).
+
+        inverted writes each next api-request before the result it carries, as Claude 2.1.303 did in u24;
+        change(events) edits that written order before it is appended."""
+        attempt, evidence = self.attempt(name, 0)
+        c = self.chains[name]
+        notice, blob, request, call_hash, call_read, hash_result, read_result, body_request, response = c["events"]
+        body = Path(json_ref(attempt)["body_reference"]["path"]).read_bytes().decode()
+        read_block = dict(read_result["message"]["content"][0],
+                          content="\n".join(f"{n}\t{line}" for n, line in enumerate(body.splitlines(), 1)))
+        read_result = dict(read_result, message=dict(role="user", content=[read_block]))
+        read_request = c["event"]("api-request", id="request-read", base=request["id"], querySource="repl_main_thread",
+                                  tail=[api_hash(dict(role="user", content=hash_result["message"]["content"]))])
+        call_read = dict(call_read, requestRef=read_request["id"])
+        body_request = dict(body_request, base=read_request["id"],
+                            tail=[api_hash(dict(role="user", content=[read_block]))])
+        ordered = [notice, blob, request, call_hash, hash_result, read_request, call_read, read_result, body_request,
+                   response]
+        events = [ordered[n] for n in (0, 1, 2, 3, 5, 4, 6, 8, 7, 9)] if inverted else ordered
+        if change:
+            change(events)
+        self.append(name, *events)
+        return attempt, evidence
+
+    def test_inverted_append_order_is_causally_consumed_and_still_refused_by_the_sequential_observer(self):
+        """u24's claude_a shape: each next api-request is written before the result it carries."""
+        attempt, evidence = self.chain("inverted")
+        result = self.observe("inverted", attempt, evidence)
+        observation = result["observation"]
+        self.assertEqual((result["evidence_class"], observation["schema"], observation["parallel_tool_results"]),
+                         (downlink.CAUSAL_EVIDENCE_CLASS, downlink.CAUSAL_OBSERVATION_SCHEMA, 2))
+        self.assertEqual([b["result_file_order_between_requests"] for b in observation["sequential_batches"]],
+                         [False, False])
+        self.assertEqual((observation["historical_window_reclassified"], observation["native_user_received"]),
+                         (False, False))
+        recorded = write_json(evidence / "result.json", result)
+        self.assertEqual(downlink.verify(recorded, self.policy["sha256"], INTERPRETER), json_ref(recorded))
+        with self.assertRaisesRegex(ContractError, "context not consumed: SUCCESSFUL_ORDERED_NATIVE_RESULT_REQUIRED"):
+            self.observe("inverted", attempt, evidence, self.sequential)
+        receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
+        self.append("inverted", self.chains["inverted"]["assistant"]("request-two", "ack", [dict(type="text", text=ACK)]))
+        order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof("inverted"))
+        self.assertEqual(order["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+
+    def test_in_order_chain_satisfies_both_the_causal_and_the_sequential_class(self):
+        attempt, evidence = self.chain("ordered", inverted=False)
+        causal = self.observe("ordered", attempt, evidence)
+        sequential = self.observe("ordered", attempt, evidence, self.sequential)
+        self.assertEqual((causal["evidence_class"], sequential["evidence_class"]),
+                         (downlink.CAUSAL_EVIDENCE_CLASS, downlink.SEQUENTIAL_EVIDENCE_CLASS))
+        self.assertEqual([b["result_file_order_between_requests"] for b in causal["observation"]["sequential_batches"]],
+                         [True, True])
+        self.assertEqual(causal["observation"]["proof_slices"], sequential["observation"]["proof_slices"])
+
+    def test_a_broken_causal_link_stays_unverified_through_the_gate(self):
+        def set_field(index, **fields):
+            return lambda events: events[index].update(fields)
+        # Inverted order: [4] is request-read, [7] request-two, [8] the Read result.
+        for name, change, reason in (
+                ("foreign_parent", set_field(8, parentUuid="foreign"), "SUCCESSFUL_CAUSAL_NATIVE_RESULT_REQUIRED"),
+                ("foreign_base", set_field(4, base="foreign"), "IMMEDIATE_CAUSAL_REQUEST_BASE_REQUIRED"),
+                ("missing_batch_sha", set_field(7, tail=[]), "IMMEDIATE_COMPLETE_RESULT_BATCH_HASH_REQUIRED")):
+            with self.subTest(case=name):
+                attempt, evidence = self.chain(name, change=change)
+                with self.assertRaisesRegex(ContractError, "context not consumed: " + reason):
+                    self.observe(name, attempt, evidence)
 
 
 if __name__ == "__main__":

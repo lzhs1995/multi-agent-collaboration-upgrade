@@ -28,6 +28,14 @@ consecutive requests: it runs that release's model_context_sequential.py and
 records MODEL_CONTEXT_SEQUENTIALLY_CONSUMED. Each recorded observation keeps
 the class of the policy that produced it; a v1 policy never yields the
 sequential class, and recorded v1 proofs reproduce unchanged.
+
+A third binding (owner40 0.4.80, v215) is owner40's own source publication
+reply rather than a policy file: it runs that release's model_context_causal.py,
+which joins each result batch to its request by base/requestRef, tool ids and
+parent UUIDs instead of physical append order (Claude 2.1.303 can write the
+next api-request before the tool_result it carries, u24), and records
+MODEL_CONTEXT_CAUSALLY_CONSUMED. Only that exact reply is accepted, by the
+fields owner40 wrote; nothing in it is restated or synthesized here.
 """
 from __future__ import annotations
 
@@ -57,10 +65,14 @@ EVIDENCE_CLASS = "MODEL_CONTEXT_CONSUMED"
 SEQUENTIAL_POLICY_SCHEMA = "prospective-claude-model-context-sequential-receipt-policy-v2"
 SEQUENTIAL_OBSERVATION_SCHEMA = "model-context-sequential-consumption-observation-v2"
 SEQUENTIAL_EVIDENCE_CLASS = "MODEL_CONTEXT_SEQUENTIALLY_CONSUMED"
+CAUSAL_POLICY_SCHEMA = "surface40-u24-prospective-causal-successor-publication-v2"
+CAUSAL_OBSERVATION_SCHEMA = "model-context-causal-consumption-observation-v1"
+CAUSAL_EVIDENCE_CLASS = "MODEL_CONTEXT_CAUSALLY_CONSUMED"
 # policy schema -> (evidence class, observer script, observer output schema); each class comes only from its own policy.
 CLASSES = {POLICY_SCHEMA: (EVIDENCE_CLASS, "model_context_consumption.py", OBSERVATION_SCHEMA),
            SEQUENTIAL_POLICY_SCHEMA: (SEQUENTIAL_EVIDENCE_CLASS, "model_context_sequential.py",
-                                      SEQUENTIAL_OBSERVATION_SCHEMA)}
+                                      SEQUENTIAL_OBSERVATION_SCHEMA),
+           CAUSAL_POLICY_SCHEMA: (CAUSAL_EVIDENCE_CLASS, "model_context_causal.py", CAUSAL_OBSERVATION_SCHEMA)}
 OBSERVER_TIMEOUT_SECONDS = 60
 # The observer's own bounded-snapshot limit; asserted against its source.
 MAX_SCAN = 8 * 1024 * 1024
@@ -83,17 +95,33 @@ def _source_files(root):
     return names
 
 
+def _causal_publication(policy):
+    """(source, manifest ref, observer ref) as owner40's v215 reply states them; nothing is synthesized."""
+    published, contract = policy.get("source_publication"), policy.get("causal_contract")
+    require(policy.get("status") == "PROSPECTIVE_SOURCE_PUBLISHED_REQUIRED_CHECKS_PASS"
+            and isinstance(published, dict) and published.get("schema") == "source-only-immutable-publication-v1"
+            and isinstance(contract, dict) and contract.get("class_name") == CAUSAL_EVIDENCE_CLASS
+            and contract.get("scope") == "PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY"
+            and contract.get("default_old_observers_unchanged") is True,
+            "context policy is not the v215 causal successor publication")
+    return published.get("source"), published.get("manifest"), published.get("causal")
+
+
 def pinned_release(policy_ref):
     """The reviewed policy, its complete release source and its observer; any drift refuses."""
     policy = json_ref(policy_ref, "context policy")
     kind = CLASSES.get(policy.get("schema"))
-    require(kind is not None
-            and policy.get("disposition") == "ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING"
-            and policy.get("evidence_class") == kind[0]
-            and policy.get("native_user_evidence_class") == "NATIVE_USER_RECEIVED",
-            "context policy is not v124-shaped or v168-sequential-shaped")
-    source = checked_path(policy.get("complete_source"))
-    manifest_ref = policy.get("source_manifest")
+    if kind is not None and kind[0] == CAUSAL_EVIDENCE_CLASS:
+        source, manifest_ref, observer_ref = _causal_publication(policy)
+    else:
+        require(kind is not None
+                and policy.get("disposition") == "ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING"
+                and policy.get("evidence_class") == kind[0]
+                and policy.get("native_user_evidence_class") == "NATIVE_USER_RECEIVED",
+                "context policy is not v124-shaped or v168-sequential-shaped")
+        source, manifest_ref, observer_ref = (policy.get("complete_source"), policy.get("source_manifest"),
+                                              policy.get("observer"))
+    source = checked_path(source)
     manifest = json_ref(manifest_ref, "release manifest")
     require(Path(manifest_ref["path"]) == source.parent / "MANIFEST.json", "manifest is not the release's own")
     files = manifest.get("files")
@@ -104,7 +132,6 @@ def pinned_release(policy_ref):
         raw = read_regular(source / name)
         require(isinstance(pin, dict) and pin.get("bytes") == len(raw) and pin.get("sha256") == digest(raw),
                 f"release file differs from its manifest: {name}")
-    observer_ref = policy.get("observer")
     name = "scripts/" + kind[1]
     observer = source / name
     require(name in files and isinstance(observer_ref, dict) and observer_ref.get("path") == str(observer)
@@ -113,6 +140,9 @@ def pinned_release(policy_ref):
             "policy observer is not the manifest's observer")
     # The sequential observer imports the v1 module and reads the same bounded window.
     require("scripts/model_context_consumption.py" in files, "release has no v1 observer module")
+    # The causal observer runs the sequential correlator with its own batch join.
+    require(kind[0] != CAUSAL_EVIDENCE_CLASS or "scripts/model_context_sequential.py" in files,
+            "release has no sequential observer module")
     require(_observer_constant(source / "scripts" / "model_context_consumption.py", "MAX_SCAN") == MAX_SCAN,
             "release observer uses a different bounded-snapshot limit")
     release = dict(policy=dict(policy_ref), manifest=dict(manifest_ref), observer=dict(observer_ref), source=str(source))
