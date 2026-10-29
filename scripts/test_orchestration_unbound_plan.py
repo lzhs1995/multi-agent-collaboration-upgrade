@@ -8,6 +8,7 @@ import copy
 import tempfile
 import unittest
 
+from orchestration_binding import validate_decision
 from orchestration_campaign import validate_campaign
 from orchestration_common import ContractError, json_ref, write_json
 from orchestration_planner import PlanError, UNBOUND_EXECUTOR_POLICY, build_schedule, validate_plan
@@ -156,6 +157,47 @@ class UnboundPlanTests(unittest.TestCase):
         with self.assertRaises(ContractError) as rewritten:
             validate_campaign(f.ref, fixtures=True)
         self.assertNotIn("null executor triple", str(rewritten.exception))
+
+    def test_the_unbound_fixture_variant_validates_and_leaves_the_default_alone(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        default = CampaignFixture(directory.name + "/plain", strategies=("omo",), version=3, arm="B")
+        self.assertNotIn("unbound_executor_policy", default.plan)
+        self.assertEqual([n["id"] for n in default.plan["nodes"]],
+                         ["local", "review", "parallel", "followup", "closeout"])
+        validate_campaign(default.ref, fixtures=True)
+
+        f = CampaignFixture(directory.name + "/variant", strategies=("omo",), version=3, arm="B", unbound=True)
+        self.assertEqual(f.plan["unbound_executor_policy"], UNBOUND_EXECUTOR_POLICY)
+        self.assertEqual([n["id"] for n in f.plan["nodes"]],
+                         ["local", "review", "parallel", "followup", "closeout", "unbound"])
+        node = f.plan["nodes"][-1]
+        self.assertEqual([node["executor"], node["execution_kind"], node["transport"]], [None, None, None])
+        self.assertEqual((node["depends_on"], node["write_scope"]), ([], "unbound"))
+        campaign = validate_campaign(f.ref, fixtures=True)
+        frozen = validate_plan(json_ref(campaign["plan"]))
+        self.assertEqual([n["id"] for n in frozen["nodes"] if n["executor"] is None], ["unbound"])
+        # The unbound node joins no lane FIFO queue, by design.
+        co = f.start()
+        self.assertEqual(co.header["queues"],
+                         {"codex": ["local", "closeout"], "claude_a": ["review", "followup"],
+                          "claude_b": ["parallel"]})
+        self.assertIn("unbound", {n["id"] for n in co.ready()})
+
+    def test_the_fixture_decision_helper_writes_one_exclusive_decision(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        f = CampaignFixture(directory.name, strategies=("omo",), version=3, arm="B", unbound=True)
+        ref = f.write_decision("run-01")
+        decision = validate_decision(ref, "run-01", "unbound")
+        self.assertEqual(decision["actual_route"], "codex")
+        self.assertIsNone(decision["advice_sha256"])
+        self.assertNotIn(str(f.root / "runs"), ref["path"])
+        with self.assertRaises(FileExistsError):
+            f.write_decision("run-01")
+        other = f.write_decision("run-01", node_id="unbound", path=f.root / "decisions" / "second.json",
+                                 work_kind="review", actual_route="claude_b", advice_sha256=64 * "a")
+        self.assertEqual(validate_decision(other, "run-01", "unbound")["actual_route"], "claude_b")
 
     def test_build_schedule_refuses_an_unbound_graph(self):
         plan = v2_plan()

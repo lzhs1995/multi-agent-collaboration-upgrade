@@ -105,9 +105,13 @@ class OfflineDisarmRuntime:
 
 
 class CampaignFixture:
-    def __init__(self, base, strategies=("omo",), *, version=2, arm="B"):
+    def __init__(self, base, strategies=("omo",), *, version=2, arm="B", unbound=False):
         base = Path(base).resolve()
         assert version in (2, 3)
+        # The opt-in field is plan v2 only, so the unbound variant exists for a
+        # v3 campaign alone. Existing node tuples and every existing claim call
+        # site keep today's shape; the variant only appends one node.
+        assert not unbound or version == 3
         private = self._private_runtime(base, arm) if version == 3 else None
         self.root = private["paths"]["campaigns"] / "campaign" if private else base / "campaign"
         self.root.mkdir()
@@ -160,6 +164,11 @@ class CampaignFixture:
                 context="Inspect the input", source=[str(self.root / "input.json")], scope="Write assigned output",
                 forbidden="No APIs or replacements", verify="Run the pinned checker", write_scope=key,
                 expected_seconds=1, deliverables=["result.json", "report.md"], report="report.md"))
+        if unbound:
+            from orchestration_binding import POLICY
+            self.plan["unbound_executor_policy"] = POLICY
+            self.plan["nodes"].append(dict(self.plan["nodes"][0], id="unbound", title="unbound",
+                executor=None, execution_kind=None, transport=None, depends_on=[], write_scope="unbound"))
         adapter = private["paths"]["controllers"] / "adapter" if private else base / "adapter"
         controller = Path(private["runtime"]["controller"]["path"]) if private else base / "controller"
         adapter.mkdir()
@@ -219,6 +228,21 @@ class CampaignFixture:
     def save(self):
         self.ref = write_json(self.root / "campaign.json", self.campaign)
         return self.ref
+
+    def write_decision(self, run_id, node_id="unbound", *, path=None, **changes):
+        """A supervisor-authored bind decision outside every run tree.
+
+        Defaults describe the off arm (no advice) and the Codex-first route a
+        coding node gets when every lane is idle; tests override any field.
+        """
+        from orchestration_binding import DECISION_SCHEMA
+        value = dict(schema=DECISION_SCHEMA, run_id=run_id, node_id=node_id, work_kind="coding",
+                     advice_sha256=None, actual_route="codex", action="accepted",
+                     reason="offline fixture: the supervisor chose this lane", decided_at=utc_now(),
+                     supervisor_session=self.campaign["sessions"]["codex"]["session_id"])
+        value.update(changes)
+        target = Path(path) if path is not None else self.root / "decisions" / f"{run_id}--{node_id}.json"
+        return write_json(target, value, exclusive=True)
 
     def control(self, action, run_id, **kwargs):
         script = control_script(self.campaign, self.ref, action, run_id, **kwargs)
