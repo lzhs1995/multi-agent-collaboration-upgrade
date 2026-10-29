@@ -34,8 +34,14 @@ reply rather than a policy file: it runs that release's model_context_causal.py,
 which joins each result batch to its request by base/requestRef, tool ids and
 parent UUIDs instead of physical append order (Claude 2.1.303 can write the
 next api-request before the tool_result it carries, u24), and records
-MODEL_CONTEXT_CAUSALLY_CONSUMED. Only that exact reply is accepted, by the
-fields owner40 wrote; nothing in it is restated or synthesized here.
+MODEL_CONTEXT_CAUSALLY_CONSUMED. The reply is accepted by the fields owner40
+wrote, at its own stated reply_path, and only when the release identity it
+states (version, trees, commit, member count) is the manifest it pins; nothing
+in it is restated or synthesized here. As for the other classes, the caller's
+policy sha pin is what makes it this exact reply. The pinned 0.4.80 observer
+refuses a snapshot holding the result of a tool call issued before the paste
+fence (a lane mid-tool when the notice arrived), so such a notice stays
+UNVERIFIED under this publication.
 """
 from __future__ import annotations
 
@@ -95,7 +101,7 @@ def _source_files(root):
     return names
 
 
-def _causal_publication(policy):
+def _causal_publication(policy, policy_ref):
     """(source, manifest ref, observer ref) as owner40's v215 reply states them; nothing is synthesized."""
     published, contract = policy.get("source_publication"), policy.get("causal_contract")
     require(policy.get("status") == "PROSPECTIVE_SOURCE_PUBLISHED_REQUIRED_CHECKS_PASS"
@@ -104,7 +110,15 @@ def _causal_publication(policy):
             and contract.get("scope") == "PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY"
             and contract.get("default_old_observers_unchanged") is True,
             "context policy is not the v215 causal successor publication")
+    # A byte-identical copy elsewhere is not the reply owner40 wrote at its own stated path.
+    require(policy.get("reply_path") == policy_ref["path"], "causal publication is not at its own reply path")
     return published.get("source"), published.get("manifest"), published.get("causal")
+
+
+def _published_identity(published, manifest):
+    """The reply's stated release identity must be the manifest it pins: version, trees, commit and member count."""
+    return (all(published.get(k) == manifest.get(k) for k in ("version", "tree_sha256", "git_commit", "git_tree"))
+            and published.get("members") == len(manifest["files"]))
 
 
 def pinned_release(policy_ref):
@@ -112,7 +126,7 @@ def pinned_release(policy_ref):
     policy = json_ref(policy_ref, "context policy")
     kind = CLASSES.get(policy.get("schema"))
     if kind is not None and kind[0] == CAUSAL_EVIDENCE_CLASS:
-        source, manifest_ref, observer_ref = _causal_publication(policy)
+        source, manifest_ref, observer_ref = _causal_publication(policy, policy_ref)
     else:
         require(kind is not None
                 and policy.get("disposition") == "ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING"
@@ -126,6 +140,8 @@ def pinned_release(policy_ref):
     require(Path(manifest_ref["path"]) == source.parent / "MANIFEST.json", "manifest is not the release's own")
     files = manifest.get("files")
     require(isinstance(files, dict) and files, "release manifest lists no files")
+    require(kind[0] != CAUSAL_EVIDENCE_CLASS or _published_identity(policy["source_publication"], manifest),
+            "causal publication does not describe the manifest it pins")
     # The complete tree, not only the observer: its 27-module import closure must be the reviewed bytes.
     require(_source_files(source) == set(files), "release source differs from its manifest file set")
     for name, pin in files.items():
@@ -498,6 +514,16 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
             "handshake receipt is not this notice's original ACK contract")
     slices = result["observation"]["proof_slices"]
     consumed_at = max(s["offset"] for s in slices)
+    if result["evidence_class"] == CAUSAL_EVIDENCE_CLASS:
+        # A causally joined Read result may be appended after the response it fed; the body is consumed by the
+        # body request's own responses, so a late result slice does not move the consumption point.
+        body_request, end = result["observation"].get("body_request_id"), result["snapshot"]["end"]
+        offsets = {s["offset"] for s in slices}
+        responses = [ref["offset"] for ref, record in _records(transcript, transcript["offset"], end)
+                     if ref["offset"] in offsets and record.get("type") == "assistant"
+                     and isinstance(body_request, str) and record.get("requestRef") == body_request]
+        require(responses, "causal proof holds no response to its body request")
+        consumed_at = max(responses)
     require(type(ack_end) is int, "explicit ACK endpoint required")
     found = [(ref, record) for ref, record in _records(transcript, transcript["offset"], ack_end)
              if _is_ack(record, line, binding["session_id"])]

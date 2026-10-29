@@ -110,6 +110,9 @@ class Fixture:
     def response(self, **changes):
         value = dict(type="assistant", sessionId=SESSION, uuid="response-body",
                      message=dict(role="assistant", content=[dict(type="text", text="Full body received.")]))
+        if self.kind[1] == downlink.CAUSAL_EVIDENCE_CLASS:
+            # ack_order places causal consumption at the body request's own responses (consumed() names request-two).
+            value["requestRef"] = "request-two"
         value.update(changes)
         return value
 
@@ -139,16 +142,20 @@ class Fixture:
     def publish(self, **policy):
         files = {str(p.relative_to(self.source)): dict(bytes=p.stat().st_size, sha256=digest(p.read_bytes()))
                  for p in sorted(self.source.rglob("*")) if p.is_file()}
-        manifest = write_json(self.root / "release" / "MANIFEST.json", dict(version="fixture", files=files))
+        causal = self.kind[1] == downlink.CAUSAL_EVIDENCE_CLASS
+        # A causal release states its identity in its manifest, as the 0.4.80 MANIFEST.json does.
+        identity = dict(tree_sha256="e" * 64, git_commit="c" * 40, git_tree="d" * 40) if causal else {}
+        manifest = write_json(self.root / "release" / "MANIFEST.json", dict(version="fixture", files=files, **identity))
         observer = file_ref(self.source / "scripts" / self.kind[2])
-        if self.kind[1] == downlink.CAUSAL_EVIDENCE_CLASS:
+        if causal:
             # owner40's v215 reply shape: a source publication with its own contract, no policy fields.
             self.contract = dict(class_name=downlink.CAUSAL_EVIDENCE_CLASS, scope="PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY",
                                  default_old_observers_unchanged=True)
             self.published = dict(schema="source-only-immutable-publication-v1", source=str(self.source),
-                                  manifest=manifest, causal=observer)
+                                  manifest=manifest, causal=observer, version="fixture", members=len(files), **identity)
             value = dict(schema=self.kind[0], status="PROSPECTIVE_SOURCE_PUBLISHED_REQUIRED_CHECKS_PASS",
-                         source_publication=self.published, causal_contract=self.contract)
+                         source_publication=self.published, causal_contract=self.contract,
+                         reply_path=str(self.root / "policy.json"))
         else:
             value = dict(schema=self.kind[0], disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING",
                          evidence_class=self.kind[1], native_user_evidence_class="NATIVE_USER_RECEIVED",
@@ -1240,6 +1247,21 @@ class CausalContextClassTests(unittest.TestCase):
              "not the v215 causal successor publication"),
             ("publication_missing", "causal", lambda f: republish(f, source_publication=None),
              "not the v215 causal successor publication"),
+            # A contract that never states a required value is not one that states it (review A3).
+            *((f"contract_without_{key}", "causal", lambda f, key=key: republish(
+                f, causal_contract={k: v for k, v in f.contract.items() if k != key}),
+               "not the v215 causal successor publication")
+              for key in ("class_name", "scope", "default_old_observers_unchanged")),
+            # Exactness beyond the caller's pin: the reply at its own path, describing the manifest it pins (review A2).
+            ("byte_identical_copy_at_another_path", "causal", lambda f: (f.plan(f.consumed()), setattr(
+                f, "policy", write_json(f.root / "policy-copy.json", json_ref(f.policy)))),
+             "not at its own reply path"),
+            ("publication_stating_another_tree", "causal", lambda f: republish(
+                f, source_publication=dict(f.published, tree_sha256="f" * 64)),
+             "does not describe the manifest it pins"),
+            ("publication_stating_another_member_count", "causal", lambda f: republish(
+                f, source_publication=dict(f.published, members=f.published["members"] + 1)),
+             "does not describe the manifest it pins"),
             # A policy-shaped file restating the publication cannot stand in for owner40's reply.
             ("policy_fields_in_place_of_the_publication", "causal", lambda f: republish(
                 f, status=None, source_publication=None, causal_contract=None,
@@ -1395,6 +1417,7 @@ class PinnedCausalObserverTests(unittest.TestCase):
         self.assertEqual(order["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
 
     def test_in_order_chain_satisfies_both_the_causal_and_the_sequential_class(self):
+        """With no tool call in flight at the fence; see the pre-fence test below for the case where it is not."""
         attempt, evidence = self.chain("ordered", inverted=False)
         causal = self.observe("ordered", attempt, evidence)
         sequential = self.observe("ordered", attempt, evidence, self.sequential)
@@ -1416,6 +1439,57 @@ class PinnedCausalObserverTests(unittest.TestCase):
                 attempt, evidence = self.chain(name, change=change)
                 with self.assertRaisesRegex(ContractError, "context not consumed: " + reason):
                     self.observe(name, attempt, evidence)
+
+    def test_a_call_in_flight_at_the_fence_keeps_the_pinned_causal_observer_unverified(self):
+        """Characterizes owner40's 0.4.80 observer (review A1, ROOT R197), not this gate: a tool call issued before
+        the paste fence whose result lands after it, as in u24 claude_a's real window, fails the whole-snapshot
+        call join at every endpoint, while the sequential class keeps its own verdict on the same records."""
+        def in_flight(events):
+            # The result of a call the snapshot does not contain, written right after the fence, before the notice.
+            events.insert(0, self.chains[name]["event"](
+                "user", uuid="pre-fence-result", parentUuid="pre-fence-call",
+                message=dict(role="user", content=[dict(type="tool_result", tool_use_id="pre-fence-tool",
+                                                        content="waited")]),
+                toolUseResult=dict(stdout="waited", stderr="", interrupted=False)))
+        for name, inverted, sequential in (("busy_ordered", False, None),
+                                           ("busy_inverted", True, "SUCCESSFUL_ORDERED_NATIVE_RESULT_REQUIRED")):
+            with self.subTest(case=name):
+                attempt, evidence = self.chain(name, inverted=inverted, change=in_flight)
+                with self.assertRaisesRegex(ContractError,
+                                            "context not consumed: UNASSOCIATED_OR_DUPLICATE_NATIVE_CALL_REQUIRED"):
+                    self.observe(name, attempt, evidence)
+                if sequential is None:
+                    self.assertEqual(self.observe(name, attempt, evidence, self.sequential)["evidence_class"],
+                                     downlink.SEQUENTIAL_EVIDENCE_CLASS)
+                else:
+                    with self.assertRaisesRegex(ContractError, "context not consumed: " + sequential):
+                        self.observe(name, attempt, evidence, self.sequential)
+
+    def test_ack_order_places_causal_consumption_at_the_body_requests_responses(self):
+        """Review A4: a causally joined Read result appended after the final response and the ACK does not move the
+        consumption point past the ACK; an ACK answering an earlier request, written before the body response, is
+        still refused."""
+        def late_read(events):
+            # Inverted order: [8] is the Read result; write the ACK (answering request-two), then the late result.
+            read = events.pop(8)
+            events.extend([self.chains[name]["assistant"]("request-two", "ack", [dict(type="text", text=ACK)]), read])
+        def early_ack(events):
+            # An ACK answering request-read, written before request-two and its response.
+            events.insert(7, self.chains[name]["assistant"]("request-read", "ack", [dict(type="text", text=ACK)]))
+        for name, change, accepted in (("late_read", late_read, True), ("early_ack", early_ack, False)):
+            with self.subTest(case=name):
+                attempt, evidence = self.chain(name, change=change)
+                recorded = write_json(evidence / "result.json", self.observe(name, attempt, evidence))
+                receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
+                if accepted:
+                    order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
+                    self.assertEqual(order["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+                    slices = json_ref(recorded)["observation"]["proof_slices"]
+                    # The latest proof slice is the late Read result, after the ACK.
+                    self.assertGreater(max(s["offset"] for s in slices), order["ack"]["offset"])
+                else:
+                    with self.assertRaisesRegex(ContractError, "ACK precedes full body consumption"):
+                        downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
 
 
 if __name__ == "__main__":
