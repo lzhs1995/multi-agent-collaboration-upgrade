@@ -5,6 +5,7 @@ import json
 import secrets
 import sys
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from orchestration_campaign import METRICS, METRICS_V3, control_script
@@ -243,6 +244,86 @@ class CampaignFixture:
         value.update(changes)
         target = Path(path) if path is not None else self.root / "decisions" / f"{run_id}--{node_id}.json"
         return write_json(target, value, exclusive=True)
+
+    def write_worker_journal(self, co, node_id="unbound", *, entries=None):
+        """The worker's own journal; self-authored, never a service receipt."""
+        return write_json(co.root / "nodes" / node_id / "advice-worker-journal.json",
+                          dict(schema="jev-advice-worker-journal-v1", entries=list(entries or ())),
+                          exclusive=True)
+
+    def publish_fixture_advice(self, co, node_id="unbound", *, transport=None, budget=None,
+                               model="jev-1.14.0", lanes=None, state_text="route the unbound node"):
+        """Run the worker offline and publish its advice as a pinned reference.
+
+        With no transport the worker can only answer NOT_CONFIGURED, which is
+        the only reachable live answer in E3. A test may inject a callable to
+        exercise the on-arm shape; nothing here contacts any service.
+        """
+        from jev_advice_worker import advise
+        from upgrade_advice_publish import advice_body, advice_marker, advice_tag, publish_advice
+        from upgrade_body_read import read_command
+        reader = self.clients["codex"].reader
+        fence = reader.snapshot()
+        answer = advise(state_text=state_text, lanes=lanes if lanes is not None else {},
+                        bound=False, budget=budget, transport=transport, model=model)
+        advice = answer["advice"]
+        run_id, key = co.spec["run_id"], node_id
+        marker = advice_marker(run_id, key, advice_tag(advice))
+        body = advice_body(self.ref, run_id, key, advice, answer["request"], marker=marker,
+                           input_units=self.campaign["inputs"])
+        published = publish_advice(co.root, run_id, key, body)
+        command = read_command(self.campaign["python"]["path"], self.campaign["controller"]["path"],
+                               published["notice"])
+        return dict(arm="advisory-off" if advice["status"] == "NOT_CALLED" else "advisory-on",
+                    advice_sha256=published["body_sha256"], notice=published["notice"],
+                    reference=published["reference"], command=command, fence=fence,
+                    not_before_epoch=parse_time(utc_now()).timestamp() - 1,
+                    worker_status=advice["status"], worker_journal=answer["journal"],
+                    model_requests=answer["model_requests"], body=body)
+
+    def fake_advice_read_records(self, advice, *, call_id="advice-read", at=None, wrapper=True,
+                                 output=None, exit_code=0, lane="codex", raw_envelope=None,
+                                 command=None, name=None):
+        """Append one original-shaped Codex read call/result pair for the advice.
+
+        The output defaults to the real reader's own result for that notice, so
+        a positive fixture is produced by the frozen reader rather than by a
+        hand-written envelope. Negatives pass ``output`` explicitly.
+        """
+        from upgrade_body_read import read_result
+        client = self.clients[lane]
+        when = at or utc_now()
+        later = (parse_time(when) + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+        if output is None:
+            output = json.dumps(read_result(advice["notice"]), ensure_ascii=False, sort_keys=True) + "\n"
+        args = dict(cmd=command if command is not None else advice["command"],
+                    login=False, yield_time_ms=10000, max_output_tokens=12000)
+        if lane == "codex":
+            call = client.append(dict(type="response_item", timestamp=when, payload=dict(
+                type="custom_tool_call" if wrapper else "function_call", call_id=call_id,
+                name=name if name is not None else ("exec" if wrapper else "exec_command"),
+                **({"input": "text(await tools.exec_command(" + json.dumps(args) + "));\n"} if wrapper
+                   else {"arguments": json.dumps(args)}))))
+            # raw_envelope is placed in the result verbatim: a measured terminal
+            # or token-count envelope must not be re-wrapped by the fixture.
+            envelope = raw_envelope if raw_envelope is not None else (
+                output if not isinstance(output, str) else
+                json.dumps(dict(exit_code=exit_code, output=output, wall_time_seconds=0.1)))
+            if wrapper and raw_envelope is None and isinstance(envelope, str):
+                envelope = [dict(type="input_text", text="Script completed\nWall time 0.1 seconds\nOutput:\n"),
+                            dict(type="input_text", text=envelope)]
+            result = client.append(dict(type="response_item", timestamp=later, payload=dict(
+                type="custom_tool_call_output" if wrapper else "function_call_output",
+                call_id=call_id, output=envelope)))
+        else:
+            call = client.append(dict(type="assistant", timestamp=when, sessionId=client.session["session_id"],
+                message=dict(role="assistant", content=[dict(type="tool_use", id=call_id,
+                             name=name if name is not None else "Bash",
+                             input=dict(command=command if command is not None else advice["command"]))])))
+            result = client.append(dict(type="user", timestamp=later, sessionId=client.session["session_id"],
+                message=dict(role="user", content=[dict(type="tool_result", tool_use_id=call_id,
+                             is_error=False, content=output)])))
+        return dict(call=call, result=result, call_id=call_id, at=when, result_at=later)
 
     def control(self, action, run_id, **kwargs):
         script = control_script(self.campaign, self.ref, action, run_id, **kwargs)
