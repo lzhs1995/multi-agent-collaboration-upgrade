@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from orchestration_binding import binding_path, bound_lane, claimed_lanes, is_unbound
 from orchestration_campaign import node_output, node_write_scope
 from orchestration_common import (checked_path, contract_errors, file_ref, json_ref, object_sha,
                                   parse_time, read_json, read_ref, scopes_conflict, verify_tree)
@@ -46,6 +47,10 @@ def _control_fence(co):
         output = checked_path(node_output(co.root, node))
         result["node:" + key] = dict(directory_exists=directory.exists(), output_exists=output.exists())
         pin(co.root / "claims" / (key + ".json"))
+        if is_unbound(node):
+            # A binding is published before its claim; a read that straddles
+            # the bind must not mix two binding states.
+            pin(binding_path(co.root, key))
         for name in NODE_EVIDENCE + ("work-request.json", "prepared.json", "tests.json", "disarm-frozen.json",
                                     "preflight/task-pack.json", "preflight/handshake-receipt.json",
                                     "preflight/completion-callback-receipt.json"):
@@ -83,15 +88,21 @@ def package_drafts(campaign_ref, campaign, spec):
     root = Path(campaign["root"]) / "runs" / spec["run_id"]
     drafts = []
     for node in topological_nodes(plan):
-        session = campaign["sessions"][node["executor"]]
+        unbound = is_unbound(node)
+        # A draft of an unbound node names no session: the lane is unknown
+        # until bind-unbound, and a draft must not pre-commit it to one.
+        session = None if unbound else campaign["sessions"][node["executor"]]
         value = dict(schema="orchestration-package-draft-v1", draft=True,
             campaign=campaign_ref, run=spec, node_id=node["id"], executor=node["executor"],
-            original_session={k: session[k] for k in ("session_id", "surface_uuid", "pane_uuid", "workspace_uuid")},
+            original_session=None if unbound else
+                {k: session[k] for k in ("session_id", "surface_uuid", "pane_uuid", "workspace_uuid")},
             title=node["title"], context=node["context"], source=node["source"], inputs=campaign["inputs"],
             scope=node["scope"], output_root=str(node_output(root, node)), forbidden=node["forbidden"],
             verify=node["verify"], deliverables=node["deliverables"], report=node["report"],
             dependency_ids=sorted(node["depends_on"]), dependency_outputs_bound=False,
             authorization=campaign["authorization"], required_skill=str(Path(campaign["controller"]["path"]) / "SKILL.md"))
+        if unbound:
+            value["binding_required"] = True
         drafts.append(dict(draft=value, sha256=object_sha(value)))
     return dict(schema="orchestration-drafts-v1", campaign=campaign_ref, run=spec,
                 drafts=drafts, dispatch_authorized=False)
@@ -133,9 +144,10 @@ def recorded_state(co, events):
             require(not any(s in (State.BLOCKED, State.FAILED_PRESERVED) for s in states.values()),
                     "recorded claim follows preserved run failure")
             require(key in {n["id"] for n in select_ready(co.plan, states, co.spec["strategy"],
-                        co.root / "work", co.header["queues"])}, "recorded claim violates scheduling")
+                        co.root / "work", co.header["queues"], lanes=claimed_lanes(co, data))},
+                    "recorded claim violates scheduling")
             co._check_claim(key, extra, target, data)
-            co._check_decision(key, extra, states)
+            co._check_decision(key, extra, states, data)
             require(read_json(co.root / "claims" / (key + ".json")) == extra, "original claim intent changed")
             require(parse_time(extra["started_at"]) <= parse_time(event["at"]), "claim begins after recorded event")
         else:
@@ -241,7 +253,7 @@ def _advice(co, key, state, info, operations, files, lease):
     if state in (State.ACCEPTED, State.FAILED_PRESERVED):
         if lease["released_at"] is None:
             return advice("repair-original-release", "Terminal event recorded; original lease still retained.", "repair-releases")
-        if co.campaign["sessions"][co.nodes[key]["executor"]]["provider"] == "claude" and "disarm.json" not in files:
+        if co.campaign["sessions"][bound_lane(co, key, info)]["provider"] == "claude" and "disarm.json" not in files:
             if any(o["operation"] == "disarm" for o in operations):
                 return advice("review-original-disarm", "Preserve the original disarm operation and its bounded recovery evidence.")
             return advice("disarm-original-task", "Business acceptance and lease release are separate from scoped disarm.", "disarm")
@@ -341,11 +353,19 @@ def _next_action_from_co(runner, run_id, co):
     failed = any(s in (State.BLOCKED, State.FAILED_PRESERVED) for s in states.values())
     closed = (root / "finish.json").exists()
     if not failed and not incomplete and not closed:
-        for node in select_ready(co.plan, states, spec["strategy"], root / "work", co.header["queues"]):
-            session = runner.campaign["sessions"][node["executor"]]["session_id"]
+        for node in select_ready(co.plan, states, spec["strategy"], root / "work", co.header["queues"],
+                                 lanes=claimed_lanes(co, data)):
+            row = next(r for r in rows if r["node_id"] == node["id"])
+            # A pending unbound node has no claim, so its lane is its binding
+            # file if one exists; without one there is no session to look up.
+            lane = bound_lane(co, node["id"])
+            if lane is None:
+                row["recommendation"].update(action="bind-original-unbound-node", gated_command="bind-unbound",
+                    reason="The frozen node is deliberately unbound; the original supervisor binds it before any claim.")
+                continue
+            session = runner.campaign["sessions"][lane]["session_id"]
             held = [owner for owner, lease in leases.items() if lease["released_at"] is None and
                     (lease["session_id"] == session or scopes_conflict(lease["scope"], str(node_write_scope(root, node)), "/"))]
-            row = next(r for r in rows if r["node_id"] == node["id"])
             if held:
                 row["recommendation"].update(action="wait-original-lease", reason="Original session or scope lease retained.", lease_owners=held)
             else:

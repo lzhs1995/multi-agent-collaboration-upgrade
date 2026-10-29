@@ -7,6 +7,7 @@ business checker. Publication requires the caller to hold the node runner lock.
 """
 from pathlib import Path
 
+from orchestration_binding import claim_lane
 from orchestration_common import (checked_path, contract_errors, count, exclusive_lock,
                                   file_ref, json_ref, parse_time, utc_now, write_json)
 from orchestration_coordinator import State
@@ -39,7 +40,7 @@ def observe_continuation(co, key, info, events, ref=None):
     require(set(value) == fields | set(identity), "continuation fields changed")
     require(value["schema"] == "orchestration-continuation-v1" and value["campaign"] == co.campaign_ref and
             all(value[k] == v for k, v in identity.items()), "continuation campaign/task/attempt changed")
-    lane = co.nodes[key]["executor"]
+    lane = claim_lane(co.nodes[key], info)
     require(info.get("mode") == "delegated_cli" and "delivery" in info and value["executor_id"] == lane,
             "continuation requires its original delegated task delivery")
     expected_sessions = {k: co.campaign["sessions"][k] for k in ("codex", lane)}
@@ -106,7 +107,7 @@ def publish_continuation_locked(co, key, info, *, protocol=None):
         original = original_callback_evidence(co.campaign, co.header, co.nodes[key], info)
         require(original is not None, "original callback receipt is absent; no continuation or input")
         require(protocol is None or protocol == original["protocol"], "continuation callback bundle changed")
-        lane = co.nodes[key]["executor"]
+        lane = claim_lane(co.nodes[key], info)
         snapshots = {k: NativeReader(s, fixtures=co.fixtures).snapshot() for k, s in co.campaign["sessions"].items()}
         proof = verify_protocol(co.campaign, co.header, co.nodes[key], info, original,
                                 snapshots[lane]["offset"], snapshots["codex"]["offset"], fixtures=co.fixtures)

@@ -10,6 +10,7 @@ import statistics
 import time
 from pathlib import Path
 
+from orchestration_binding import bound_lane
 from orchestration_campaign import (METRICS_V3_COMMUNICATION, METRICS_V3_INPUT_PROVENANCE, METRICS_V3_OUTPUT_EFFECTS,
                                     ORDER, campaign_effect_policy, input_provenance_registration, validate_campaign)
 from orchestration_common import (boot_id, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
@@ -47,7 +48,7 @@ def derive_run(co, native_end, *, closeout_clock=None):
     for key, info in data.items():
         if not info:
             continue
-        lane = co.nodes[key]["executor"]
+        lane = bound_lane(co, key, info)
         evidence = json_ref(info["accepted_evidence"] if states[key] == State.ACCEPTED else info["failure"])
         event = next(e for e in reversed(events) if e["node_id"] == key)
         terminal.append(event)

@@ -97,8 +97,11 @@ class BindingHelperTests(unittest.TestCase):
         co = f.start()
         pin = write_binding(co, "unbound", self.value(f, co, "claude_b"))
         # A binding written after an earlier claim must not change that claim's
-        # lane: the pin in the claim record is the only source.
-        self.assertEqual(claimed_lanes(co, {"unbound": {}})["unbound"], "claude_b")
+        # lane: the pin in the claim record is the only source. Without a pin
+        # the node has no lane here even though its binding file exists, so a
+        # bind that happens after an earlier claim cannot retroactively change
+        # the selection that earlier claim already passed (invariant 9).
+        self.assertIsNone(claimed_lanes(co, {"unbound": {}})["unbound"])
         self.assertEqual(claimed_lanes(co, {"unbound": {"executor_binding": pin}})["unbound"], "claude_b")
 
     def test_binding_fields_are_exact(self):
@@ -366,7 +369,7 @@ class BindingHelperTests(unittest.TestCase):
         self.assertEqual(set(BIND_PREDICATES), {
             "lane_verified", "lane_idle_write_domain", "lane_is_author", "decision_route_recomputed",
             "decision_matches_run_node", "node_is_unbound", "binding_absent",
-            "decision_work_kind_known", "advice_inputs_unchanged"})
+            "decision_work_kind_known", "advice_inputs_unchanged", "claim_mode_matches_frozen_kind"})
         import orchestration_binding
         for name, function in BIND_PREDICATES.items():
             with self.subTest(name=name):

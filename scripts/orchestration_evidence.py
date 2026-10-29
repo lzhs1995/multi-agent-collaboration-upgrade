@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from orchestration_binding import claim_lane
 from orchestration_campaign import campaign_effect_policy, control_script, find_control, native_control, node_output
 from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, evidence_class, state_root
 from orchestration_common import (canonical, checked_path, contract_errors, count, digest, file_ref, json_ref, object_sha, parse_time,
@@ -98,7 +99,7 @@ def pack_extension(campaign, header, node, info):
                 output_root=info["output_root"], deliverables=node["deliverables"], inputs=campaign["inputs"],
                 dependencies=verify_dependencies(campaign, header, node, info), work_request=info["work_request"])
     if campaign_version(campaign) == 3:
-        extension["executor_id"] = node["executor"]
+        extension["executor_id"] = claim_lane(node, info)
     return extension
 
 
@@ -297,7 +298,7 @@ def _native_message(reader, ref, role, expected, lower, upper):
     return parse_time(record.get("timestamp"))
 
 
-def prepared_supervisor(campaign, node, gate):
+def prepared_supervisor(campaign, node, gate, info=None):
     """Resolve the original C34 callback ref through its pinned v3 identity gate.
 
     v3 adoption stores UUIDs, not mutable UI refs. Do not invent a ref or change
@@ -306,7 +307,9 @@ def prepared_supervisor(campaign, node, gate):
     sender = campaign["sessions"]["codex"]
     if campaign_version(campaign) != 3:
         return sender["surface_ref"]
-    receiver = campaign["sessions"][node["executor"]]
+    # A bound node needs no claim data here; an unbound one refuses without
+    # its claim instead of resolving a lane from anything else.
+    receiver = campaign["sessions"][claim_lane(node, info)]
     supervisor = gate.get("supervisor")
     require(isinstance(supervisor, str) and re.fullmatch(r"surface:[0-9]+", supervisor),
             "identity gate supervisor ref is invalid")
@@ -343,7 +346,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
             "complete prepared-task evidence required")
     directory = node_directory(campaign, header, node)
-    receiver, sender = campaign["sessions"][node["executor"]], campaign["sessions"]["codex"]
+    receiver, sender = campaign["sessions"][claim_lane(node, info)], campaign["sessions"]["codex"]
     reader = NativeReader(receiver, fixtures=fixtures)
     receiver_end = reader.snapshot()["offset"]
     pack_ref = proof["pack"]
@@ -351,7 +354,7 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
             proof["notice"]["path"] == str(directory / "task-notice.txt"), "prepared task paths changed")
     pack = json_ref(pack_ref, "finalized task pack")
     gate = json_ref(proof["identity_gate"], "identity gate")
-    supervisor = prepared_supervisor(campaign, node, gate)
+    supervisor = prepared_supervisor(campaign, node, gate, info)
     if campaign_version(campaign) == 3:
         from orchestration_pack_inputs import verify_inputs
         verify_inputs(campaign, header, node, info, pack, gate, fixtures=fixtures)
@@ -433,7 +436,7 @@ def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
     require(set(value) == set(expected) | {"created_at", "native_fence"} and
             all(value.get(k) == v for k, v in expected.items()), "dispatch intent binding changed")
     require(parse_time(value["created_at"]) >= parse_time(prepared["pack"]["finalized_at"]), "dispatch intent predates finalization")
-    reader = NativeReader(campaign["sessions"][node["executor"]], fixtures=fixtures)
+    reader = NativeReader(campaign["sessions"][claim_lane(node, info)], fixtures=fixtures)
     require(reader.verify_pin(value["native_fence"]) >= info["native_start"]["offset"], "dispatch fence predates claim")
     return value
 
@@ -443,7 +446,7 @@ def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
 def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
-    delivered = verify_delivery(bundle, campaign["sessions"][node["executor"]], campaign["sessions"]["codex"],
+    delivered = verify_delivery(bundle, campaign["sessions"][claim_lane(node, info)], campaign["sessions"]["codex"],
                                 prepared["notice"], fixtures=fixtures, uuid_semantics=campaign_version(campaign) == 3)
     binding = delivered["attempt"]["binding"]
     require(binding.get("task_id") == info["task_id"] and binding.get("marker") == info["task_id"] and
@@ -464,7 +467,7 @@ def verify_protocol(campaign, header, node, info, evidence, receiver_end, superv
     delivered = verify_dispatched(campaign, header, node, info, proof["delivery"], fixtures=fixtures)
     preparation = delivered["preparation"]
     pack, pack_ref = preparation["pack"], proof["prepared"]["pack"]
-    receiver, sender = campaign["sessions"][node["executor"]], campaign["sessions"]["codex"]
+    receiver, sender = campaign["sessions"][claim_lane(node, info)], campaign["sessions"]["codex"]
     nonce, callback = pack["completion_nonce"], pack["completion_callback"]
     require(pack["report"] == evidence["report"]["path"], "callback report path changed")
     returned = verify_delivery(proof["callback"], sender, receiver, callback, fixtures=fixtures,
@@ -520,7 +523,8 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rer
     evidence = json_ref(ref, "frozen candidate")
     expected = {"version", "evidence_class", "task_id", "attempt_id", "run_id", "node_id", "execution_kind",
                 "output_tree", "output_files", "report", "tests", "candidate_native_end"}
-    delegated = campaign["sessions"][node["executor"]]["provider"] == "claude"
+    lane = claim_lane(node, info)
+    delegated = campaign["sessions"][lane]["provider"] == "claude"
     require(set(evidence) == expected | ({"protocol"} if delegated else {"review_kind"}), "candidate fields incomplete or changed")
     require(type(evidence["version"]) is int and evidence["version"] == campaign_version(campaign) and
             evidence["evidence_class"] == evidence_class(campaign, "cli_node", fixtures), "candidate execution class changed")
@@ -536,12 +540,12 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rer
     ends = {k: r.verify_pin(evidence["candidate_native_end"][k]) for k, r in readers.items()}
     lower = info["native_start"]["offset"]
     if delegated:
-        protocol = verify_protocol(campaign, header, node, info, evidence, ends[node["executor"]], ends["codex"], fixtures=fixtures)
+        protocol = verify_protocol(campaign, header, node, info, evidence, ends[lane], ends["codex"], fixtures=fixtures)
         require(protocol["callback_at"] <= checks["started_at"], "tests precede callback")
         lower = protocol["delivery_record"]["offset"]
     else:
         require(evidence["review_kind"] == "solo_self_review", "local work must use solo_self_review")
-    readers[node["executor"]].action_summary(lower, ends[node["executor"]], task_id=info["task_id"],
+    readers[lane].action_summary(lower, ends[lane], task_id=info["task_id"],
         output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
     return evidence
 
@@ -604,7 +608,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
     ends = {k: r.verify_pin(fences[k]) for k, r in readers.items()}
     require(all(ends[k] >= r.verify_pin(value["native_end"][k]) for k, r in readers.items()),
             "release fences precede original settlement")
-    lane = node["executor"]
+    lane = claim_lane(node, info)
     start = readers[lane].verify_pin(info["native_start"])
     require(all(ends[k] >= readers[k].verify_pin(header["native_start"][k]) for k in readers) and ends[lane] >= start,
             "failure fences precede run/claim")
@@ -690,7 +694,7 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
     identity = task_identity(campaign, header, node)
     require(all(evidence.get(k) == v for k, v in identity.items()) and
             all(info.get(k) == identity[k] for k in ("task_id", "attempt_id")), "node/run/task/attempt identity changed")
-    lane = node["executor"]
+    lane = claim_lane(node, info)
     mode = "local_cli" if campaign["sessions"][lane]["provider"] == "codex" else "delegated_cli"
     require(info.get("mode") == mode and evidence.get("execution_kind") == mode, "execution ownership changed")
     manifest, outputs, report = output_refs(campaign, header, node, info)

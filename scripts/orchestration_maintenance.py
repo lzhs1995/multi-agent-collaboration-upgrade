@@ -16,6 +16,7 @@ from pathlib import Path
 
 import orchestration_inputs
 from orchestration_adapter import validate_adapter
+from orchestration_binding import claim_lane
 from orchestration_campaign import anchored_ref, find_control, node_write_scope, validate_campaign
 from orchestration_common import (ContractError, contract_errors, exclusive_lock, file_ref, json_ref, parse_time, read_ref,
                                   tree_manifest, utc_now, verify_tree, write_json)
@@ -52,7 +53,7 @@ def validate_maintenance(ref, campaign, header, node, info, preparation_exit, *,
     # acyclic. Terminal ownership and release fences are verified by the caller.
     lease = value["lease"]
     LeaseRegistry(campaign["lease_root"]).verify_original(info["task_id"], lease)
-    require(lease["session_id"] == campaign["sessions"][node["executor"]]["session_id"] and
+    require(lease["session_id"] == campaign["sessions"][claim_lane(node, info)]["session_id"] and
             lease["scope"] == str(node_write_scope(Path(campaign["root"]) / "runs" / header["run"]["run_id"], node)) and
             lease["claim"] == value["claim"] and
             parse_time(info["started_at"]) <= parse_time(lease["reserved_at"]) <= parse_time(value["created_at"]),

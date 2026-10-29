@@ -14,6 +14,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from orchestration_binding import bound_lane
 from orchestration_campaign import anchored_ref, control_script, find_control, validate_campaign
 from orchestration_common import (ContractError, checked_path, exclusive_lock, file_ref, json_ref, read_json,
                                   tree_manifest, utc_now, write_json)
@@ -212,6 +213,15 @@ class Runner:
                         decision=dict(path=ref["path"], bytes=ref["bytes"], sha256=ref["sha256"]),
                         publisher=publisher, inputs=dict(campaign=self.ref, advice=advice))
 
+    def bind_unbound(self, run_id, key, decision):
+        """Bind one deliberately unbound frozen node before its claim.
+
+        The decision path is required on the command line and is part of the
+        pinned native call, so a bind invoked with any other argv order or any
+        other decision matches no original supervisor call.
+        """
+        return self.co(run_id).bind_unbound(key, decision)
+
     def _upgrade_features(self):
         require(campaign_version(self.campaign) != 3 or self.campaign["arm"] == "B",
                 "A1 uses native supervisor scheduling; upgrade drafts/advice/continuation are B-only")
@@ -394,7 +404,7 @@ class Runner:
     def recover(self, run_id):
         co = self.co(run_id)
         observations = co.recover()
-        states, _ = co.state()
+        states, data = co.state()
         for key, state in states.items():
             directory = node_directory(self.campaign, co.header, co.nodes[key])
             files = {name: file_ref(directory / name) for name in (
@@ -403,7 +413,11 @@ class Runner:
             if files:
                 observations.append(dict(node_id=key, state="PERSISTED_EVIDENCE", files=files,
                     action="validate_original_files; candidate/resume-accept/resume-settle; never repeat native control"))
-            if co.campaign["sessions"][co.nodes[key]["executor"]]["provider"] == "claude" and state in (State.ACCEPTED, State.FAILED_PRESERVED) and not (directory / "disarm.json").exists():
+            # An unclaimed unbound node has no lane yet, so no terminal disarm
+            # can be pending for it; bound_lane returns None and the provider
+            # lookup is skipped.
+            lane = bound_lane(co, key, data[key] or None)
+            if lane is not None and co.campaign["sessions"][lane]["provider"] == "claude" and state in (State.ACCEPTED, State.FAILED_PRESERVED) and not (directory / "disarm.json").exists():
                 observations.append(dict(node_id=key, state="TERMINAL_DISARM_PENDING", action="disarm_original_task"))
         return dict(status=self.status(run_id), observations=observations, input_operations=0)
 
@@ -437,10 +451,10 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "publish-decision", "start-script", "start", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "publish-decision", "start-script", "start", "bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
-    node_actions = {"claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "publish-decision", "accept", "resume-accept",
+    node_actions = {"bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "publish-decision", "accept", "resume-accept",
                     "block", "failure-candidate", "settle", "resume-settle", "disarm"}
     for action in actions:
         sub = commands.add_parser(action)
@@ -450,6 +464,10 @@ def main(argv=None):
             sub.add_argument("--node", required=True)
         if action in ("accept", "settle"):
             sub.add_argument("--marker", required=True)
+        if action == "bind-unbound":
+            # Required: a bind without its published decision is unrunnable,
+            # and the argv order --node then --decision is part of the proof.
+            sub.add_argument("--decision", required=True)
         if action == "publish-decision":
             # Every field is required: an omitted advice pin must not be able
             # to turn an on-arm decision into an off-arm one by accident.
@@ -489,6 +507,8 @@ def main(argv=None):
             result = runner.wait_permit(args.run, args.timeout_seconds)
         elif action == "advance":
             result = runner.advance(args.run, max_steps=args.max_steps, max_seconds=args.max_seconds)
+        elif action == "bind-unbound":
+            result = runner.bind_unbound(args.run, args.node, args.decision)
         elif action == "publish-decision":
             from orchestration_campaign import DECISION_ARGUMENTS
             result = runner.publish_decision(args.run, args.node,

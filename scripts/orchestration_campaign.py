@@ -132,12 +132,16 @@ def decision_argument_fields(decision):
 
 
 def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, marker=None,
-                   decision_fields=None):
+                   decision=None, decision_fields=None):
     """Exact native supervisor tool request used to bind start/accept timestamps.
 
     This is returned for the supervisor to invoke, never appended to a journal by
     Python. The verifier requires the original CLI's complete custom-tool record.
     Include its terminal LF so that the returned script is the exact native input.
+
+    ``decision`` is the path of the published decision a ``bind-unbound`` call
+    binds. It is appended after ``--marker``, so the order is ``--node``,
+    ``--marker``, ``--decision``; any other order matches no original call.
 
     ``decision_fields`` carries the supervisor's own choices for the fixed
     decision publisher. Its keys must be exactly ``DECISION_ARGUMENTS``, and
@@ -152,6 +156,9 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
         argv.extend(["--node", node_id])
     if marker is not None:
         argv.extend(["--marker", marker])
+    if decision is not None:
+        require(isinstance(decision, str) and decision, "a bind call names its published decision path")
+        argv.extend(["--decision", decision])
     if decision_fields is not None:
         require(set(decision_fields) == set(DECISION_ARGUMENTS),
                 "the decision publisher call needs exactly its frozen field set")

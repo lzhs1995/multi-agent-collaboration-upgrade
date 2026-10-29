@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from time import monotonic
 
+from orchestration_binding import bound_lane
 from orchestration_campaign import control_script, find_control
 from orchestration_common import ContractError, checked_path, json_ref, require
 from orchestration_coordinator import State
@@ -57,9 +58,21 @@ def _options(runner, run_id, view):
             action = "candidate"
         elif advice["action"] == "review-persisted-candidate":
             action = "candidate"
-        if failed and action in ("claim", "prepare", "dispatch"):
+        if failed and action in ("bind-unbound", "claim", "prepare", "dispatch"):
             waiting.append(dict(node_id=key, state=state, action="preserve-unstarted-work",
                                 reason="A failed node stops new work; collect original results on other lanes."))
+            continue
+        if action == "bind-unbound":
+            # Never executed here. Unlike resume-* there is no exec script:
+            # _script cannot pass --decision and advance has no decision source,
+            # so a script without it would be unrunnable and match no original
+            # supervisor call. The row names the argv order instead.
+            waiting.append(dict(node_id=key, state=state, action="bind-original-unbound-node",
+                                gated_command="bind-unbound", reason=advice["reason"],
+                                instruction="The original supervisor publishes the decision with publish-decision, "
+                                            "then invokes bind-unbound --run <run> --node " + key +
+                                            " --decision <published decision path>, in exactly that argv order. "
+                                            "Advance never binds a node."))
             continue
         if action == "callback":
             # Do not repeatedly run a receiver settlement before any original
@@ -286,7 +299,7 @@ def advance(runner, run_id, *, max_steps=1, max_seconds=45):
                          and row.get("state", result["states"][row["node_id"]]) == result["states"][row["node_id"]]]
     if all(s == State.ACCEPTED for s in states.values()) and all(
             co._lease(k, data[k])["released_at"] is not None and
-            (runner.campaign["sessions"][co.nodes[k]["executor"]]["provider"] != "claude"
+            (runner.campaign["sessions"][bound_lane(co, k, data[k])]["provider"] != "claude"
              or (co.root / "nodes" / k / "disarm.json").is_file()) for k in states):
         result["supervisor_actions"].append(dict(action="finish-and-verify",
             exec_script=_script(runner, run_id, "finish"), verify_exec_script=_script(runner, run_id, "verify")))

@@ -37,6 +37,10 @@ BINDING_FIELDS = {"schema", "campaign", "run_id", "node_id", "lane", "execution_
 DECISION_FIELDS = {"schema", "run_id", "node_id", "work_kind", "advice_sha256", "actual_route",
                    "action", "reason", "decided_at", "supervisor_session"}
 REF_FIELDS = ("path", "bytes", "sha256")
+# R62 consumer.new_entrypoint.checks[6] names an "actual context" fact that no
+# producer anywhere in this repository measures (design Conflict C9, confirmed
+# by ROOT R94 section 2). It is recorded as this literal, never invented.
+CONTEXT_FACT = "NOT_IMPLEMENTED_NO_PRODUCER"
 
 
 def unbound_plan(plan) -> bool:
@@ -104,13 +108,52 @@ def bound_lane(co, node_id, info=None) -> str | None:
     return binding["lane"] if binding else None
 
 
+def claim_lane(node, info) -> str:
+    """The lane a claimed node uses, from the frozen node or the claim's own pin.
+
+    For consumers that hold the frozen node and its claim data but no
+    coordinator (evidence, transport, timeline, preparation, maintenance). A
+    bound node returns ``node["executor"]`` exactly as before; an unbound node
+    must carry the claim's ``executor_binding`` pin, which is re-read by
+    path+bytes+sha256 so an edited binding refuses instead of re-routing.
+    """
+    if not is_unbound(node):
+        return node["executor"]
+    require(isinstance(info, dict) and isinstance(info.get("executor_binding"), dict),
+            "an unbound node is used only through its claimed executor binding")
+    value = json_ref(info["executor_binding"], "claimed executor binding")
+    require(set(value) == BINDING_FIELDS and value["schema"] == SCHEMA,
+            "claimed executor binding fields changed")
+    require(value["node_id"] == node["id"], "claimed executor binding belongs to another frozen node")
+    return value["lane"]
+
+
 def claimed_lanes(co, data) -> dict[str, str | None]:
     """Lane per node resolved from frozen claim records only.
 
     ``data`` is the replay's accumulated claim data, so a binding written later
-    can never retroactively change an earlier claim's gate context.
+    can never retroactively change an earlier claim's gate context. A bound
+    node keeps its frozen executor; an unbound node has a lane here only once
+    its own claim pins a binding. The binding *file* is never consulted: a
+    pending node bound after an earlier claim would otherwise make that earlier
+    claim's replayed selection differ from the selection it actually passed.
     """
-    return {key: bound_lane(co, key, data.get(key) or None) for key in co.nodes}
+    return {key: (node["executor"] if not is_unbound(node)
+                  else claim_lane(node, data[key]) if "executor_binding" in (data.get(key) or {})
+                  else None)
+            for key, node in co.nodes.items()}
+
+
+def claim_mode_matches_frozen_kind(node, info, mode) -> bool:
+    """The claim's mode against the frozen plan, conditional on the null triple.
+
+    A bound node keeps today's chained equality verbatim. An unbound node froze
+    ``execution_kind: null`` by design, so it requires exactly that null and a
+    claim mode equal to the mode resolved from its bound lane.
+    """
+    if is_unbound(node):
+        return node.get("execution_kind") is None and info.get("mode") == mode
+    return info["mode"] == node["execution_kind"] == mode
 
 
 def resolved_mode(campaign, lane) -> str:
@@ -205,6 +248,16 @@ def lane_facts(co, node_id, identity, states, data) -> dict[str, dict]:
                 lane, leases, sessions, occupied, scope=scope, scope_root="/"),
             author=globals()["lane_is_author"](co.plan, node_id, lane, lanes_by_node))
     return facts
+
+
+def bind_facts(lanes) -> dict:
+    """What a binding records about the facts code measured at bind time.
+
+    ``lanes`` is exactly the mapping ``route_advice`` consumed, so it stays a
+    separate key: a non-lane entry inside it would be read as a lane. The
+    actual-context fact has no producer and is stated as such.
+    """
+    return dict(lanes=lanes, context=CONTEXT_FACT)
 
 
 def eligible_candidates(co, node_id, identity, states, data, *, work_kind) -> tuple[str, ...]:
@@ -303,4 +356,5 @@ BIND_PREDICATES = {"lane_verified": lane_verified, "lane_idle_write_domain": lan
                    "decision_matches_run_node": decision_matches_run_node,
                    "node_is_unbound": node_is_unbound, "binding_absent": binding_absent,
                    "decision_work_kind_known": decision_work_kind_known,
-                   "advice_inputs_unchanged": advice_inputs_unchanged}
+                   "advice_inputs_unchanged": advice_inputs_unchanged,
+                   "claim_mode_matches_frozen_kind": claim_mode_matches_frozen_kind}

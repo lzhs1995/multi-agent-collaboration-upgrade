@@ -351,6 +351,20 @@ def advice_chain(co, key, info, readers, *, registration, not_after, binding_ref
                 "the claim must pin its executor binding, or a binding reference must be supplied")
         binding_ref = info["executor_binding"]
     binding = json_ref(binding_ref, "original executor binding")
+    return chain_from_binding(co, key, info, readers, binding, registration=registration, not_after=not_after,
+                              binding_pin=lambda: file_ref(binding_ref["path"]))
+
+
+@contract_errors("advice chain")
+def chain_from_binding(co, key, info, readers, binding, *, registration, not_after, binding_pin) -> dict:
+    """The one join, over a binding *value*.
+
+    ``advice_chain`` calls it on a frozen binding; ``Coordinator.bind_unbound``
+    calls it on the value it is about to create, so a bind can only ever write
+    a record this same code will later re-derive identically. ``binding_pin``
+    is called last, only once every check has passed.
+    """
+    require(key in co.nodes, "unknown frozen node")
     require(binding.get("run_id") == co.spec["run_id"] and binding.get("node_id") == key,
             "executor binding belongs to another run or frozen node")
     pinned = binding.get("decision")
@@ -411,7 +425,7 @@ def advice_chain(co, key, info, readers, *, registration, not_after, binding_ref
                 counted_as_advisory_consumption=counted, worker_status=worker_status,
                 advice=advice.get("advice_sha256"), decision=decision_ref,
                 decided_at=decided_at, decision_publish=publish,
-                binding=file_ref(binding_ref["path"]), read=read, order_verified=order_verified,
+                binding=binding_pin(), read=read, order_verified=order_verified,
                 registration=registration, predicates=sorted(ADVICE_PREDICATES))
 
 
