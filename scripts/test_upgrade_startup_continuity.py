@@ -265,8 +265,9 @@ class StartupFailureEvidenceTests(unittest.TestCase):
         probe that already ran with a trailing " 2>&1" still blocks fallback."""
         from upgrade_startup_contract import readiness_command
         from upgrade_startup_continuity import startup_failure_evidence
+        from test_upgrade_live_inspect import ACCEPTED_SUFFIXES
         command = readiness_command(self.spec["controller"], "/pinned/python", "/pinned/rtk", "codex")
-        for executed in (command, command + " 2>&1"):
+        for executed in (command + suffix for suffix in ACCEPTED_SUFFIXES):
             with self.subTest(executed=executed):
                 self.reset_journal()
                 session = self.failure_with_probe(executed)
@@ -279,9 +280,11 @@ class StartupFailureEvidenceTests(unittest.TestCase):
         # is a different command, so the original pre-probe failure still proves.
         from upgrade_startup_contract import readiness_command
         from upgrade_startup_continuity import startup_failure_evidence
+        # The same refused rewrites the readiness call-site tests use, so the
+        # guard and readiness evidence cannot drift apart on one closed set.
+        from test_upgrade_live_inspect import REFUSED_SUFFIXES
         command = readiness_command(self.spec["controller"], "/pinned/python", "/pinned/rtk", "codex")
-        for suffix in (" 2>&1 | cat", " 2>&1; true", " 2>/dev/null", " >/tmp/x 2>&1",
-                       " 2>&1 2>&1", "  2>&1", " 2>&1 # comment"):
+        for suffix in REFUSED_SUFFIXES:
             with self.subTest(suffix=suffix):
                 self.reset_journal()
                 session = self.failure_with_probe(command + suffix)

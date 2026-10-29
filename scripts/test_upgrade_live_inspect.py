@@ -27,7 +27,11 @@ from upgrade_startup_contract import (GOAL_SCHEMA, is_readiness_command, native_
 # rewrites that stay a different command. Shared by the call-site tests below.
 ACCEPTED_SUFFIXES = ("", " 2>&1")
 REFUSED_SUFFIXES = (" 2>&1 | cat", " 2>&1; true", " 2>/dev/null", " >/tmp/x 2>&1",
-                    " 2>&1 2>&1", "  2>&1", " 2>&1 # comment", " 2>&1 && true")
+                    " 2>&1 2>&1", "  2>&1", " 2>&1 # comment", " 2>&1 && true",
+                    " ", "\n", "\t2>&1", " 2>&1 ", " 2>&1\n")
+# The argument each call site's tool runs; tool_shapes() below uses these names.
+SITE_KEYS = {"claude_bash": evidence.BASH_COMMAND_KEYS, "codex_dict": evidence.EXEC_COMMAND_KEYS,
+             "codex_wrapper": evidence.EXEC_COMMAND_KEYS}
 
 
 class ReadinessTests(unittest.TestCase):
@@ -252,13 +256,45 @@ class ReadinessTests(unittest.TestCase):
         command, accepted, _ = self.readiness_variants("codex")
         for arguments in (command, command + " 2>&1", "// " + command, {"cmd": [command]},
                           {"command": None}, {"command": 7}, {}, [command], None, 7):
-            with self.subTest(arguments=arguments):
-                self.assertIsNone(evidence.executed_command(arguments))
-                self.assertFalse(evidence.command_in_tool(arguments, command))
+            for keys in (evidence.EXEC_COMMAND_KEYS, evidence.BASH_COMMAND_KEYS):
+                with self.subTest(arguments=arguments, keys=keys):
+                    self.assertIsNone(evidence.executed_command(arguments, keys))
+                    self.assertFalse(evidence.command_in_tool(arguments, command, keys))
         for ran in accepted:
-            for arguments in self.tool_shapes(ran).values():
+            for site, arguments in self.tool_shapes(ran).items():
                 with self.subTest(arguments=arguments):
-                    self.assertEqual(evidence.executed_command(arguments), ran)
+                    self.assertEqual(evidence.executed_command(arguments, SITE_KEYS[site]), ran)
+
+    def test_each_shell_tool_is_read_by_the_argument_it_runs(self):
+        # Claude Bash runs "command" only, so a recorded "cmd" next to it never
+        # names what ran. Codex exec arguments keep "cmd", else "command".
+        command, _, _ = self.readiness_variants("claude_a")
+        other = "cat /tmp/forged-probe.json"
+        bash, exec_keys = evidence.BASH_COMMAND_KEYS, evidence.EXEC_COMMAND_KEYS
+        for arguments, keys, expected in (
+                ({"cmd": command, "command": other}, bash, False),
+                ({"cmd": command}, bash, False),
+                ({"command": other, "cmd": command}, bash, False),
+                ({"command": command, "cmd": other}, bash, True),
+                ({"cmd": command, "command": other}, exec_keys, True),
+                ({"command": command}, exec_keys, True),
+                ({"cmd": other, "command": command}, exec_keys, False)):
+            with self.subTest(arguments=arguments, keys=keys):
+                self.assertIs(evidence.command_in_tool(arguments, command, keys), expected)
+
+    def test_bash_call_naming_the_probe_under_cmd_is_not_the_probe(self):
+        # The adversarial review's supplied record: Bash input and both hook
+        # observations carry the probe as "cmd" and another command as "command".
+        lane = "claude_a"
+        command, _, _ = self.readiness_variants(lane)
+        fixture = self.fixture(lane, banner=True)
+        forged = {"cmd": command, "command": "cat /tmp/forged-probe.json"}
+        fixture[1][1][1]["message"]["content"][0]["input"] = forged
+        for path, value in fixture[3]:
+            value["payload"].update(tool_input=forged)
+            write_json(path, value)
+        with self.assertRaisesRegex(ContractError, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+            self.check(fixture, lane)
 
     def test_every_matcher_of_this_command_agrees_on_one_physical_call(self):
         # No matcher may accept what another rejects: readiness evidence, the
@@ -274,7 +310,7 @@ class ReadinessTests(unittest.TestCase):
                 for site, arguments in self.tool_shapes(ran).items():
                     for name, matcher in matchers.items():
                         with self.subTest(lane=lane, executed=ran, site=site, matcher=name):
-                            self.assertIs(matcher(arguments, command), expected)
+                            self.assertIs(matcher(arguments, command, SITE_KEYS[site]), expected)
 
     def test_installed_private_copy_keeps_the_same_closed_set(self):
         from upgrade_live_patch import private_imports
@@ -282,22 +318,32 @@ class ReadinessTests(unittest.TestCase):
         import upgrade_startup_contract
         source = Path(evidence.__file__).resolve()
         rendered, namespace = private_imports(source.read_text()), {}
+        # The public modules stay importable here, so the rewrite itself must
+        # be asserted or an unrewritten copy would pass the checks below.
+        for name in ("upgrade_startup_contract", "orchestration_common"):
+            self.assertNotIn("from " + name + " import", rendered)
+        for name in ("mac_upgrade_startup_contract", "mac_upgrade_common"):
+            self.assertIn("from " + name + " import", rendered)
         aliases = {"mac_upgrade_common": orchestration_common,
                    "mac_upgrade_startup_contract": upgrade_startup_contract}
         with patch.dict(sys.modules, aliases):
             exec(compile(rendered, "mac_upgrade_readiness_evidence.py", "exec"), namespace)
         command, accepted, refused = self.readiness_variants("claude_a")
+        bash = namespace["BASH_COMMAND_KEYS"]
         for ran, expected in [(x, True) for x in accepted] + [(x, False) for x in refused]:
             with self.subTest(executed=ran):
-                self.assertIs(namespace["command_in_tool"]({"command": ran}, command), expected)
+                self.assertIs(namespace["command_in_tool"]({"command": ran}, command, bash), expected)
+        self.assertIs(namespace["command_in_tool"]({"cmd": command, "command": "true"}, command, bash),
+                      False)
 
     def test_prose_comment_failure_or_pending_result_is_not_success(self):
         session, rows, call, hooks, launches, probe = self.fixture("codex")
         command = readiness_command(self.controller, "/pinned/python", "/pinned/rtk", "codex")
-        self.assertTrue(subject.command_in_tool(call["arguments"], command))
+        keys = evidence.EXEC_COMMAND_KEYS
+        self.assertTrue(subject.command_in_tool(call["arguments"], command, keys))
         for text in ("// " + call["arguments"], json.dumps(call["arguments"]),
                      call["arguments"] + call["arguments"]):
-            self.assertFalse(subject.command_in_tool(text, command))
+            self.assertFalse(subject.command_in_tool(text, command, keys))
         for output in (probe["status"], {"exit_code": 1, "output": json.dumps(probe)},
                        {"session_id": 9, "output": json.dumps(probe)},
                        "Process exited with code 2\n" + json.dumps(probe)):
@@ -310,6 +356,7 @@ class ReadinessTests(unittest.TestCase):
         refused = [command + suffix for suffix in REFUSED_SUFFIXES]
         refused.append("# run the pinned probe\n" + command + " 2>&1")
         refused.append(command.replace(" --lane", "  --lane"))
+        refused.append(" " + command)
         return command, accepted, refused
 
     def check(self, fixture, lane):

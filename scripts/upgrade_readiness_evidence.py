@@ -38,14 +38,24 @@ def native_records(native, session):
             yield ref, record
 
 
-def executed_command(arguments):
-    """The one complete shell string these tool arguments executed, or None.
+# The argument each shell tool runs, first present key first. Codex exec /
+# exec_command arguments are read as before: "cmd", else "command". Claude
+# Code's Bash tool runs only "command" (native 2.1.303 schema: required
+# [command], additionalProperties false, no "cmd"), so a recorded "cmd" never
+# names what Bash ran.
+EXEC_COMMAND_KEYS = ("cmd", "command")
+BASH_COMMAND_KEYS = ("command",)
 
-    Shape only; the caller decides which commands count. A comment, quoted
-    example or a second call must not become readiness evidence.
+
+def executed_command(arguments, keys):
+    """The one complete shell string these tool arguments ran, or None.
+
+    keys names the argument the calling tool runs. Shape only; the caller
+    decides which commands count. A comment, quoted example or a second call
+    must not become readiness evidence.
     """
     if isinstance(arguments, dict):
-        executed = arguments.get("cmd", arguments.get("command"))
+        executed = next((arguments[key] for key in keys if key in arguments), None)
         return executed if isinstance(executed, str) else None
     if isinstance(arguments, str):
         try:
@@ -60,18 +70,19 @@ def executed_command(arguments):
             except ValueError:
                 return None
         # A JSON string containing example code is data, not an executed call.
-        return executed_command(parsed) if isinstance(parsed, dict) else None
+        return executed_command(parsed, keys) if isinstance(parsed, dict) else None
     return None
 
 
-def command_in_tool(arguments, command):
+def command_in_tool(arguments, command, keys):
     """Match executed shell arguments; assistant prose is never an input here.
 
     The readiness command is accepted in its two closed forms only (see
     readiness_command_forms): the exact command, or the exact command plus a
-    literal " 2>&1". Every readiness consumer of this command uses this matcher.
+    literal " 2>&1". Every readiness consumer of this command uses this matcher,
+    with keys for the tool that made the call.
     """
-    return is_readiness_command(executed_command(arguments), command)
+    return is_readiness_command(executed_command(arguments, keys), command)
 
 
 def completed_probe(value, lane, spec):
@@ -216,7 +227,7 @@ def nested_readiness_command(records, call, result_ref, session, command, spec):
         return None
     # The native argv must carry the very string this wrapper asked for, so the
     # outer call and the nested execution can never disagree about the form.
-    executed = executed_command(args)
+    executed = executed_command(args, EXEC_COMMAND_KEYS)
     if not is_readiness_command(executed, command):
         return None
     inside = [(ref, row) for ref, row in records
@@ -288,7 +299,8 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
             if payload.get("type") in ("function_call", "custom_tool_call"):
                 args = payload.get("arguments", payload.get("input"))
                 name = payload.get("name", "")
-                if name.split(".")[-1] in ("exec", "exec_command") and command_in_tool(args, command):
+                if (name.split(".")[-1] in ("exec", "exec_command")
+                        and command_in_tool(args, command, EXEC_COMMAND_KEYS)):
                     call_count += 1
                     calls[payload["call_id"]] = dict(id=payload["call_id"], name=name,
                         arguments=args, record=ref, startup=startup_ref,
@@ -327,7 +339,8 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
                 if not isinstance(block, dict):
                     continue
                 if (record.get("type") == "assistant" and block.get("type") == "tool_use"
-                        and block.get("name") == "Bash" and command_in_tool(block.get("input"), command)):
+                        and block.get("name") == "Bash"
+                        and command_in_tool(block.get("input"), command, BASH_COMMAND_KEYS)):
                     call_count += 1
                     calls[block["id"]] = dict(id=block["id"], name="Bash", arguments=block["input"],
                                               record=ref, startup=startup_ref,

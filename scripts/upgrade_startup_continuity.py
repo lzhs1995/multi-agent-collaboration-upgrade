@@ -18,7 +18,8 @@ import uuid
 
 from orchestration_common import (ContractError, canonical, checked_path, contract_errors, count, digest, file_ref, finite, json_ref, parse_time, read_ref,
                                   require, strict_json, verify_tree, within, write_json)
-from upgrade_readiness_evidence import command_in_tool, native_records, readiness_evidence
+from upgrade_readiness_evidence import (EXEC_COMMAND_KEYS, command_in_tool, native_records,
+                                        readiness_evidence)
 from upgrade_native_outcomes import codex_outcomes, claude_outcomes, native_text
 from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt, readiness_command, readiness_prompt,
                                       startup_continuity_enabled)
@@ -410,7 +411,8 @@ def startup_failure_evidence(native, session, lane, spec, startup_ref, *, task_i
             require(payload["model"] == model, "STARTUP_FAILURE_MODEL_CHANGED")
             models.append((ref, payload))
         if (record.get("type") == "response_item" and payload.get("type") in ("function_call", "custom_tool_call")
-                and command_in_tool(payload.get("arguments", payload.get("input")), command)):
+                and command_in_tool(payload.get("arguments", payload.get("input")), command,
+                                    EXEC_COMMAND_KEYS)):
             require(False, "STARTUP_FAILURE_PROBE_ALREADY_EXECUTED")
         if record.get("type") == "event_msg" and payload.get("type") == "task_started":
             require(open_turn is None, "STARTUP_FAILURE_OVERLAPPING_TURNS")
