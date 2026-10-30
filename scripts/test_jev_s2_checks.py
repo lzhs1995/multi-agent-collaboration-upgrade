@@ -333,6 +333,16 @@ class R62Negatives(unittest.TestCase):
             value["advice"]["route"] = "codex"
             self.assert_rejected(value, "accepted advice differs")
 
+    def test_a_decision_without_a_reason_is_refused(self):
+        # v1 synthetic_self_check empty_reason: "record why advice was adopted
+        # or rejected". R32's own tests never exercised it, so a mutant that
+        # deleted the check survived; blank, whitespace and absent all refuse.
+        for reason in ("", "  ", None):
+            value = trace()
+            value["decision"]["reason"] = reason
+            with self.subTest(reason=reason):
+                self.assert_rejected(value, "record why advice was adopted or rejected")
+
 
 class RegistrationTests(unittest.TestCase):
     """The ported checker reads its labels from the registration, not literals."""
