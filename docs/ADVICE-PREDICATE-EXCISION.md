@@ -35,9 +35,17 @@ For each name in `ADVICE_PREDICATES | BIND_PREDICATES` plus
 
 The mapped negative is a committed test, run by name. That is deliberate: it
 proves the predicate is load-bearing for a refusal the suite already asserts,
-rather than for a probe written next to the protocol. Four negatives live in the
+rather than for a probe written next to the protocol. Five negatives live in the
 excision module itself because no existing test isolates the predicate they map
 to, and each one says so in its docstring.
+
+The gate covers registered predicates only. It cannot detect a judgment written
+inline instead of as a registered predicate, so each owning module's docstring
+says which of its checks are registered and which are record-shape `require`
+calls. Callers reach a registered predicate through its module attribute (or
+`globals()` inside its own module), never through a name imported at import
+time, because an imported name is a second reference the in-memory excision
+could not replace.
 
 ### Two honest excision outcomes
 
@@ -52,15 +60,27 @@ five are `publish_follows_the_read`, `lane_idle_write_domain`,
 `advice_read_evidence`. It returns evidence rather than a verdict, so its
 neutral value ("no evidence") refuses *more* than the real answer, and no
 negative can flip. There the mapped test is the complete-chain positive, and
-excision must break its `CONSUMED` assertion. That is weaker evidence and is
-labelled as such in the registry, not presented as a flipped negative.
+excision must break its `CONSUMED` assertion. That positive is the natively
+joined, counted run-level chain
+(`test_orchestration_publish_decision.test_on_arm_publish_joins_after_the_full_read`):
+the checker-level complete chain decides outside the publisher path, which
+ROOT R94 section 2 keeps as a diagnostic, so it now asserts
+`DIAGNOSTIC_NOT_NATIVELY_JOINED` and is not counted. That is weaker evidence and
+is labelled as such in the registry, not presented as a flipped negative.
 
-`decision_publish_evidence` also returns evidence. Its excised form keeps the
-original's own search over the same fenced window and drops every `require` in
-it - the pairing rule, the single-call and single-result rules, the terminal rc0
-extraction, the window bound and the stamp order - so it admits a pair the real
-function refuses. It is mapped to a duplicate-result negative, where the records
-are present either way and only that single-result rule can refuse.
+Four more predicates return evidence: `decision_publish_evidence`,
+`bind_call_evidence`, `bind_result_evidence` and `live_bind_call`. Each keeps
+the strong form through a shape-preserving excision that keeps the original's
+own record search and drops its judgments, so it admits what the real function
+refuses. For `decision_publish_evidence` that means the pairing rule, the
+single-call, shared-call_id and single-result rules, the terminal rc0
+extraction and the stamp order, over the same window bounded by the bind call;
+it is mapped to a duplicate-result negative, where the records are present
+either way and only that single-result rule can refuse. `bind_call_evidence`
+excised believes whatever bind call and stamp the binding names;
+`bind_result_evidence` excised accepts any output of the bind call's call_id
+as its result; `live_bind_call` excised takes the last matching call whatever
+its result state.
 
 ## Scope: the shared matcher predicates are not excised
 

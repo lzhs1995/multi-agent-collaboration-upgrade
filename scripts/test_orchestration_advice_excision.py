@@ -1,9 +1,11 @@
 """R62 ``checks.excision`` and ``checks.restore`` as a test `test_all.py` discovers.
 
-Every judgment E3 added is a named module-level callable registered in
-``ADVICE_PREDICATES``, ``BIND_PREDICATES`` or, for the one predicate that lives
-beside the rules provider, named here. For each one this module runs ROOT's R39
-protocol in process:
+Every named judgment predicate E3 added is a module-level callable registered
+in ``ADVICE_PREDICATES``, ``BIND_PREDICATES`` or, for the one predicate that
+lives beside the rules provider, named here. This module cannot detect a
+judgment written inline instead of as a registered predicate; the two owning
+modules' docstrings state which checks are registered. For each registered
+predicate this module runs ROOT's R39 protocol in process:
 
 1. the mapped negative must refuse with its own reason (control);
 2. a semantics-preserving wrapper that still calls the original must keep
@@ -16,17 +18,21 @@ protocol in process:
 
 The mapped negative is an ordinary committed test, run by name, not a probe
 written here: that way a predicate is proved load-bearing for a refusal the
-suite actually asserts. Four negatives are defined in this module because no
+suite actually asserts. Five negatives are defined in this module because no
 existing test isolates the predicate they map to - each is noted in the registry.
 
 Excision has two honest outcomes and the registry records which one applies.
 ``NEGATIVE_FLIPS`` is the strong form: the negative no longer refuses as it did.
 Where a second, independent layer also refuses, the flip shows up as that other
 layer's reason rather than as acceptance, and the expected reason is written
-down instead of being hidden. ``POSITIVE_BREAKS`` is the weaker form, used only
-for the two predicates whose neutral value is *less* admitting than their real
-answer (they return evidence, not a verdict): there the mapped test asserts the
-complete chain's own result, and excision must break that assertion.
+down instead of being hidden. ``POSITIVE_BREAKS`` is the weaker form, used for
+exactly one predicate, ``advice_read_evidence``, whose neutral value ("no
+evidence") is *less* admitting than its real answer: there the mapped test is
+the natively joined complete chain's own positive, and excision must break it.
+The other evidence-returning predicates (``decision_publish_evidence``,
+``bind_call_evidence``, ``bind_result_evidence``, ``live_bind_call``) keep the
+strong form through a shape-preserving excision that drops their judgments
+but keeps their record search.
 
 The four shared matcher predicates (``valid_command``, ``calls_and_results``,
 ``codex_stdout``, ``exact_body_output``) are reused unchanged and are asserted
@@ -176,9 +182,12 @@ REGISTRY = {
         _chain("test_contradictory_codex_session_meta_invalidates_the_window"), NEGATIVE_FLIPS, None),
     "advice_read_evidence": (
         # Its neutral value is "no evidence", which refuses *more*, so the
-        # complete-chain positive is what excision must break.
+        # complete-chain positive is what excision must break. That positive
+        # is the natively joined, counted run-level chain: the checker-level
+        # complete chain is the diagnostic shape and is not counted.
         upgrade_advice_chain, NO_EVIDENCE,
-        _chain("test_complete_chain_is_valid_and_claims_nothing_more"), POSITIVE_BREAKS, None),
+        "test_orchestration_publish_decision.PublishDecisionTests."
+        "test_on_arm_publish_joins_after_the_full_read", POSITIVE_BREAKS, None),
     "read_is_full": (
         upgrade_advice_chain, ADMIT_EVERYTHING,
         _chain("test_two_valid_pairs_are_ambiguous_not_consumed"), NEGATIVE_FLIPS, None),
@@ -536,7 +545,7 @@ class PredicateExcisionTests(unittest.TestCase):
                 self.assertTrue(callable(excised))
                 self.assertIn(kind, (NEGATIVE_FLIPS, POSITIVE_BREAKS))
                 self.assertEqual(unittest.TestLoader().loadTestsFromName(test_name).countTestCases(), 1)
-        # Only the two evidence-returning predicates may use the weaker form.
+        # Exactly one predicate, advice_read_evidence, may use the weaker form.
         self.assertEqual({name for name, row in REGISTRY.items() if row[3] == POSITIVE_BREAKS},
                          {"advice_read_evidence"})
 
