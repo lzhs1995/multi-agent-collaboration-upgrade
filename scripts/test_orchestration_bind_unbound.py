@@ -974,6 +974,37 @@ class BindClosureTests(unittest.TestCase):
         for outside in ("upgrade_advice_publish", "jev_advice_worker"):
             self.assertNotIn("scripts/" + outside + ".py", closure)
 
+    def test_jev_advice_is_a_closure_member_beside_the_two_the_design_names(self):
+        """E3's closure members, pinned: two the design names, and jev_advice.
+
+        ``orchestration_binding`` imports ``jev_advice`` at module level, so
+        ``jev_advice.py`` enters every new maintenance and campaign closure too,
+        beside ``orchestration_binding`` and ``upgrade_advice_chain``. Its bytes
+        are covered by ``verify_tree(adapter)``. Like ``upgrade_advice_chain``
+        it is outside ``bound_source``'s ``orchestration_*`` name filter, so its
+        loaded-module origin is not re-checked; design 4.2 keeps that filter
+        unchanged. Since every claim and replay re-derives an unbound node's
+        binding, a maintenance replay of such a claim runs
+        ``upgrade_advice_chain`` (and reads ``jev_advice.WORK_KINDS``).
+        """
+        from orchestration_adapter import validate_adapter
+        scripts = Path(__file__).resolve().parent
+        added = {"scripts/jev_advice.py", "scripts/orchestration_binding.py", "scripts/upgrade_advice_chain.py"}
+        with tempfile.TemporaryDirectory() as other:
+            root = Path(other).resolve() / "source"
+            (root / "scripts").mkdir(parents=True)
+            for path in scripts.glob("*.py"):
+                shutil.copyfile(path, root / "scripts" / path.name)
+            manifest = tree_manifest(root)
+            closures = {purpose: validate_adapter(manifest, purpose=purpose)
+                        for purpose in ("maintenance", "campaign")}
+        for purpose, closure in closures.items():
+            with self.subTest(purpose=purpose):
+                self.assertLessEqual(added, set(closure))
+                for outside in ("upgrade_advice_publish", "jev_advice_worker", "jev_s2_checks",
+                                "jev_advice_control_harness"):
+                    self.assertNotIn("scripts/" + outside + ".py", closure)
+
 
 if __name__ == "__main__":
     unittest.main()

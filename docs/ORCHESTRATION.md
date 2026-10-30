@@ -100,6 +100,17 @@ HTTP or SDK client ships. A failed or malformed answer stays an error, never a
 "no". `jev_advice.py` is unchanged: its bytes still match the sha256 pinned in
 the frozen R62 design.
 
+Because `orchestration_binding` imports `jev_advice` at module level, E3 adds
+three modules to every new frozen maintenance and campaign closure, not the two
+the design's invariant 6 names: `orchestration_binding`, `upgrade_advice_chain`
+and `jev_advice` (pinned by `BindClosureTests`). `verify_tree(adapter)` covers
+all three files' bytes. `upgrade_advice_chain` and `jev_advice` are outside
+`bound_source`'s `orchestration_*` name filter, which design 4.2 keeps
+unchanged, so their loaded-module origin is not re-checked. Every claim and
+replay re-derives an unbound node's binding, so a maintenance replay of such a
+claim does run `upgrade_advice_chain`. The design file lives outside this
+repository and still names two members; its owner updates it.
+
 The frozen runner's `claim --run <run> --node <node>` is the action that requests
 a new rules decision for a `PENDING` node. An already claimed node returns its
 existing record without requesting another decision. An allowed claim persists its gates and decision before
