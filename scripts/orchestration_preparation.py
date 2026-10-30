@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from orchestration_binding import claim_lane
 from orchestration_campaign import campaign_effect_policy
 from orchestration_common import (canonical, contract_errors, digest, evidence_names, exclusive_lock, file_ref, json_ref, object_sha,
                                   parse_time, read_ref, tree_manifest, utc_now, write_json)
@@ -42,7 +43,7 @@ def fill_scaffold(campaign, header, node, info, scaffold, handshake, nonce, *, f
         orchestration=pack_extension(campaign, header, node, info))
     if campaign_version(campaign) == 3:
         from orchestration_pack_inputs import pin_inputs, verify_inputs
-        pack["preparation_inputs"] = pin_inputs(campaign, header, node, pack)
+        pack["preparation_inputs"] = pin_inputs(campaign, header, node, pack, info)
         gate = json_ref(file_ref(pack["identity_gate"]))
         verify_inputs(campaign, header, node, info, pack, gate, fixtures=fixtures)
     return pack
@@ -168,7 +169,8 @@ def verify_history(campaign, header, node, info, proof, terminal_failure):
 def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=False, native_end=None, terminal_failure=None):
     from orchestration_transport import PinnedRuntime, disarm_sources
 
-    require(info["mode"] == "delegated_cli" and campaign["sessions"][node["executor"]]["provider"] == "claude" and
+    lane_id = claim_lane(node, info)
+    require(info["mode"] == "delegated_cli" and campaign["sessions"][lane_id]["provider"] == "claude" and
             not {"prepared", "dispatch_intent", "delivery", "uncertainty", "candidate"} & set(info),
             "preparation exit requires an undispatched original Claude task")
     require(set(proof) == {"version", "operations", "transport", "scaffold", "prepared", "history", "native_end", "observed_at"}
@@ -202,7 +204,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     pack = checked["pack"]
     require(pack["completion_nonce"] == config["completion_nonce"], "final pack transport nonce changed")
     scaffold = json_ref(proof["scaffold"])
-    receiver = campaign["sessions"][node["executor"]]
+    receiver = campaign["sessions"][lane_id]
     require(scaffold.get("executor") == receiver["surface_uuid"] and
             campaign_uuid(campaign, scaffold.get("executor_uuid")) == receiver["surface_uuid"] and
             scaffold.get("executors") == pack["executors"], "original scaffold executor identity changed")
@@ -224,7 +226,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         for part in ("intent", "result"):
             require(refs[part]["path"] == str(stage_root / (part + ".json")), "original stage path changed")
         intent, result = json_ref(refs["intent"]), json_ref(refs["result"])
-        lane_argument = {"executor_id": node["executor"]} if campaign_version(campaign) == 3 else {}
+        lane_argument = {"executor_id": lane_id} if campaign_version(campaign) == 3 else {}
         arguments = ({"argv": runtime.harness_argv(name, info["task_id"], root / "preflight", **lane_argument)}
                      if name in HARNESS_STAGES else {"transport": proof["transport"]}
                      if name == "fill-pack" else {"pack": prepared["pack"]})
@@ -266,13 +268,13 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
     require(set(ends) == set(campaign["sessions"]), "settlement native lanes missing")
     for lane, session in campaign["sessions"].items():
         reader = NativeReader(session, fixtures=fixtures)
-        start = reader.verify_pin(info["native_start"] if lane == node["executor"] else header["native_start"][lane])
+        start = reader.verify_pin(info["native_start"] if lane == lane_id else header["native_start"][lane])
         end = reader.verify_pin(ends[lane])
         require(start <= reader.verify_pin(proof["native_end"][lane]) <= end, "preparation native fences changed")
         actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
                                         effect_policy=campaign_effect_policy(campaign))
         require(actions["attempted_task_calls"] == 0, "business action contradicts preparation exit")
-        if lane in ("codex", node["executor"]):
+        if lane in ("codex", lane_id):
             reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],
                                          receiver=receiver, sender=campaign["sessions"]["codex"],
                                          refusal_context=dict(controller=campaign["controller"], python=campaign["python"]),

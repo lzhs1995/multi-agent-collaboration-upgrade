@@ -33,6 +33,10 @@ from orchestration_common import scopes_conflict
 
 PLAN_VERSION = 1
 ALLOWED_EXECUTORS = {"claude", "codex"}
+# Opt-in for a v2 plan whose nodes may freeze a complete null executor triple.
+# A separate pre-claim step binds such a node; nothing else changes.
+UNBOUND_EXECUTOR_POLICY = "bind_before_claim"
+NULL_TRIPLE = ("executor", "execution_kind", "transport")
 ISOLATED_EXECUTORS = {"codex": "codex", "claude_a": "claude", "claude_b": "claude"}
 ALLOWED_GENERATORS = {"claude_code_cli", "codex_cli", "supervisor"}
 ALLOWED_DECISION_PROVIDERS = {"rules", "offline_mock"}
@@ -164,6 +168,15 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if decision_provider not in ALLOWED_DECISION_PROVIDERS:
         raise PlanError(f"decision_provider must be one of {sorted(ALLOWED_DECISION_PROVIDERS)}")
 
+    # The key must be present to opt in; an explicit null is a refusal, not a
+    # silent "no", so an authoring slip can never look like the opted-in shape.
+    if "unbound_executor_policy" in normalized:
+        if normalized["version"] != 2:
+            raise PlanError("unbound_executor_policy requires plan version 2")
+        if normalized["unbound_executor_policy"] != UNBOUND_EXECUTOR_POLICY:
+            raise PlanError(f"unbound_executor_policy must be exactly {UNBOUND_EXECUTOR_POLICY}")
+    unbound_policy = normalized.get("unbound_executor_policy") == UNBOUND_EXECUTOR_POLICY
+
     nodes = _require_list(normalized.get("nodes"), "nodes")
     if not nodes:
         raise PlanError("nodes must contain at least one node")
@@ -177,13 +190,23 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
             raise PlanError(f"nodes[{index}].id has an invalid shape")
         if node_id in by_id:
             raise PlanError(f"duplicate node id: {node_id}")
-        executor = _require_text(node.get("executor"), f"nodes[{index}].executor")
-        if executor not in providers:
-            raise PlanError(f"{node_id}.executor must be an explicitly bound CLI session")
-        transport = _require_text(node.get("transport"), f"{node_id}.transport")
-        expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[providers[executor]]
-        if transport != expected_transport:
-            raise PlanError(f"{node_id}.transport must be {expected_transport}")
+        # Only an opted-in plan may declare a null member of the triple, and
+        # then all three must be explicitly null: an explicit null is auditable
+        # in the frozen bytes while an omitted key is indistinguishable from an
+        # authoring slip. The provider/transport derivation is skipped because
+        # the bound lane, and therefore both derived values, is unknown here.
+        declared_null = [key for key in NULL_TRIPLE if key in node and node[key] is None]
+        if unbound_policy and declared_null:
+            if sorted(declared_null) != sorted(NULL_TRIPLE):
+                raise PlanError(f"{node_id} must freeze a complete null executor triple")
+        else:
+            executor = _require_text(node.get("executor"), f"nodes[{index}].executor")
+            if executor not in providers:
+                raise PlanError(f"{node_id}.executor must be an explicitly bound CLI session")
+            transport = _require_text(node.get("transport"), f"{node_id}.transport")
+            expected_transport = {"claude": "claude_code_cli", "codex": "codex_cli"}[providers[executor]]
+            if transport != expected_transport:
+                raise PlanError(f"{node_id}.transport must be {expected_transport}")
         if node.get("session_policy") != "reuse_existing":
             raise PlanError(f"{node_id}.session_policy must be reuse_existing")
         surface = node.get("surface_ref")
@@ -264,6 +287,11 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
 def build_schedule(plan: dict[str, Any], max_parallel_per_executor: int = 1) -> list[dict[str, Any]]:
     """Build bounded ready waves while preserving one writer per scope."""
     normalized = validate_plan(plan)
+    # A deliberately unbound node has no lane to count against, so refuse the
+    # whole graph with a typed error instead of raising KeyError(None) below.
+    unbound = [node["id"] for node in normalized["nodes"] if node["executor"] is None]
+    if unbound:
+        raise PlanError(f"cannot schedule deliberately unbound node(s): {', '.join(unbound)}")
     if type(max_parallel_per_executor) is not int or max_parallel_per_executor != 1:
         raise PlanError("max_parallel_per_executor must be 1 for each existing CLI session")
     nodes = {node["id"]: node for node in normalized["nodes"]}

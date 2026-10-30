@@ -6,6 +6,7 @@ never runs a checker, settles a callback, constructs transport or writes state.
 """
 from datetime import datetime, timezone
 
+from orchestration_binding import claim_lane
 from orchestration_campaign import campaign_effect_policy, control_script, native_control
 from orchestration_common import file_ref, json_ref, parse_time
 from orchestration_coordinator import State
@@ -76,6 +77,9 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
     preparation = dispatched = protocol = actions = None
     native_ends = snapshots
     if info:
+        # The claimed lane: the frozen executor, or the lane the claim's own
+        # binding pin names for a node frozen unbound.
+        lane = claim_lane(node, info)
         # Once acceptance closes a node, later tasks in the same original
         # session are outside its measured native range.
         if "accepted_evidence" in info:
@@ -92,15 +96,15 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
             points["acceptance_native"] = boundary(at.isoformat(), "native_control", ref)
         elif "candidate" in info:
             native_ends = json_ref(info["candidate"])["candidate_native_end"]
-        for lane, pin in native_ends.items():
-            require(NativeReader(campaign["sessions"][lane], fixtures=co.fixtures).verify_pin(pin)
-                    <= snapshots[lane]["offset"], "observation predates recorded native boundary")
+        for other, pin in native_ends.items():
+            require(NativeReader(campaign["sessions"][other], fixtures=co.fixtures).verify_pin(pin)
+                    <= snapshots[other]["offset"], "observation predates recorded native boundary")
 
         if "delivery" in info:
             evidence = original_callback_evidence(campaign, co.header, node, info)
             if evidence:
                 protocol = verify_protocol(campaign, co.header, node, info, evidence,
-                    native_ends[node["executor"]]["offset"], native_ends["codex"]["offset"], fixtures=co.fixtures)
+                    native_ends[lane]["offset"], native_ends["codex"]["offset"], fixtures=co.fixtures)
                 dispatched = protocol["delivery"]
                 returned, bundle = protocol["callback_delivery"], evidence["protocol"]["callback"]
                 points["callback_received"] = boundary(returned["received_at"], "native_user_message", returned["native_proof"])
@@ -122,7 +126,7 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
             for name in ("handshake_received", "acknowledgement", "task_received"):
                 if points[name]:
                     ref = points[name]["evidence"][0]
-                    require(ref["offset"] + ref["length"] <= native_ends[node["executor"]]["offset"],
+                    require(ref["offset"] + ref["length"] <= native_ends[lane]["offset"],
                             "native message after observation fence")
         if "dispatch-intent.json" in files:
             # Bound_record already checked identity and pins. A file published
@@ -131,9 +135,9 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
             value = json_ref(ref)
             points["dispatch_intent"] = boundary(value["created_at"], "recorded_dispatch_intent", ref)
         if info["mode"] == "local_cli" or dispatched:
-            reader = NativeReader(campaign["sessions"][node["executor"]], fixtures=co.fixtures)
+            reader = NativeReader(campaign["sessions"][lane], fixtures=co.fixtures)
             actions = reader.action_summary(reader.verify_pin(info["native_start"]),
-                reader.verify_pin(native_ends[node["executor"]]), task_id=info["task_id"],
+                reader.verify_pin(native_ends[lane]), task_id=info["task_id"],
                 output_root=info["output_root"], allow_empty=True, allow_incomplete=True, include_evidence=True,
                 effect_policy=campaign_effect_policy(campaign))
             completed = [a for a in actions["actions"] if a["status"] != "PENDING"]

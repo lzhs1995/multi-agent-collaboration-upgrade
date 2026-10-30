@@ -112,12 +112,41 @@ def anchored_ref(path, expected_sha256):
     return ref
 
 
-def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, marker=None):
+# Argv order is part of the proof: find_control compares payload["input"] to
+# the generated script byte for byte, so the decision fields are appended in
+# this exact fixed order and in no other. Adding a field here changes the
+# pinned call shape and is a deliberate, visible change.
+DECISION_ARGUMENTS = ("work_kind", "actual_route", "action", "reason", "advice_sha256")
+# The off arm cites no advice. The absence is stated explicitly in the pinned
+# call rather than by omitting an argument, so a supervisor who forgot the pin
+# cannot silently produce an off-arm decision on the on arm.
+NO_ADVICE = "null"
+
+
+def decision_argument_fields(decision):
+    """The five supervisor-chosen fields of a decision, as pinned call text."""
+    fields = {name: decision.get(name) for name in DECISION_ARGUMENTS}
+    if fields["advice_sha256"] is None:
+        fields["advice_sha256"] = NO_ADVICE
+    return fields
+
+
+def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, marker=None,
+                   decision=None, decision_fields=None):
     """Exact native supervisor tool request used to bind start/accept timestamps.
 
     This is returned for the supervisor to invoke, never appended to a journal by
     Python. The verifier requires the original CLI's complete custom-tool record.
     Include its terminal LF so that the returned script is the exact native input.
+
+    ``decision`` is the path of the published decision a ``bind-unbound`` call
+    binds. It is appended after ``--marker``, so the order is ``--node``,
+    ``--marker``, ``--decision``; any other order matches no original call.
+
+    ``decision_fields`` carries the supervisor's own choices for the fixed
+    decision publisher. Its keys must be exactly ``DECISION_ARGUMENTS``, and
+    they are appended in that frozen order so the reconstructed script and the
+    original native call can only ever agree byte for byte.
     """
     argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
             str(Path(campaign["adapter"]["path"]) / "scripts" / "orchestration_run.py"),
@@ -127,6 +156,16 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
         argv.extend(["--node", node_id])
     if marker is not None:
         argv.extend(["--marker", marker])
+    if decision is not None:
+        require(isinstance(decision, str) and decision, "a bind call names its published decision path")
+        argv.extend(["--decision", decision])
+    if decision_fields is not None:
+        require(set(decision_fields) == set(DECISION_ARGUMENTS),
+                "the decision publisher call needs exactly its frozen field set")
+        for name in DECISION_ARGUMENTS:
+            value = decision_fields[name]
+            require(isinstance(value, str) and value, "every published decision field must be original text")
+            argv.extend(["--" + name.replace("_", "-"), value])
     args = dict(cmd=shlex.join(argv), workdir=campaign["root"], login=False, max_output_tokens=1600)
     return "text(await tools.exec_command(" + json.dumps(args, ensure_ascii=False, separators=(",", ":")) + "));\n"
 
@@ -239,8 +278,15 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
         require(isinstance(actual, str) and actual and actual == session.get("model"), "frozen model differs from original CLI evidence")
     for node in plan["nodes"]:
         lane = node["executor"]
-        require(node.get("execution_kind") == ("local_cli" if lane == "codex" else "delegated_cli"),
-                "unsupported execution ownership")
+        if lane is None:
+            # A deliberately unbound node derives both values from the lane the
+            # separate pre-claim bind step chooses, so freezing either here
+            # would pre-commit the node to a provider before it is bound.
+            require(node.get("execution_kind") is None and node.get("transport") is None,
+                    "unbound node must not freeze an execution kind")
+        else:
+            require(node.get("execution_kind") == ("local_cli" if lane == "codex" else "delegated_cli"),
+                    "unsupported execution ownership")
         node_output(root / "runs" / "scope-check", node)
         deliverables = node.get("deliverables")
         require(isinstance(deliverables, list) and deliverables and len(deliverables) == len(set(deliverables)),

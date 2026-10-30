@@ -9,6 +9,10 @@
     "objective": {"type": "string", "minLength": 1},
     "evidence_class": {"enum": ["offline_schedule_estimate", "measured_cli_replay"]},
     "decision_provider": {"enum": ["rules", "offline_mock"]},
+    "unbound_executor_policy": {
+      "const": "bind_before_claim",
+      "description": "Plan v2 only. Present and exactly this value, a node may freeze the complete null triple executor/execution_kind/transport = null and is bound by the separate pre-claim bind-unbound step. This document describes plan v1, so the field cannot appear in a plan validated against it."
+    },
     "source": {
       "type": "object",
       "required": ["generated_by", "revision"],
@@ -40,8 +44,14 @@
         "properties": {
           "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{1,63}$"},
           "title": {"type": "string", "minLength": 1},
-          "executor": {"enum": ["claude", "codex"]},
-          "transport": {"enum": ["claude_code_cli", "codex_cli"]},
+          "executor": {
+            "enum": ["claude", "codex"],
+            "description": "This enum describes plan v1. A plan v2 that carries unbound_executor_policy also admits null here, together with execution_kind and transport null, for a deliberately unbound node."
+          },
+          "transport": {
+            "enum": ["claude_code_cli", "codex_cli"],
+            "description": "Null only as part of plan v2's complete null executor triple; see unbound_executor_policy."
+          },
           "session_policy": {"const": "reuse_existing"},
           "surface_ref": {"type": "string", "pattern": "^surface:[0-9]+$"},
           "depends_on": {"type": "array", "items": {"type": "string"}},

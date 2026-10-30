@@ -19,6 +19,7 @@ from pathlib import Path
 from orchestration_common import (ContractError, checked_path, contract_errors, digest, exclusive_lock, file_ref, json_ref,
                                   object_sha, parse_time, read_json, read_ref, utc_now, verify_tree, within,
                                   write_bytes_once, write_json)
+from orchestration_binding import bound_lane, claim_lane
 from orchestration_coordinator import State
 from orchestration_contracts import campaign_uuid, campaign_version, controller_uuid, state_root
 from orchestration_disarm import (Recovery, freeze_original, invoke_disarm, invoke_recovery, observe_original,
@@ -244,7 +245,13 @@ class Transport:
         self.node = coordinator.nodes[node_id]
         require(coordinator.fixtures or runtime is None, "runtime overrides are offline-test-only")
         self.campaign = coordinator.campaign
-        self.receiver = self.campaign["sessions"][self.node["executor"]]
+        # The lane is resolved before any claim data is loaded: the frozen
+        # executor, or for a node frozen unbound the lane its binding names.
+        # current() then requires the claim's own pin to name the same lane,
+        # so a binding edited after the claim refuses instead of re-routing.
+        self.lane = bound_lane(coordinator, node_id)
+        require(self.lane is not None, "transport serves only a bound original lane")
+        self.receiver = self.campaign["sessions"][self.lane]
         require(self.receiver["provider"] == "claude", "transport only serves an original Claude executor")
         self.root = node_directory(self.campaign, coordinator.header, self.node)
         self.runtime = runtime if runtime is not None else PinnedRuntime(self.campaign)
@@ -252,6 +259,8 @@ class Transport:
     def current(self):
         states, data = self.co.state()
         require(data[self.key], "claim the original node before transport")
+        require(claim_lane(self.node, data[self.key]) == self.lane,
+                "transport lane differs from the claim's own executor binding")
         return states[self.key], data[self.key]
 
     def journal(self, info):
@@ -263,7 +272,7 @@ class Transport:
     def _harness_argv(self, phase, task_id, artifact_root):
         if campaign_version(self.campaign) == 2:
             return self.runtime.harness_argv(phase, task_id, artifact_root)
-        return self.runtime.harness_argv(phase, task_id, artifact_root, executor_id=self.node["executor"])
+        return self.runtime.harness_argv(phase, task_id, artifact_root, executor_id=self.lane)
 
     def _preparation_proof(self, info, *, existing_only=False):
         preflight = self.root / "preflight"

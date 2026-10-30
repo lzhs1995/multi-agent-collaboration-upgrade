@@ -56,7 +56,13 @@ The rules provider first requires authorization, verified identity, valid scope,
 and verified evidence. Dangerous operations additionally require their specific
 authorization. A route can use only the assigned, available original CLI session.
 The standalone rules provider can escalate an unavailable-session context;
-an advisory cannot substitute another executor. The current coordinator derives
+an advisory cannot substitute another executor. A node a frozen plan declared
+*deliberately unbound* escalates with its own distinct reason, "the frozen node
+is deliberately unbound; bind it before claiming", so it is never confused with
+an assigned session that happens to be unavailable. That branch reads one
+explicit context fact (`executor_binding == "UNBOUND_PENDING_BIND"`), never a
+missing or `None` executor: a context-assembly bug must not become the benign
+unbound path. An `executor_binding` naming no known provider is denied. The current coordinator derives
 `available_executors` from authenticated identity lanes and requires the complete
 original pair. Missing identity therefore fails a hard gate, before an
 unavailable-session escalation can be used. A running, authenticated CLI does
@@ -71,6 +77,40 @@ SDK, Jev/Noul service, external model API, or provider credential is used here.
 A future adapter would need an explicit contract for any missing confidence
 field; it must not invent a score for a provider that supplies none.
 
+`scripts/jev_advice.py` is the offline truth table such an adapter would feed.
+It covers only supervisor triage before a task pack is frozen and bound; a bound
+task gets `NOT_CALLED`. For routing, the work-kind Choice has a companion Noul:
+below 0.3 rules decide, from 0.3 to 0.7 the supervisor decides, and above 0.7
+the advice lists verified lanes with an idle write domain (a non-author Claude
+for review), or `NO_IDLE_LANE`. A failed or malformed answer is `JEV_ERROR` or
+`NOT_CONFIGURED`, never a "no". Inbox advice only moves a message forward above
+0.7; every body is still read in full. Confidence is not a gate. The module
+itself still makes no request, and no campaign registers an advisory provider:
+`claim` continues to accept only the frozen `rules` provider.
+
+Two offline consumers now read that truth table. `orchestration_binding.eligible_candidates`
+reaches `jev_advice.route_advice` through its public API to recompute the
+admissible lanes in code at binding time, so the bind-time candidates and the
+truth table cannot drift apart. `scripts/jev_advice_worker.py` is a separate
+module whose only transport is an injected callable: with none, and with no
+budget, it can answer only `NOT_CONFIGURED` with `fallback="rules"` and zero
+model requests. That is the only answer reachable here, because no code path
+reads a budget, a limit or a key from a file or an environment variable, and no
+HTTP or SDK client ships. A failed or malformed answer stays an error, never a
+"no". `jev_advice.py` is unchanged: its bytes still match the sha256 pinned in
+the frozen R62 design.
+
+Because `orchestration_binding` imports `jev_advice` at module level, E3 adds
+three modules to every new frozen maintenance and campaign closure, not the two
+the design's invariant 6 names: `orchestration_binding`, `upgrade_advice_chain`
+and `jev_advice` (pinned by `BindClosureTests`). `verify_tree(adapter)` covers
+all three files' bytes. `upgrade_advice_chain` and `jev_advice` are outside
+`bound_source`'s `orchestration_*` name filter, which design 4.2 keeps
+unchanged, so their loaded-module origin is not re-checked. Every claim and
+replay re-derives an unbound node's binding, so a maintenance replay of such a
+claim does run `upgrade_advice_chain`. The design file lives outside this
+repository and still names two members; its owner updates it.
+
 The frozen runner's `claim --run <run> --node <node>` is the action that requests
 a new rules decision for a `PENDING` node. An already claimed node returns its
 existing record without requesting another decision. An allowed claim persists its gates and decision before
@@ -80,6 +120,141 @@ must preserve that output separately. Exit 2 also covers refusals before the
 decision, such as an unready node or invalid ownership; the stderr reason must
 distinguish these from deny/escalate outcomes. Later verification recomputes accepted
 decisions from the frozen rules and checks for a match.
+
+### Binding a deliberately unbound node before its claim
+
+A plan on version 2 may opt in with `unbound_executor_policy: "bind_before_claim"`,
+and only then may a node freeze the complete null triple (`executor`,
+`execution_kind` and `transport` all explicitly `null`). A mixed triple, the
+field on a v1 plan and any other policy string are all `PlanError`. Every
+existing plan keeps today's refusal and today's bytes.
+
+Such a node is bound by a separate pre-claim action, never by `advance`:
+
+| Command | Use |
+| --- | --- |
+| `publish-decision --run <run> --node <node> --work-kind .. --actual-route .. --action .. --reason .. --advice-sha256 ..` | The fixed, closure-pinned publisher exclusively creates one decision inside the run tree and prints one complete envelope. |
+| `bind-unbound --run <run> --node <node> --decision <path>` | Recompute every fact in code, then exclusively create `runs/<run>/bindings/<node>.json`. |
+
+The decision used to be a file the supervisor wrote outside the run tree. It is
+published instead by one fixed entrypoint whose sha256 is pinned in the frozen
+adapter, so a native call and its result can be joined to that creation. The
+printed envelope pins this run, node and supervisor session, the decision file's
+path, bytes and sha256, the publisher's own pin and the campaign and advice
+input pins. `decided_at` is deliberately left null in the file: the honest
+decision time is the native timestamp of the publisher's own success record,
+which only the join supplies, and a self-written stamp must not stand in for it.
+
+`bind-unbound` accepts only the decision that publisher created for that node,
+and recomputes in code what a JEV answer may never assert: permission through
+the ordinary campaign gate, identity (`lane_verified` over the live identity
+lanes), non-author and capacity (`lane_is_author` and `lane_idle_write_domain`
+inside `eligible_candidates`), and the input version (`advice_inputs_unchanged`,
+comparing the input refs recorded inside the sha-pinned advice body against the
+run's frozen inputs). The actual route must be one of the candidates recomputed
+at that moment; a route copied from the advice is refused. The step consumes the
+same Stop, preserved-failure and run-budget gates as `claim`, and every refusal
+precedes the single exclusive write, so a refused bind leaves no file, lease or
+event behind.
+
+A refused bind does leave its own native call and that call's failed result in
+the transcript, and that is what makes a retry possible. The bind joins the one
+invocation that has not returned yet, so a transiently refused bind - the bound
+lane taken at that moment, a busy lock - is retried by invoking `bind-unbound`
+again. Two invocations that are both still running are ambiguous and refuse.
+The published decision is never republished, so without this a single transient
+refusal would leave the node permanently unbindable.
+
+The join requires one publisher call and exactly one matching result inside the
+same original session fence: correctly paired, terminal rc0, complete output,
+the call input equal byte for byte to the reconstructed frozen script, and an
+envelope that pins the decision file's current bytes. A missing, duplicated,
+failed, truncated or non-terminal pair refuses, as does a publish the
+transcript places or stamps before the read it must follow. A transiently
+refused publish leaves its own identical call and failed result, and the
+decision is never republished, so identical calls are accepted when every one
+already has exactly one result and exactly one result is the terminal rc0
+success; an identical call still without a result, or two successes, refuse.
+The window ends at the bind control call, so nothing the transcript gains after
+the bind changes the verdict. On the on arm
+the bind additionally requires one complete original read of exactly the advice
+the decision cites; a range read, a truncated output or a digest-only output is
+not a full read, and two valid pairs are ambiguous rather than consumed.
+
+What that proves is bounded. `decision_publish_natively_joined` is true only
+when the join above passes. `decision_write_natively_recognized` stays false and
+`decision_write_proof` stays `NOT_RECOGNIZED_AT_THIS_HEAD`: a joined native
+publish call does not audit the operating-system write, and the read proof is
+the exact envelope plus the body field's bytes and sha256, not the sha256 of a
+whole tool output. The "actual context" fact R62 names has no producer anywhere
+in this repository and is recorded as `NOT_IMPLEMENTED_NO_PRODUCER`, not
+invented. A fallback or stopped advisor (`NOT_CONFIGURED`, `JEV_ERROR`,
+`NOT_CALLED`, `STOPPED_AUTH`) is never counted as advisory consumption, and an
+on-arm node without a complete chain is `ADVICE_NOT_CONSUMED`.
+
+Only a natively joined decision counts as advisory consumption. `CONSUMED` and
+`counted_as_advisory_consumption` require one complete original read, an
+advisor that is not a fallback, the publisher's own joined call and result, and
+the binding's own natively verified bind control call. A decision outside the
+publisher's exclusive path is the older exclusive-file shape, which ROOT R94
+section 2 keeps as a diagnostic: it is reported as
+`DIAGNOSTIC_NOT_NATIVELY_JOINED` with `decided_at: null`, its self-written stamp
+under `diagnostic_decided_at`, and is never counted. `order_basis` names the
+record behind each stamp of the read < decided < bound < claim order: the
+native read result, the native publisher result and the native bind call. A
+claim has no one native control record to join (it may come from a direct
+`claim` or from an `advance` call that takes up to 32 actions), so the claim leg
+is ordered by evidence: on the Codex lane, which shares the supervisor's
+transcript, the bind result must end before the claim's own native start
+offset, and on a Claude lane the claim pins the sha256 of the binding that
+result printed. The claim's `started_at` is the
+coordinator's wall clock and is labelled so.
+
+The binding file is an ordinary file in the run tree, so a claim does not take
+it on trust. `claim` checks it before any write and every `state()` replay
+checks it again (`Coordinator.verify_claimed_binding`): the decision must be
+the publisher's joined output, the binding must pin the original bind control
+call with `bound_at` equal to that record's own timestamp, and that call's
+terminal rc0 result must print this binding's path, bytes and sha256, which
+only the call that exclusively created it can have printed. A binding written
+by anything else, or one that cites a refused attempt, is refused at the claim
+and on replay; a claim attempted before the bind result exists is refused and
+succeeds once it does. The decision's `action` is one of R62's
+`accepted`, `rejected` or `supervisor_review`, and a decision citing no advice
+(the off arm) can only be `supervisor_review`. Publishing and binding take the
+node's `runner.lock`, which creates its directory before any claim, so for a
+node frozen unbound `next-action` counts only claim artefacts (claim intent,
+gates, work request, output) as an incomplete claim.
+
+On the off arm, any call in the window whose arguments name an advice body is
+an arm violation: this node's advice directory, any run's or node's
+`nodes/<id>/advice` path in absolute or relative form, or a concrete advice
+marker. Tool results are not scanned (see `advice_read_attempts`). The off-arm
+zero-request check cannot fail in production yet: nothing outside the test
+fixture persists `advice-worker-journal.json`, and an absent journal counts as
+zero requests. That matches R62's rule that the off-arm worker does not start,
+but it cannot tell "not started" from "ran and was not persisted". Making the
+worker's publish path exclusively write its journal is left to that producer,
+and until then this check is not evidence that the worker made no request.
+
+The claim then pins that binding by path, bytes and sha256 under one new key,
+`executor_binding`, present only for a node frozen unbound; a bound node that
+carried it fails `"claim fields changed"`. Every later consumer resolves the
+lane through that pin, so a binding edited after the claim fails replay instead
+of silently re-routing an earlier claim. Unbound nodes join no lane FIFO: they
+are listed in the run header as `unbound_nodes` under the opt-in, and `codeg`
+refuses an opted-in plan that still carries one with a typed error instead of
+returning the silent empty selection it used to. Two unbound nodes do not
+collide with each other under `omo`. `next-action` recommends `bind-original-unbound-node` and carries
+an instruction naming the required argv order, with no executable script, and
+`advance` never performs the bind itself.
+
+Two items the E3 design listed were deliberately **not** landed. C1, the
+`jev_advice.idle_lanes` extraction, was cancelled so that `jev_advice.py` stays
+byte-identical to its pinned sha256; `eligible_candidates` calls the existing
+public `route_advice` instead. C11, the `METRICS_V3_ADVICE` measurement
+definition, is not here either: it is the first candidate of a later increment,
+no new metrics version exists, and `derive_run` attaches no advice chain.
 
 ## How a task runs
 

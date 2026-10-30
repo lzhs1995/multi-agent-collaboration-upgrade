@@ -1,6 +1,7 @@
 import unittest
 
-from decision_provider import Decision, OfflineMockProvider, Outcome, RulesProvider, decide
+from decision_provider import (UNBOUND_PENDING_BIND, Decision, OfflineMockProvider, Outcome, RulesProvider,
+                               decide, deliberately_unbound)
 from orchestration_common import ContractError
 
 
@@ -14,7 +15,42 @@ class DecisionProviderTests(unittest.TestCase):
         self.assertEqual(decide(self.context()).route, "claude")
         context = self.context()
         context["available_executors"] = ["codex"]
-        self.assertEqual(decide(context).outcome, Outcome.ESCALATE)
+        unavailable = decide(context)
+        self.assertEqual(unavailable.outcome, Outcome.ESCALATE)
+        # Both branches escalate, so the reason is the only distinguishing
+        # assertion: an outcome-only check keeps a removed unbound branch green.
+        self.assertEqual(unavailable.reason, "the assigned existing session is unavailable")
+
+        unbound = self.context()
+        unbound.update(executor=None, executor_binding=UNBOUND_PENDING_BIND)
+        verdict = decide(unbound)
+        self.assertEqual(verdict.outcome, Outcome.ESCALATE)
+        self.assertEqual(verdict.reason, "the frozen node is deliberately unbound; bind it before claiming")
+        self.assertIsNone(verdict.route)
+
+        missing = self.context()
+        del missing["executor"]
+        absent = decide(missing)
+        self.assertEqual(absent.outcome, Outcome.ESCALATE)
+        self.assertEqual(absent.reason, "the assigned existing session is unavailable")
+
+        bad = self.context()
+        bad.update(executor=None, executor_binding="not_a_lane")
+        wrong = decide(bad)
+        self.assertEqual(wrong.outcome, Outcome.DENY)
+        self.assertEqual(wrong.reason, "unsupported executor binding fact")
+
+    def test_a_bound_binding_fact_routes_to_that_lane(self):
+        verdict = decide(self.context(executor_binding="claude"))
+        self.assertEqual(verdict.outcome, Outcome.ALLOW)
+        self.assertEqual(verdict.route, "claude")
+
+    def test_deliberately_unbound_reads_only_the_explicit_fact(self):
+        self.assertTrue(deliberately_unbound({"executor_binding": UNBOUND_PENDING_BIND}))
+        for context in ({}, {"executor": None}, {"executor_binding": None},
+                        {"executor_binding": "claude"}, {"executor_binding": "unbound_pending_bind"}):
+            with self.subTest(context=context):
+                self.assertFalse(deliberately_unbound(context))
 
     def test_advisory_cannot_override_any_hard_gate(self):
         mock = OfflineMockProvider({"route": Decision(Outcome.ALLOW, "mock", 1)})

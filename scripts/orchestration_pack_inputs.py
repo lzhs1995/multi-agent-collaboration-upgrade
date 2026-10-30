@@ -6,6 +6,7 @@ Historical adoption is evidence of startup only; live dispatch gates still apply
 from pathlib import Path
 import re
 
+from orchestration_binding import claim_lane
 from orchestration_common import contract_errors, file_ref, json_ref, parse_time, require
 from orchestration_contracts import campaign_uuid
 
@@ -16,23 +17,25 @@ def input_paths(campaign, header, node):
             "pane_inventory": str(root / "surface-inventory.json")}
 
 
-def adoption_reference(campaign, node):
+def adoption_reference(campaign, node, info=None):
+    """The lane is the claimed one: a bound node needs no claim data, an unbound
+    node refuses without its claim rather than adopting any other lane."""
     proof = campaign.get("client_isolation")
-    return None if proof is None else dict(runtime=campaign["runtime"], proof=proof, executor_id=node["executor"])
+    return None if proof is None else dict(runtime=campaign["runtime"], proof=proof, executor_id=claim_lane(node, info))
 
 
-def pin_inputs(campaign, header, node, pack):
+def pin_inputs(campaign, header, node, pack, info=None):
     paths = input_paths(campaign, header, node)
     require(all(pack.get(k) == v for k, v in paths.items()), "preparation input paths changed")
     return dict(schema="orchestration-preparation-inputs-v1",
                 **{key: file_ref(path) for key, path in paths.items()},
-                client_adoption=adoption_reference(campaign, node))
+                client_adoption=adoption_reference(campaign, node, info))
 
 
 @contract_errors("preparation inputs")
 def verify_inputs(campaign, header, node, info, pack, gate, *, fixtures=False):
     from orchestration_evidence import prepared_supervisor
-    supervisor = prepared_supervisor(campaign, node, gate)
+    supervisor = prepared_supervisor(campaign, node, gate, info)
     pins = pack.get("preparation_inputs")
     require(isinstance(pins, dict) and set(pins) == {"schema", "role_map", "pane_inventory", "client_adoption"}
             and pins["schema"] == "orchestration-preparation-inputs-v1", "preparation input pins required")
@@ -50,7 +53,7 @@ def verify_inputs(campaign, header, node, info, pack, gate, *, fixtures=False):
         require(parse_time(info["started_at"]) <= stamp, "preparation input predates task claim")
         if pack.get("finalized_at"):
             require(stamp <= parse_time(pack["finalized_at"]), "preparation input postdates finalization")
-    sender, receiver = campaign["sessions"]["codex"], campaign["sessions"][node["executor"]]
+    sender, receiver = campaign["sessions"]["codex"], campaign["sessions"][claim_lane(node, info)]
     executors = gate.get("executors")
     require(isinstance(executors, list) and len(executors) == 1, "preparation gate requires one assigned executor")
     item = executors[0]
@@ -90,7 +93,7 @@ def verify_inputs(campaign, header, node, info, pack, gate, *, fixtures=False):
         # Inventory provider is a title heuristic, possibly unknown or stale.
         # prepared_supervisor authenticates the actual native provider/session.
     require(gate["supervisor_pane_ref"] != gate["executor_pane_ref"], "inventory participants share a pane")
-    expected = adoption_reference(campaign, node)
+    expected = adoption_reference(campaign, node, info)
     require(pins["client_adoption"] == expected, "task adoption differs from campaign/lane")
     if fixtures:
         require(expected is None and json_ref(campaign["runtime"])["execution_mode"] == "offline",

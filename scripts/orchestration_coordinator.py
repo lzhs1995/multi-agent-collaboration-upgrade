@@ -12,10 +12,15 @@ from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 
-from decision_provider import Decision, Outcome, decide
+from decision_provider import UNBOUND_PENDING_BIND, Decision, Outcome, decide
 from orchestration_common import (ContractError, boot_id, checked_path, contract_errors, count, exclusive_lock, file_ref,
                                   json_ref, object_sha, parse_time, read_json, read_ref, scopes_conflict,
                                   utc_now, verify_tree, write_json)
+import orchestration_binding
+from orchestration_binding import (bind_facts, binding_path, binding_ref, bound_lane, claim_lane, claimed_lanes,
+                                   eligible_candidates, is_unbound, lane_facts, read_binding, resolved_mode,
+                                   resolved_transport, unbound_nodes, validate_decision,
+                                   write_binding)
 from orchestration_campaign import (control_script, find_control, native_control, node_output, node_write_scope,
                                     require_live_identity, validate_campaign)
 from orchestration_contracts import campaign_version, evidence_class
@@ -23,6 +28,10 @@ from orchestration_native import NativeReader, native_verification, require
 from orchestration_planner import ID_RE, executor_providers, validate_plan
 
 STRATEGIES = ("serial", "omo", "codeg")
+# The advice publisher stays outside the adapter closure (design Q9), and
+# validate_adapter walks deferred imports too, so the published body's schema
+# is mirrored here instead of imported; a test pins it to the publisher's value.
+ADVICE_BODY_SCHEMA = "upgrade-advice-body-v1"
 
 
 class State(str, Enum):
@@ -66,16 +75,39 @@ def topological_nodes(plan):
     return ordered
 
 
-def select_ready(plan, states, strategy, scope_root, queues):
+def select_ready(plan, states, strategy, scope_root, queues, *, lanes=None):
+    """Select schedulable nodes; ``lanes`` resolves a deliberately unbound node.
+
+    ``lanes=None`` reproduces the frozen-plan comparison exactly. With a mapping
+    (always built from frozen claim records, never from live disk state) the
+    lane conflict compares *resolved* lanes: a claimed unbound node conflicts on
+    the lane its claim pinned, like any bound node, and two nodes with no lane
+    yet do not collide on ``None == None``. A node bound but not yet claimed
+    has no lane here; ``Coordinator.claim`` refuses it before any write when
+    its bound lane is already held.
+    """
     require(strategy in STRATEGIES or plan.get("version") == 2 and strategy == "mac_native",
             "unsupported strategy")
     nodes = topological_nodes(validate_plan(plan))
     accepted = {key for key, value in states.items() if value == State.ACCEPTED}
     busy = [n for n in nodes if states[n["id"]] in ACTIVE]
     pending = [n for n in nodes if states[n["id"]] == State.PENDING]
+    lane_of = (lambda node: node["executor"]) if lanes is None else (
+        lambda node: lanes.get(node["id"], node["executor"]))
+    # Without a mapping the comparison stays exactly today's, including two
+    # unresolved nodes colliding on None == None: a call site that forgets
+    # ``lanes`` must fail loudly in replay, not pass with new semantics.
+    unresolved_conflicts = lanes is None
     if strategy == "serial":
         pending = pending[:1] if not busy else []
     if strategy == "codeg":
+        # An unbound node joins no lane FIFO queue by design, so codeg could
+        # never schedule it. That was a silent empty selection; it is a typed
+        # refusal now. No validated v3 campaign can present this combination
+        # (every run's strategy is mac_native or omo), so this is reachable
+        # only through a direct module-level call.
+        require(not (orchestration_binding.unbound_plan(plan) and unbound_nodes(plan)),
+                "codeg cannot schedule a node that is not in a lane queue")
         # Persistent FIFO per original session, never a queue of terminal input.
         heads = set()
         for queue in queues.values():
@@ -90,7 +122,8 @@ def select_ready(plan, states, strategy, scope_root, queues):
         # A1 exposes all individually eligible choices to the native supervisor.
         # Its next actual claim rechecks the updated state and lease registry.
         occupied = busy if strategy == "mac_native" else busy + selected
-        if any(other["executor"] == node["executor"] or
+        lane = lane_of(node)
+        if any(((lane is not None or unresolved_conflicts) and lane_of(other) == lane) or
                scopes_conflict(other["write_scope"], node["write_scope"], scope_root) for other in occupied):
             continue
         selected.append(node)
@@ -208,9 +241,13 @@ class Coordinator:
         self.nodes = {n["id"]: n for n in self.plan["nodes"]}
         self.header = read_json(self.root / "run.json")
         live_v3 = campaign_version(self.campaign) == 3 and not fixtures
+        # The field set is exact, not a superset, so a new key fails here at
+        # construction. It grows only for a plan that opted in, which is why
+        # every existing run.json still verifies with today's bytes.
         require(set(self.header) == {"version", "campaign", "run", "queues", "started_at",
                                     "created_at", "started_monotonic_ns", "boot_id", "native_start", "start_native"}
-                                    | ({"run_permit", "launch_start"} if live_v3 else set()),
+                                    | ({"run_permit", "launch_start"} if live_v3 else set())
+                                    | ({"unbound_nodes"} if orchestration_binding.unbound_plan(self.plan) else set()),
                 "run header fields changed")
         require(type(self.header["version"]) is int and self.header["version"] == campaign_version(self.campaign) and
                 self.header["campaign"] == campaign_ref, "run belongs to another frozen campaign")
@@ -229,6 +266,11 @@ class Coordinator:
         queues = {lane: [n["id"] for n in topological_nodes(self.plan) if n["executor"] == lane]
                   for lane in self.campaign["sessions"]}
         require(self.header["queues"] == queues, "frozen FIFO queues changed")
+        # The queues keep excluding an unbound node (it is in no lane FIFO).
+        # The exclusion stops being silent: the header states which nodes it is.
+        if orchestration_binding.unbound_plan(self.plan):
+            require(self.header["unbound_nodes"] == unbound_nodes(self.plan),
+                    "frozen unbound nodes changed")
         count(self.header["started_monotonic_ns"], "run clock")
         require(isinstance(self.header["boot_id"], str) and self.header["boot_id"], "run boot identity missing")
         codex_reader = NativeReader(self.campaign["sessions"]["codex"], fixtures=fixtures)
@@ -323,10 +365,11 @@ class Coordinator:
             root.mkdir(parents=True, exist_ok=False)
             ordered = topological_nodes(plan)
             queues = {lane: [n["id"] for n in ordered if n["executor"] == lane] for lane in campaign["sessions"]}
+            unbound = dict(unbound_nodes=unbound_nodes(plan)) if orchestration_binding.unbound_plan(plan) else {}
             starts = {lane: NativeReader(session, fixtures=fixtures).snapshot() for lane, session in campaign["sessions"].items()}
             header = dict(version=campaign_version(campaign), campaign=campaign_ref, run=spec, queues=queues, started_at=started_at,
                           created_at=utc_now(), started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), native_start=starts,
-                          start_native=proof, **permit_fields)
+                          start_native=proof, **unbound, **permit_fields)
             write_json(root / "run.json", header, exclusive=True)
         return cls(root, campaign_ref, fixtures=fixtures)
 
@@ -371,10 +414,11 @@ class Coordinator:
                 require(not any(s in (State.BLOCKED, State.FAILED_PRESERVED) for s in states.values()),
                         "new claim after preserved run failure")
                 require(key in {n["id"] for n in select_ready(self.plan, states, self.spec["strategy"],
-                                                             self.root / "work", self.header["queues"])},
+                                                             self.root / "work", self.header["queues"],
+                                                             lanes=claimed_lanes(self, data))},
                         "persisted claim violates dependencies/session/scope/queue")
                 self._check_claim(key, event["data"], target, data)
-                self._check_decision(key, event["data"], states)
+                self._check_decision(key, event["data"], states, data)
                 require(parse_time(event["data"]["started_at"]) <= parse_time(event["at"]), "claim begins after event")
                 intent = json_ref(file_ref(self.root / "claims" / (key + ".json")))
                 require(intent == event["data"], "claim intent changed or was not persisted")
@@ -406,15 +450,72 @@ class Coordinator:
                 State.EVIDENCE_READY: {"candidate"}, State.ACCEPTED: {"accepted_evidence", "verification"},
                 State.BLOCKED: {"blocker"}, State.FAILED_PRESERVED: {"failure", "verification"}}.get(target, set())
 
+    def verify_claimed_binding(self, key, pin, info):
+        """Re-derive an unbound node's binding from frozen evidence.
+
+        A binding file is an ordinary file in a run tree both the supervisor and
+        the runner can write, so "the claim pins a binding" is not by itself a
+        proof that ``bind_unbound`` wrote it. This runs the same join the bind
+        ran, and then the one check the bind could not run yet: the bind control
+        call's own terminal rc0 result, which prints the created binding's
+        path, bytes and sha256. ``bind-unbound`` creates that record with an
+        exclusive create, so only the call that actually created *this* binding
+        can have printed *this* pin - a refused attempt never does.
+
+        That is what makes the route, the eligible lanes and the recomputed
+        lane facts inside the record evidence rather than self-report. It runs
+        on the claim itself and on every ``state()`` replay, so a binding that
+        appeared beside the run tree by any other means is refused at the claim
+        instead of being executed, replayed and accepted.
+        """
+        from upgrade_advice_chain import advice_chain
+        readers = {"codex": NativeReader(self.campaign["sessions"]["codex"], fixtures=self.fixtures)}
+        binding = json_ref(pin, "claimed executor binding")
+        chain = advice_chain(self, key, info, readers, registration=None, binding_ref=pin,
+                             not_after=parse_time(binding["bound_at"]).timestamp())
+        require(chain["decision_publish_natively_joined"] is True,
+                "the claimed binding's decision has no joined native publisher call and result")
+        require(chain["bind_natively_verified"] is True,
+                "the claimed binding does not pin its own native bind control call")
+        require(chain["bind_result_joined"] is True,
+                "the bind control call has no result that created this binding yet; claim after it returns")
+        require(chain["arm"] == "advisory-off" or chain["read"] is not None,
+                "the on arm is claimed only after one complete original read of its advice")
+        return chain
+
     def _check_claim(self, key, info, target, prior):
         from orchestration_evidence import dependency_bindings, task_identity, work_request
         node = self.nodes[key]
-        require(set(info) == {"task_id", "attempt_id", "output_root", "mode", "acceptance_nonce", "native_start", "started_at", "gates", "decision", "dependencies", "work_request"},
+        unbound = is_unbound(node)
+        # Exactly one extra key, and only for a node frozen unbound, so every
+        # existing claim keeps verifying byte for byte and a bound node that
+        # somehow carried the key still fails here.
+        require(set(info) == {"task_id", "attempt_id", "output_root", "mode", "acceptance_nonce", "native_start", "started_at", "gates", "decision", "dependencies", "work_request"}
+                | ({"executor_binding"} if unbound else set()),
                 "claim fields changed")
         expected = task_identity(self.campaign, self.header, node)
         require(all(info.get(k) == expected[k] for k in ("task_id", "attempt_id")), "claim task/attempt changed")
-        mode = "local_cli" if node["executor"] == "codex" else "delegated_cli"
-        require(info["mode"] == node["execution_kind"] == mode and
+        if unbound:
+            pin = info["executor_binding"]
+            require(isinstance(pin, dict) and pin.get("path") == str(binding_path(self.root, key)),
+                    "claim pins another executor binding")
+            # Read through the claim's own pin: a binding edited after the claim
+            # fails the pin here instead of re-routing the claim.
+            binding = json_ref(pin, "claimed executor binding")
+            require(binding.get("run_id") == self.spec["run_id"] and binding.get("node_id") == key and
+                    binding.get("campaign") == self.campaign_ref, "claimed executor binding belongs to another run")
+            lane = claim_lane(node, info)
+            mode = resolved_mode(self.campaign, lane)
+            require(binding.get("mode") == binding.get("execution_kind") == mode and
+                    binding.get("transport") == resolved_transport(self.campaign, lane),
+                    "claimed executor binding resolved another execution ownership")
+            # Not "a binding exists" but "bind_unbound wrote this binding":
+            # re-derived here, so every replay re-derives it too.
+            self.verify_claimed_binding(key, pin, info)
+        else:
+            lane = node["executor"]
+            mode = "local_cli" if node["executor"] == "codex" else "delegated_cli"
+        require(orchestration_binding.claim_mode_matches_frozen_kind(node, info, mode) and
                 target == (State.LOCAL_RUNNING if mode == "local_cli" else State.PREPARING), "execution ownership changed")
         require(info["output_root"] == str(node_output(self.root, node)), "claim output scope changed")
         require(info["dependencies"] == dependency_bindings(node, prior), "claim dependency acceptance changed")
@@ -422,12 +523,19 @@ class Coordinator:
                 json_ref(info["work_request"]) == work_request(self.campaign, self.header, node, info), "claim work request changed")
         require(isinstance(info["acceptance_nonce"], str) and len(info["acceptance_nonce"]) == 24 and
                 all(c in "0123456789abcdef" for c in info["acceptance_nonce"]), "claim nonce invalid")
-        reader = NativeReader(self.campaign["sessions"][node["executor"]], fixtures=self.fixtures)
-        require(reader.verify_pin(info["native_start"]) >= self.header["native_start"][node["executor"]]["offset"],
+        reader = NativeReader(self.campaign["sessions"][lane], fixtures=self.fixtures)
+        require(reader.verify_pin(info["native_start"]) >= self.header["native_start"][lane]["offset"],
                 "claim predates original run")
         require(parse_time(info["started_at"]) >= parse_time(self.header["created_at"]), "claim predates run creation")
 
-    def _check_decision(self, key, info, states):
+    def _check_decision(self, key, info, states, data):
+        """Replay the claim's gate decision.
+
+        ``data`` is the claim data accumulated *before* this claim and is a
+        required positional argument on purpose: a defaulted None at any caller
+        would resolve a different lane mapping than the claim was decided with
+        and report a false "claim gate context differs from verified evidence".
+        """
         gates = json_ref(info["gates"], "claim hard-gate evidence")
         require(gates["campaign"] == self.campaign_ref and gates["authorization"] == self.campaign["authorization"],
                 "claim authorization evidence changed")
@@ -444,22 +552,33 @@ class Coordinator:
                 "claim scope/dependency/input gates changed")
         for ref in gates["inputs"]:
             read_ref(ref)
-        context = self._decision_context(key, gates)
+        # The lane comes from the claim's own binding pin, never from the plan
+        # alone or from a binding file read now; the lane mapping comes from
+        # the claims recorded before this one, exactly as claim() used them.
+        lane = claim_lane(self.nodes[key], info)
+        context = self._decision_context(key, gates, lane=lane, lanes=claimed_lanes(self, data))
         require(gates["context"] == context, "claim gate context differs from verified evidence")
         value = info["decision"]
         parsed = Decision(Outcome(value["outcome"]), value["reason"], value["confidence"],
                           tuple(value["evidence_refs"]), value["route"], value["provider"])
-        require(parsed.record() == value and parsed.outcome is Outcome.ALLOW and parsed.route == self.nodes[key]["executor"],
+        require(parsed.record() == value and parsed.outcome is Outcome.ALLOW and parsed.route == lane,
                 "claim decision is invalid")
         if not self.fixtures or parsed.provider == "rules":
             require(parsed.record() == decide(context).record(), "claim decision/provenance differs from frozen rules")
 
-    def _decision_context(self, key, gates):
+    def _decision_context(self, key, gates, *, lane, lanes):
+        """The gate context ``decide`` sees; recomputed byte for byte on replay.
+
+        ``lane`` is the node's resolved lane (its frozen executor, or the lane
+        its binding names, or None for an unbound node with no binding).
+        ``context["executor_binding"]`` exists only for a node frozen unbound,
+        so every recorded context of a bound node stays exactly as it was.
+        """
         authorization = json_ref(gates["authorization"])
         identity = gates["identity"]
         ready = select_ready(self.plan, {k: State(v) for k, v in gates["states"].items()},
-                             self.spec["strategy"], self.root / "work", self.header["queues"])
-        context = dict(purpose="route", executor=self.nodes[key]["executor"], available_executors=sorted(identity),
+                             self.spec["strategy"], self.root / "work", self.header["queues"], lanes=lanes)
+        context = dict(purpose="route", executor=lane, available_executors=sorted(identity),
                     authorized=authorization.get("approved_root") == self.campaign["root"],
                     identity_verified=set(identity) == set(self.campaign["sessions"]) and all(
                         all(self.campaign["sessions"][lane].get(k) == v for k, v in actual.items())
@@ -471,11 +590,14 @@ class Coordinator:
         # Historical v2 decisions retain their exact recorded context.
         if campaign_version(self.campaign) == 3:
             context["executor_providers"] = executor_providers(self.plan)
+        if is_unbound(self.nodes[key]):
+            context["executor_binding"] = UNBOUND_PENDING_BIND if lane is None else lane
         return context
 
     def _lease(self, key, info):
         lease = self.leases.read().get(info["task_id"])
-        require(lease is not None and lease["session_id"] == self.campaign["sessions"][self.nodes[key]["executor"]]["session_id"] and
+        lane = claim_lane(self.nodes[key], info)
+        require(lease is not None and lease["session_id"] == self.campaign["sessions"][lane]["session_id"] and
                 lease["scope"] == str(node_write_scope(self.root, self.nodes[key])) and
                 lease["claim"] == file_ref(self.root / "claims" / (key + ".json")),
                 "original lease ownership/session/scope/claim changed")
@@ -567,7 +689,10 @@ class Coordinator:
                 verify_tree(accepted["output_tree"])
                 for ref in accepted["output_files"] + [accepted["report"], accepted["tests"]]:
                     read_ref(ref)
-        return select_ready(self.plan, states, self.spec["strategy"], self.root / "work", self.header["queues"])
+        # The same lane mapping the replay gate builds, so a claim selected now
+        # is exactly the selection every later state() replays.
+        return select_ready(self.plan, states, self.spec["strategy"], self.root / "work", self.header["queues"],
+                            lanes=claimed_lanes(self, data))
 
     def claim(self, node_id, *, provider=None):
         require(node_id in self.nodes, "unknown frozen node")
@@ -576,21 +701,52 @@ class Coordinator:
             identity = self._gate(new_work=True)
             node = next((n for n in self.ready() if n["id"] == node_id), None)
             require(node is not None, "node is not ready; preserve active attempts")
-            lane = node["executor"]
-            mode = node["execution_kind"]
-            require((mode, executor_providers(self.plan)[lane]) in
-                    (("local_cli", "codex"), ("delegated_cli", "claude")), "unsupported execution ownership")
+            unbound = is_unbound(node)
+            binding_pin = None
+            if not unbound:
+                lane = node["executor"]
+                mode = node["execution_kind"]
+            else:
+                # The binding is a pre-claim artefact. Its pin, taken once here,
+                # is both the lane source now and the claim's replay source.
+                binding = read_binding(self.root, node_id)
+                binding_pin = binding_ref(self.root, node_id) if binding is not None else None
+                lane = binding["lane"] if binding is not None else None
+                mode = resolved_mode(self.campaign, lane) if lane is not None else None
+            # A never-bound node reaches decide() below and escalates with its
+            # own reason; the pairing is checked as soon as a lane exists.
+            if lane is not None:
+                require((mode, executor_providers(self.plan)[lane]) in
+                        (("local_cli", "codex"), ("delegated_cli", "claude")), "unsupported execution ownership")
             require(self.fixtures or provider is None, "live campaigns use the frozen rules provider")
             output = node_output(self.root, node)
             require(not output.exists(), "existing node output must be preserved")
             require(not (self.root / "claims" / (node_id + ".json")).exists(), "original claim intent exists; observe only")
             states, prior = self.state()
+            lanes = claimed_lanes(self, prior)
+            if unbound and lane is not None:
+                # select_ready resolves lanes from frozen claims only, so it
+                # cannot see this node's own lane before the claim exists. The
+                # lane may have been taken since the bind. Refuse here, before
+                # any write, with exactly the condition reserve() would refuse
+                # (the same named predicate bind used); otherwise the lease
+                # would refuse only after the claim intent was written.
+                occupied = {other for key, other in lanes.items() if other is not None and states[key] in ACTIVE}
+                require(orchestration_binding.lane_idle_write_domain(
+                            lane, self.leases.read(), self.campaign["sessions"], occupied,
+                            scope=str(node_write_scope(self.root, node)), scope_root="/"),
+                        "bound lane or write scope is held by another attempt; preserve it")
+                # Before any write: a binding bind_unbound did not create is
+                # refused here, so a refusal leaves no claim-gates residue.
+                # _check_claim re-derives it again, with the claim's own pins.
+                self.verify_claimed_binding(node_id, binding_pin, {})
             gates = dict(campaign=self.campaign_ref, authorization=self.campaign["authorization"],
                          identity_source="offline_fixture" if self.fixtures else "live_kernel_and_native_foreground",
                          identity=identity, states={k: v.value for k, v in states.items()}, scope=str(output), inputs=self.campaign["inputs"])
-            gates["context"] = self._decision_context(node_id, gates)
+            gates["context"] = self._decision_context(node_id, gates, lane=lane, lanes=lanes)
             verdict = decide(gates["context"], provider)
             require(verdict.outcome is Outcome.ALLOW, verdict.reason)
+            require(lane is not None, "unbound node requires its original executor binding")
             task_id = f"{self.plan['plan_id']}--{self.spec['run_id']}--{node_id}--a0001"
             attempt_id = f"{self.spec['run_id']}:{node_id}:a0001"
             native = NativeReader(self.campaign["sessions"][lane], fixtures=self.fixtures).snapshot()
@@ -599,6 +755,10 @@ class Coordinator:
                         acceptance_nonce=secrets.token_hex(12), native_start=native, started_at=utc_now(),
                         gates=write_json(self.root / "nodes" / node_id / "claim-gates.json", gates, exclusive=True),
                         decision=verdict.record())
+            if unbound:
+                # The one extra claim key, present only for a node frozen
+                # unbound: every later consumer resolves the lane from it.
+                info["executor_binding"] = binding_pin
             from orchestration_evidence import dependency_bindings, work_request
             info["dependencies"] = dependency_bindings(node, prior)
             info["work_request"] = write_json(self.root / "nodes" / node_id / "work-request.json",
@@ -614,6 +774,142 @@ class Coordinator:
             output.mkdir(parents=True)
             self._append(node_id, target, info)
             return info
+
+    def bind_unbound(self, node_id, decision_path):
+        """Bind a deliberately unbound frozen node to one original lane, before its claim.
+
+        No lifecycle event is appended: the node stays PENDING and the binding is
+        a pre-claim artefact the claim then pins. Every refusal precedes the one
+        exclusive write, so a refused bind leaves no file, lease or event a
+        retry could mistake for an original. It does leave its own native call
+        and that call's failed result in the Codex transcript, which is what
+        makes a retry possible: the bind joins the one invocation that has not
+        returned yet (``live_bind_call``), so a transiently refused bind - a
+        lane taken at that moment, a busy lock - can be retried with a new
+        call instead of leaving the node permanently unbindable.
+
+        The decision must be the one the fixed publisher created in this run
+        tree. Its pin and ``decided_at`` come from the native join of that
+        publisher's own call and result (status increment section 3), never from
+        a self-written field. The decision-file measurement and the bind
+        control call are kept beside it as diagnostic fields only.
+
+        Recomputed here in code, never taken from the advice or from JEV:
+        permission (``_gate`` -> ``validate_campaign`` re-binds the original user
+        authorization to this campaign root and its sessions), identity
+        (``lane_verified`` over the live identity ``_gate`` returns), non-author
+        and capacity (``lane_is_author``, ``lane_idle_write_domain`` inside
+        ``eligible_candidates``), and input version (``advice_inputs_unchanged``).
+        The actual-context fact has no producer and is recorded as such.
+        """
+        from upgrade_advice_chain import chain_from_binding, live_bind_call, published_decision_path
+        require(node_id in self.nodes, "unknown frozen node")
+        node = self.nodes[node_id]
+        require(orchestration_binding.unbound_plan(self.plan) and is_unbound(node),
+                "only a deliberately unbound frozen node is bound before claiming")
+        with exclusive_lock(self.root / "nodes" / node_id / "runner.lock"), self.state_lock(new_work=True):
+            identity = self._gate(new_work=True)
+            states, data = self.state()
+            ready = next((n for n in self._ready_from_state(states, data) if n["id"] == node_id), None)
+            require(ready is not None, "node is not ready; preserve active attempts")
+            require(read_binding(self.root, node_id) is None, "original executor binding exists; observe only")
+            require(not (self.root / "claims" / (node_id + ".json")).exists(),
+                    "original claim intent exists; observe only")
+            self._work_budget()
+            published = published_decision_path(self, node_id)
+            require(str(decision_path) == str(published),
+                    "bind takes only the decision the fixed publisher created for this node")
+            decision_ref = file_ref(checked_path(published))
+            decision = validate_decision(decision_ref, self.spec["run_id"], node_id)
+            require(decision["decided_at"] is None,
+                    "a published decision carries no self-written decision time")
+            require(decision["supervisor_session"] == self.campaign["sessions"]["codex"]["session_id"],
+                    "the decision was published for another supervisor session")
+            facts = lane_facts(self, node_id, identity, states, data)
+            candidates = eligible_candidates(self, node_id, identity, states, data, work_kind=decision["work_kind"])
+            require(orchestration_binding.decision_route_recomputed(decision, candidates),
+                    "actual route must come from the candidates recomputed at binding time")
+            advice, body = self._bind_advice(node_id, decision)
+            require(orchestration_binding.advice_inputs_unchanged(decision, body, self.campaign, self.spec["run_id"]),
+                    "input version changed between advice generation and binding")
+            script = control_script(self.campaign, self.campaign_ref, "bind-unbound", self.spec["run_id"],
+                                    node_id=node_id, decision=str(published))
+            reader = NativeReader(self.campaign["sessions"]["codex"], fixtures=self.fixtures)
+            # The invocation running now, not "the only one ever": a refused
+            # bind leaves its own returned call behind, and a retry must not be
+            # refused as that call's duplicate.
+            proof = live_bind_call(reader, script, after=self.header["native_start"]["codex"]["offset"])
+            bound_at = native_control(reader, proof, script).isoformat()
+            lane = decision["actual_route"]
+            value = dict(schema=orchestration_binding.SCHEMA, campaign=self.campaign_ref, run_id=self.spec["run_id"],
+                         node_id=node_id, lane=lane, execution_kind=resolved_mode(self.campaign, lane),
+                         transport=resolved_transport(self.campaign, lane), mode=resolved_mode(self.campaign, lane),
+                         arm=self.campaign.get("arm"), decision=dict(decision_ref), advice=advice,
+                         eligible_lanes=list(candidates), lane_facts=bind_facts(facts), bound_at=bound_at,
+                         bound_native=proof, input_units=self.campaign["inputs"],
+                         supervisor_session=self.campaign["sessions"]["codex"]["session_id"])
+            # The same join the verifier runs later, over the value about to be
+            # written, so a bind can only create what will re-derive identically.
+            chain = chain_from_binding(self, node_id, {}, {"codex": reader}, value, registration=None,
+                                       not_after=parse_time(bound_at).timestamp(), binding_pin=lambda: None)
+            require(chain["decision_publish_natively_joined"] is True and chain["decision_publish"] is not None,
+                    "the published decision has no joined native publisher call and result")
+            require(chain["bind_natively_verified"] is True,
+                    "the binding does not pin this bind step's own native control call")
+            require(chain["arm"] == "advisory-off" or chain["read"] is not None,
+                    "the on arm binds only after one complete original read of its advice")
+            publish = chain["decision_publish"]
+            envelope = publish["envelope"]["decision"]
+            value["decision"] = dict(path=envelope["path"], bytes=envelope["bytes"], sha256=envelope["sha256"],
+                                     decided_at=chain["decided_at"], source="native_publish_result",
+                                     publish_call=publish["call_record"], publish_result=publish["result_record"],
+                                     diagnostic_file=dict(decision_ref))
+            value["advice"] = dict(advice, read=chain["read"],
+                                   counted_as_advisory_consumption=chain["counted_as_advisory_consumption"])
+            return write_binding(self, node_id, value)
+
+    def _bind_advice(self, node_id, decision):
+        """The arm facts a binding records, measured from the run tree and the plan.
+
+        Returns ``(advice, body)``: the dict the chain re-derives from, and the
+        sha-pinned advice body (None on the off arm) whose recorded input units
+        ``advice_inputs_unchanged`` compares. The read window starts at this
+        run's own native start: no producer at this HEAD persists the worker's
+        pre-publication fence, so the wider, still bounded run fence is used
+        rather than an unrecorded one.
+        """
+        from cmux_prompt_reference import plan as reference_plan
+        from upgrade_body_read import read_command
+        directory = self.root / "nodes" / node_id / "advice"
+        journal = self._worker_journal(node_id)
+        fence = self.header["native_start"]["codex"]
+        if decision["advice_sha256"] is None:
+            return dict(arm="advisory-off", advice_sha256=None, worker_status=None, worker_journal=journal,
+                        fence=fence), None
+        ref = file_ref(checked_path(directory / (decision["advice_sha256"] + ".txt")))
+        require(ref["sha256"] == decision["advice_sha256"], "the cited advice is not the advice this run published")
+        text = read_ref(ref, "published advice body").decode("utf-8")
+        body = json_ref(ref, "published advice body")
+        require(body.get("schema") == ADVICE_BODY_SCHEMA and body.get("campaign") == self.campaign_ref and
+                body.get("run_id") == self.spec["run_id"] and body.get("node_id") == node_id,
+                "the published advice belongs to another campaign, run or node")
+        advice = body.get("advice")
+        require(isinstance(advice, dict) and isinstance(advice.get("status"), str), "the published advice has no status")
+        notice = reference_plan(text, body["marker"], directory)["text"]
+        command = read_command(self.campaign["python"]["path"], self.campaign["controller"]["path"], notice)
+        return dict(arm="advisory-on", advice_sha256=decision["advice_sha256"], notice=notice, command=command,
+                    fence=fence, not_before_epoch=parse_time(self.header["started_at"]).timestamp(),
+                    worker_status=advice["status"], worker_journal=journal), body
+
+    def _worker_journal(self, node_id):
+        """The worker's own self-authored journal entries, or None when absent."""
+        path = self.root / "nodes" / node_id / "advice-worker-journal.json"
+        if not (path.exists() or path.is_symlink()):
+            return None
+        value = json_ref(file_ref(checked_path(path)), "advice worker journal")
+        require(value.get("schema") == "jev-advice-worker-journal-v1" and isinstance(value.get("entries"), list),
+                "advice worker journal shape changed")
+        return value["entries"]
 
     def transition(self, node_id, state, data):
         require(state not in (State.LOCAL_RUNNING, State.PREPARING, State.ACCEPTED, State.FAILED_PRESERVED), "use claim/accept/settle for gated transitions")
@@ -642,7 +938,8 @@ class Coordinator:
 
     def _release(self, key, info, terminal):
         lease = self._lease(key, info)
-        self.leases.release(info["task_id"], session=self.campaign["sessions"][self.nodes[key]["executor"]]["session_id"],
+        lane = claim_lane(self.nodes[key], info)
+        self.leases.release(info["task_id"], session=self.campaign["sessions"][lane]["session_id"],
                             scope=str(node_write_scope(self.root, self.nodes[key])),
                             claim=file_ref(self.root / "claims" / (key + ".json")), terminal=terminal,
                             reserved_at=lease["reserved_at"])
@@ -721,6 +1018,13 @@ class Coordinator:
             if states[path.stem] == State.PENDING:
                 observed.append(dict(node_id=path.stem, state="INCOMPLETE_CLAIM_INTENT",
                                      action="inspect_original_intent_and_lease", task=read_json(path)))
+        # A binding is a pre-claim artefact with no lifecycle event, so a bound
+        # node that was never claimed is visible only here. Discovery only.
+        for path in sorted((self.root / "bindings").glob("*.json")):
+            require(path.stem in states and is_unbound(self.nodes[path.stem]), "unknown executor binding")
+            if states[path.stem] == State.PENDING:
+                observed.append(dict(node_id=path.stem, state="UNBOUND_BOUND_NOT_CLAIMED",
+                                     action="inspect_original_binding", binding=binding_ref(self.root, path.stem)))
         for key, state in states.items():
             if state in (State.ACCEPTED, State.FAILED_PRESERVED) and self._lease(key, data[key])["released_at"] is None:
                 observed.append(dict(node_id=key, state="TERMINAL_RELEASE_PENDING", action="repair_verified_terminal_release"))
