@@ -29,7 +29,7 @@ records MODEL_CONTEXT_SEQUENTIALLY_CONSUMED. Each recorded observation keeps
 the class of the policy that produced it; a v1 policy never yields the
 sequential class, and recorded v1 proofs reproduce unchanged.
 
-A third binding (owner40 0.4.80, v215) is owner40's own source publication
+A third binding (owner40 0.4.81, v222) is owner40's own source publication
 reply rather than a policy file: it runs that release's model_context_causal.py,
 which joins each result batch to its request by base/requestRef, tool ids and
 parent UUIDs instead of physical append order (Claude 2.1.303 can write the
@@ -38,10 +38,14 @@ MODEL_CONTEXT_CAUSALLY_CONSUMED. The reply is accepted by the fields owner40
 wrote, at its own stated reply_path, and only when the release identity it
 states (version, trees, commit, member count) is the manifest it pins; nothing
 in it is restated or synthesized here. As for the other classes, the caller's
-policy sha pin is what makes it this exact reply. The pinned 0.4.80 observer
-refuses a snapshot holding the result of a tool call issued before the paste
-fence (a lane mid-tool when the notice arrived), so such a notice stays
-UNVERIFIED under this publication.
+policy sha pin is what makes it this exact reply. A notice can arrive while the
+lane is mid-tool, so the snapshot holds the result of a call issued before the
+paste fence: the pinned 0.4.81 observer joins that result to its unique genuine
+call in the bounded tail of the hashed original prefix, outside the proof, and
+keeps the notice UNVERIFIED when that call is absent or clipped there. owner40's
+earlier 0.4.80 publication (v215) has the same reply shape, so it passes this
+module's shape checks too, but its observer refuses every such snapshot (review
+A1); a new binding pins the 0.4.81 reply's sha.
 """
 from __future__ import annotations
 
@@ -102,14 +106,14 @@ def _source_files(root):
 
 
 def _causal_publication(policy, policy_ref):
-    """(source, manifest ref, observer ref) as owner40's v215 reply states them; nothing is synthesized."""
+    """(source, manifest ref, observer ref) as owner40's causal successor reply states them; nothing is synthesized."""
     published, contract = policy.get("source_publication"), policy.get("causal_contract")
     require(policy.get("status") == "PROSPECTIVE_SOURCE_PUBLISHED_REQUIRED_CHECKS_PASS"
             and isinstance(published, dict) and published.get("schema") == "source-only-immutable-publication-v1"
             and isinstance(contract, dict) and contract.get("class_name") == CAUSAL_EVIDENCE_CLASS
             and contract.get("scope") == "PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY"
             and contract.get("default_old_observers_unchanged") is True,
-            "context policy is not the v215 causal successor publication")
+            "context policy is not an owner40 causal successor publication")
     # A byte-identical copy elsewhere is not the reply owner40 wrote at its own stated path.
     require(policy.get("reply_path") == policy_ref["path"], "causal publication is not at its own reply path")
     return published.get("source"), published.get("manifest"), published.get("causal")

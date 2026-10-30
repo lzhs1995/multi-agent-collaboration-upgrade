@@ -143,12 +143,12 @@ class Fixture:
         files = {str(p.relative_to(self.source)): dict(bytes=p.stat().st_size, sha256=digest(p.read_bytes()))
                  for p in sorted(self.source.rglob("*")) if p.is_file()}
         causal = self.kind[1] == downlink.CAUSAL_EVIDENCE_CLASS
-        # A causal release states its identity in its manifest, as the 0.4.80 MANIFEST.json does.
+        # A causal release states its identity in its manifest, as the 0.4.80 and 0.4.81 MANIFEST.json do.
         identity = dict(tree_sha256="e" * 64, git_commit="c" * 40, git_tree="d" * 40) if causal else {}
         manifest = write_json(self.root / "release" / "MANIFEST.json", dict(version="fixture", files=files, **identity))
         observer = file_ref(self.source / "scripts" / self.kind[2])
         if causal:
-            # owner40's v215 reply shape: a source publication with its own contract, no policy fields.
+            # owner40's v215/v222 reply shape: a source publication with its own contract, no policy fields.
             self.contract = dict(class_name=downlink.CAUSAL_EVIDENCE_CLASS, scope="PROSPECTIVE_EXPLICIT_NEW_BINDING_ONLY",
                                  default_old_observers_unchanged=True)
             self.published = dict(schema="source-only-immutable-publication-v1", source=str(self.source),
@@ -912,10 +912,11 @@ class PinnedObserverTests(unittest.TestCase):
         self.prefix_text, self.suffix_text, self.version = names["PREFIX"], names["SUFFIX"], names["VERSION"]
         self.chains = {}
 
-    def attempt(self, name, cut=None, insert=None, final_text="Full body received."):
+    def attempt(self, name, cut=None, insert=None, final_text="Full body received.", before=()):
         """One queued-only original attempt with the measured 2.1.303 notice/body chain.
 
-        cut keeps only events[:cut]; insert=(index, record) adds one record; the
+        cut keeps only events[:cut]; insert=(index, record) adds one record; before
+        holds records written ahead of the paste fence, after the metadata; the
         chain's records are kept in self.chains[name] for later appends."""
         home = self.root / name
         native_root = home / "claude"
@@ -959,7 +960,7 @@ class PinnedObserverTests(unittest.TestCase):
         written = events[:cut]
         if insert is not None:
             written.insert(*insert)
-        prefix = raw(dict(type="system", sessionId=SESSION, subtype="native_metadata"))
+        prefix = raw(dict(type="system", sessionId=SESSION, subtype="native_metadata")) + b"".join(map(raw, before))
         transcript.write_bytes(prefix + b"".join(raw(obj) for obj in written))
         info = transcript.stat()
         pin = dict(path=str(transcript), device=info.st_dev, inode=info.st_ino, offset=len(prefix),
@@ -1187,7 +1188,7 @@ class SequentialContextClassTests(unittest.TestCase):
 
 
 class CausalContextClassTests(unittest.TestCase):
-    """The owner40 0.4.80 causal class is bound only by owner40's own v215 publication reply."""
+    """The owner40 causal class is bound only by owner40's own source publication reply (v215, then v222)."""
 
     def fixture(self, sequential=False, causal=True):
         temp = tempfile.TemporaryDirectory(prefix="context-downlink-causal-")
@@ -1231,27 +1232,27 @@ class CausalContextClassTests(unittest.TestCase):
             # Only the published-and-checked reply binds; the earlier authorization (v1 ruling) does not.
             ("authorized_but_unpublished_ruling", "causal", lambda f: republish(
                 f, status="PROSPECTIVE_CAUSAL_JOIN_FIX_AUTHORIZED_OLD_U24_UNCHANGED"),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("contract_of_another_class", "causal", lambda f: republish(
                 f, causal_contract=dict(f.contract, class_name=downlink.SEQUENTIAL_EVIDENCE_CLASS)),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("contract_beyond_new_bindings", "causal", lambda f: republish(
                 f, causal_contract=dict(f.contract, scope="HISTORICAL_WINDOWS")),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("contract_replacing_old_observers", "causal", lambda f: republish(
                 f, causal_contract=dict(f.contract, default_old_observers_unchanged=False)),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("contract_missing", "causal", lambda f: republish(f, causal_contract=None),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("publication_of_another_schema", "causal", lambda f: republish(
                 f, source_publication=dict(f.published, schema="installed-release-v1")),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("publication_missing", "causal", lambda f: republish(f, source_publication=None),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             # A contract that never states a required value is not one that states it (review A3).
             *((f"contract_without_{key}", "causal", lambda f, key=key: republish(
                 f, causal_contract={k: v for k, v in f.contract.items() if k != key}),
-               "not the v215 causal successor publication")
+               "not an owner40 causal successor publication")
               for key in ("class_name", "scope", "default_old_observers_unchanged")),
             # Exactness beyond the caller's pin: the reply at its own path, describing the manifest it pins (review A2).
             ("byte_identical_copy_at_another_path", "causal", lambda f: (f.plan(f.consumed()), setattr(
@@ -1269,7 +1270,7 @@ class CausalContextClassTests(unittest.TestCase):
                 disposition="ACCEPTED_FOR_EXPLICIT_NEW_POLICY_BINDING", evidence_class=downlink.CAUSAL_EVIDENCE_CLASS,
                 native_user_evidence_class="NATIVE_USER_RECEIVED", complete_source=str(f.source),
                 source_manifest=f.published["manifest"], observer=f.published["causal"]),
-             "not the v215 causal successor publication"),
+             "not an owner40 causal successor publication"),
             ("release_without_sequential_module", "causal", lambda f: (
                 (f.source / "scripts/model_context_sequential.py").unlink(), republish(f)),
              "release has no sequential observer module"),
@@ -1335,15 +1336,19 @@ class CausalContextClassTests(unittest.TestCase):
         self.assertEqual((rc, again["evidence_class"]), (0, downlink.CAUSAL_EVIDENCE_CLASS))
 
 
-# owner40's exact v215 reply; its source publication is the complete 0.4.80 tree it pins.
-CAUSAL_REPLY = (Path.home() / "Documents/cnm/tasks/02_Word_review/handoff/claude29-wip-20261018/u2078/r13"
-                / "SURFACE40-REPLY-u24-observer-causal-order-v2.json")
-CAUSAL_REPLY_SHA256 = "7bcbf02558e1d814bc2a48e9d4fc1910bfcb5e841c513b1c85576cb2360a6cbd"
+# owner40's exact v222 reply, the one a new binding pins; its source publication is the complete 0.4.81 tree.
+R13 = Path.home() / "Documents/cnm/tasks/02_Word_review/handoff/claude29-wip-20261018/u2078/r13"
+CAUSAL_REPLY = R13 / "SURFACE40-REPLY-causal-fence-A1-20261030-v1.json"
+CAUSAL_REPLY_SHA256 = "c50e598dd803bda6af6038146e87389ace529da5ad66cb8de4c1518517df2751"
+# owner40's earlier v215 reply (0.4.80, review A1), kept only as the contrast observer.
+EARLIER_CAUSAL_REPLY = R13 / "SURFACE40-REPLY-u24-observer-causal-order-v2.json"
+EARLIER_CAUSAL_REPLY_SHA256 = "7bcbf02558e1d814bc2a48e9d4fc1910bfcb5e841c513b1c85576cb2360a6cbd"
 
 
-@unittest.skipUnless(CAUSAL_REPLY.is_file(), "owner40's v215 causal publication is not present here")
+@unittest.skipUnless(CAUSAL_REPLY.is_file() and EARLIER_CAUSAL_REPLY.is_file(),
+                     "owner40's causal publications are not present here")
 class PinnedCausalObserverTests(unittest.TestCase):
-    """Runs owner40's published 0.4.80 causal observer, unchanged, on the measured two-batch chain."""
+    """Runs owner40's published 0.4.81 causal observer, unchanged, on the measured two-batch chain."""
 
     # The same original attempt/transcript builder as the 0.4.76 tests; only the chain after the fence differs.
     attempt, eof, append = PinnedObserverTests.attempt, PinnedObserverTests.eof, PinnedObserverTests.append
@@ -1372,12 +1377,12 @@ class PinnedCausalObserverTests(unittest.TestCase):
     def observe(self, name, attempt, evidence, policy=None):
         return downlink.observe(attempt, policy or self.policy, INTERPRETER, evidence, self.eof(name))
 
-    def chain(self, name, inverted=True, change=None):
+    def chain(self, name, inverted=True, change=None, before=()):
         """One original attempt whose transcript carries the measured two-batch chain (hash, then Read).
 
         inverted writes each next api-request before the result it carries, as Claude 2.1.303 did in u24;
-        change(events) edits that written order before it is appended."""
-        attempt, evidence = self.attempt(name, 0)
+        change(events) edits that written order before it is appended; before goes ahead of the fence."""
+        attempt, evidence = self.attempt(name, 0, before=before)
         c = self.chains[name]
         notice, blob, request, call_hash, call_read, hash_result, read_result, body_request, response = c["events"]
         body = Path(json_ref(attempt)["body_reference"]["path"]).read_bytes().decode()
@@ -1441,24 +1446,47 @@ class PinnedCausalObserverTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, "context not consumed: " + reason):
                     self.observe(name, attempt, evidence)
 
-    def test_a_call_in_flight_at_the_fence_keeps_the_pinned_causal_observer_unverified(self):
-        """Characterizes owner40's 0.4.80 observer (review A1, ROOT R197), not this gate: a tool call issued before
-        the paste fence whose result lands after it, as in u24 claude_a's real window, fails the whole-snapshot
-        call join at every endpoint, while the sequential class keeps its own verdict on the same records."""
+    def test_a_call_in_flight_at_the_fence_is_joined_to_its_genuine_pre_fence_call(self):
+        """Review A1 (ROOT R197/R204), fixed in owner40's 0.4.81: the result of a tool call issued before the paste
+        fence and written after it, as in u24 claude_a's real window, is joined to its unique call in the hashed
+        original prefix, outside the proof; a result whose call is nowhere stays UNVERIFIED. The earlier 0.4.80
+        publication passes the same gate checks but refuses both, which is why a new binding pins 0.4.81."""
+        earlier = file_ref(EARLIER_CAUSAL_REPLY)
+        self.assertEqual(earlier["sha256"], EARLIER_CAUSAL_REPLY_SHA256)
+        call = dict(type="assistant", sessionId=SESSION, version=self.version, requestRef="pre-fence-request",
+                    uuid="pre-fence-call", isSidechain=False,
+                    message=dict(type="message", role="assistant", id="msg_pre-fence-call",
+                                 content=[dict(type="tool_use", id="pre-fence-tool", name="Bash",
+                                               input=dict(command="sleep 300"))]))
         def in_flight(events):
-            # The result of a call the snapshot does not contain, written right after the fence, before the notice.
+            # The call's result, written right after the fence, before the notice.
             events.insert(0, self.chains[name]["event"](
                 "user", uuid="pre-fence-result", parentUuid="pre-fence-call",
                 message=dict(role="user", content=[dict(type="tool_result", tool_use_id="pre-fence-tool",
                                                         content="waited")]),
                 toolUseResult=dict(stdout="waited", stderr="", interrupted=False)))
-        for name, inverted, sequential in (("busy_ordered", False, None),
-                                           ("busy_inverted", True, "SUCCESSFUL_ORDERED_NATIVE_RESULT_REQUIRED")):
+        unverified = "context not consumed: UNASSOCIATED_OR_DUPLICATE_NATIVE_CALL_REQUIRED"
+        for name, inverted, before, causal, sequential in (
+                ("busy_ordered", False, [call], None, None),
+                ("busy_inverted", True, [call], None, "SUCCESSFUL_ORDERED_NATIVE_RESULT_REQUIRED"),
+                ("orphan_ordered", False, [], unverified, None)):
             with self.subTest(case=name):
-                attempt, evidence = self.chain(name, inverted=inverted, change=in_flight)
-                with self.assertRaisesRegex(ContractError,
-                                            "context not consumed: UNASSOCIATED_OR_DUPLICATE_NATIVE_CALL_REQUIRED"):
-                    self.observe(name, attempt, evidence)
+                attempt, evidence = self.chain(name, inverted=inverted, change=in_flight, before=before)
+                if causal is None:
+                    result = self.observe(name, attempt, evidence)
+                    self.assertEqual(result["evidence_class"], downlink.CAUSAL_EVIDENCE_CLASS)
+                    context = result["observation"]["pre_fence_context"]
+                    [match] = context["matches"]
+                    self.assertEqual((context["matched_result_count"], match["tool_use_id"], match["call"]["uuid"],
+                                      match["result"]["uuid"]), (1, "pre-fence-tool", "pre-fence-call", "pre-fence-result"))
+                    self.assertLess(match["call"]["offset"], json_ref(attempt)["native_binding"]["transcript"]["offset"])
+                    # The pre-fence witness never becomes part of the proof.
+                    self.assertNotIn(match["result"]["offset"], {s["offset"] for s in result["observation"]["proof_slices"]})
+                else:
+                    with self.assertRaisesRegex(ContractError, causal):
+                        self.observe(name, attempt, evidence)
+                with self.assertRaisesRegex(ContractError, unverified):
+                    self.observe(name, attempt, evidence, earlier)
                 if sequential is None:
                     self.assertEqual(self.observe(name, attempt, evidence, self.sequential)["evidence_class"],
                                      downlink.SEQUENTIAL_EVIDENCE_CLASS)
