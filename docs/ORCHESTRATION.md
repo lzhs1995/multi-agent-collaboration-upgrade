@@ -192,6 +192,51 @@ invented. A fallback or stopped advisor (`NOT_CONFIGURED`, `JEV_ERROR`,
 `NOT_CALLED`, `STOPPED_AUTH`) is never counted as advisory consumption, and an
 on-arm node without a complete chain is `ADVICE_NOT_CONSUMED`.
 
+Only a natively joined decision counts as advisory consumption. `CONSUMED` and
+`counted_as_advisory_consumption` require one complete original read, an
+advisor that is not a fallback, the publisher's own joined call and result, and
+the binding's own natively verified bind control call. A decision outside the
+publisher's exclusive path is the older exclusive-file shape, which ROOT R94
+section 2 keeps as a diagnostic: it is reported as
+`DIAGNOSTIC_NOT_NATIVELY_JOINED` with `decided_at: null`, its self-written stamp
+under `diagnostic_decided_at`, and is never counted. `order_basis` names the
+record behind each stamp of the read < decided < bound < claim order: the
+native read result, the native publisher result and the native bind call. A
+claim has no one native control record to join (it may come from a direct
+`claim` or from an `advance` call that takes up to 32 actions), so the claim leg
+is ordered by evidence: on the Codex lane, which shares the supervisor's
+transcript, the bind result must end before the claim's own native start
+offset, and on a Claude lane the claim pins the sha256 of the binding that
+result printed. The claim's `started_at` is the
+coordinator's wall clock and is labelled so.
+
+The binding file is an ordinary file in the run tree, so a claim does not take
+it on trust. `claim` checks it before any write and every `state()` replay
+checks it again (`Coordinator.verify_claimed_binding`): the decision must be
+the publisher's joined output, the binding must pin the original bind control
+call with `bound_at` equal to that record's own timestamp, and that call's
+terminal rc0 result must print this binding's path, bytes and sha256, which
+only the call that exclusively created it can have printed. A binding written
+by anything else, or one that cites a refused attempt, is refused at the claim
+and on replay; a claim attempted before the bind result exists is refused and
+succeeds once it does. The decision's `action` is one of R62's
+`accepted`, `rejected` or `supervisor_review`, and a decision citing no advice
+(the off arm) can only be `supervisor_review`. Publishing and binding take the
+node's `runner.lock`, which creates its directory before any claim, so for a
+node frozen unbound `next-action` counts only claim artefacts (claim intent,
+gates, work request, output) as an incomplete claim.
+
+On the off arm, any call in the window whose arguments name an advice body is
+an arm violation: this node's advice directory, any run's or node's
+`nodes/<id>/advice` path in absolute or relative form, or a concrete advice
+marker. Tool results are not scanned (see `advice_read_attempts`). The off-arm
+zero-request check cannot fail in production yet: nothing outside the test
+fixture persists `advice-worker-journal.json`, and an absent journal counts as
+zero requests. That matches R62's rule that the off-arm worker does not start,
+but it cannot tell "not started" from "ran and was not persisted". Making the
+worker's publish path exclusively write its journal is left to that producer,
+and until then this check is not evidence that the worker made no request.
+
 The claim then pins that binding by path, bytes and sha256 under one new key,
 `executor_binding`, present only for a node frozen unbound; a bound node that
 carried it fails `"claim fields changed"`. Every later consumer resolves the
