@@ -389,6 +389,40 @@ def bind_call_evidence(co, key, reader, binding, decision_ref) -> dict:
                 timestamp=record.get("timestamp"))
 
 
+def live_bind_call(reader, script, *, after) -> dict:
+    """The one bind control call that is running now: the only one with no result.
+
+    ``find_control`` requires exactly one matching call in the whole journal.
+    That is right for a step whose proof is a past invocation, but a bind is
+    retried: a refused attempt leaves its own call record behind, so a second,
+    byte-identical attempt would make every later bind refuse as a duplicate
+    and leave the node permanently unbindable - the published decision cannot
+    be republished either.
+
+    A refused attempt has returned, so the original CLI has already recorded
+    its terminal output. The invocation executing *now* is therefore the one
+    matching call with no output record. Exactly one such call is required: two
+    unanswered identical calls are genuinely ambiguous, so they still refuse.
+    A *successful* earlier attempt cannot be among them because its binding
+    exists, which ``bind_unbound`` refuses long before reaching here.
+    """
+    from orchestration_campaign import native_control
+    end = reader.snapshot()["offset"]
+    matches, answered = [], set()
+    for ref, record in reader.records(count(after, "bind search offset"), end):
+        payload = record.get("payload", {})
+        if (record.get("type") == "response_item" and payload.get("type") == "custom_tool_call"
+                and payload.get("input") == script):
+            native_control(reader, ref, script)
+            matches.append((ref, payload.get("call_id")))
+        _calls, outputs = calls_and_results(record, "codex")
+        answered.update(call_id for call_id, _value, _error in outputs
+                        if isinstance(call_id, str) and call_id)
+    live = [ref for ref, call_id in matches if call_id not in answered]
+    require(len(live) == 1, "one original supervisor control invocation required; duplicate/absent request")
+    return live[0]
+
+
 def bind_result_evidence(reader, bind, binding_pin, *, until) -> dict | None:
     """The bind call's own terminal rc0 result, printing exactly this binding.
 

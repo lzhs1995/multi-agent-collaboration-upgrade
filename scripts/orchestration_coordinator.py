@@ -780,8 +780,13 @@ class Coordinator:
 
         No lifecycle event is appended: the node stays PENDING and the binding is
         a pre-claim artefact the claim then pins. Every refusal precedes the one
-        exclusive write, so a refused bind leaves nothing a retry could mistake
-        for an original.
+        exclusive write, so a refused bind leaves no file, lease or event a
+        retry could mistake for an original. It does leave its own native call
+        and that call's failed result in the Codex transcript, which is what
+        makes a retry possible: the bind joins the one invocation that has not
+        returned yet (``live_bind_call``), so a transiently refused bind - a
+        lane taken at that moment, a busy lock - can be retried with a new
+        call instead of leaving the node permanently unbindable.
 
         The decision must be the one the fixed publisher created in this run
         tree. Its pin and ``decided_at`` come from the native join of that
@@ -797,7 +802,7 @@ class Coordinator:
         ``eligible_candidates``), and input version (``advice_inputs_unchanged``).
         The actual-context fact has no producer and is recorded as such.
         """
-        from upgrade_advice_chain import chain_from_binding, published_decision_path
+        from upgrade_advice_chain import chain_from_binding, live_bind_call, published_decision_path
         require(node_id in self.nodes, "unknown frozen node")
         node = self.nodes[node_id]
         require(unbound_plan(self.plan) and is_unbound(node),
@@ -830,7 +835,10 @@ class Coordinator:
             script = control_script(self.campaign, self.campaign_ref, "bind-unbound", self.spec["run_id"],
                                     node_id=node_id, decision=str(published))
             reader = NativeReader(self.campaign["sessions"]["codex"], fixtures=self.fixtures)
-            proof = find_control(reader, script, after=self.header["native_start"]["codex"]["offset"])
+            # The invocation running now, not "the only one ever": a refused
+            # bind leaves its own returned call behind, and a retry must not be
+            # refused as that call's duplicate.
+            proof = live_bind_call(reader, script, after=self.header["native_start"]["codex"]["offset"])
             bound_at = native_control(reader, proof, script).isoformat()
             lane = decision["actual_route"]
             value = dict(schema=orchestration_binding.SCHEMA, campaign=self.campaign_ref, run_id=self.spec["run_id"],

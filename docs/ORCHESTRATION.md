@@ -143,7 +143,16 @@ comparing the input refs recorded inside the sha-pinned advice body against the
 run's frozen inputs). The actual route must be one of the candidates recomputed
 at that moment; a route copied from the advice is refused. The step consumes the
 same Stop, preserved-failure and run-budget gates as `claim`, and every refusal
-precedes the single exclusive write, so a refused bind leaves no residue.
+precedes the single exclusive write, so a refused bind leaves no file, lease or
+event behind.
+
+A refused bind does leave its own native call and that call's failed result in
+the transcript, and that is what makes a retry possible. The bind joins the one
+invocation that has not returned yet, so a transiently refused bind - the bound
+lane taken at that moment, a busy lock - is retried by invoking `bind-unbound`
+again. Two invocations that are both still running are ambiguous and refuse.
+The published decision is never republished, so without this a single transient
+refusal would leave the node permanently unbindable.
 
 The join requires exactly one publisher call and exactly one matching result
 inside the same original session fence: correctly paired, terminal rc0, complete

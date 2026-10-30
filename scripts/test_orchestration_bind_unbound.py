@@ -497,6 +497,55 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
                 self.bind()
             self.residue()
 
+    def test_a_transiently_refused_bind_is_retried_with_a_new_call(self):
+        """The published decision is never republished, so the bind must retry.
+
+        The route is recomputed at bind time, so a lane taken at that moment
+        refuses a bind that would have been admissible a moment earlier. The
+        refused attempt's own call stays in the transcript; a retry appends a
+        new call, and the bind joins the invocation that has not returned.
+        """
+        self.publish()
+        # The codex lane is taken by another node of this run, so the published
+        # route is not among the candidates recomputed now.
+        taken = self.co.claim("local")
+        first = self.bind_call()
+        with self.assertRaisesRegex(ContractError, "actual route must come from the candidates"):
+            self.bind()
+        # No binding, and the node is untouched. (``residue`` also asserts an
+        # empty event log, which the claim above legitimately filled.)
+        self.assertFalse(binding_path(self.co.root, "unbound").exists())
+        self.assertEqual(self.co.state()[0]["unbound"], State.PENDING)
+        self.refused_bind_output(first)
+        # The lane is released; the same decision is now bindable again.
+        self.f.work(taken)
+        self.f.accept(self.co, "local", self.f.candidate(self.co, "local"))
+        # Without a new call there is no running invocation to join.
+        with self.assertRaisesRegex(ContractError, "one original supervisor control invocation required"):
+            self.bind()
+        self.assertFalse(binding_path(self.co.root, "unbound").exists())
+        self.bind_call()
+        binding = self.bind()
+        value = json_ref(binding, "binding")
+        self.assertEqual(value["bound_native"], self.bind_refs[-1])
+        self.assertEqual(value["lane"], "codex")
+        # The retry's own call is the proof, not the refused attempt's.
+        self.assertNotEqual(value["bound_native"], first["refs"][0])
+        self.wait_past(value["bound_at"])
+        self.assertEqual(self.co.claim("unbound")["executor_binding"], binding)
+
+    def test_two_bind_invocations_still_running_are_ambiguous(self):
+        # Only a *returned* attempt can be told apart from the live one, so two
+        # unanswered identical calls refuse exactly as a duplicate always did.
+        self.publish()
+        call = self.bind_call(count=2)
+        with self.assertRaisesRegex(ContractError, "one original supervisor control invocation required"):
+            self.bind()
+        self.residue()
+        # Once the first attempt's failure is recorded, one invocation is live.
+        self.refused_bind_output(call, index=0)
+        self.assertIsNotNone(self.bind())
+
     def test_bind_is_new_work_under_stop_and_preserved_failure(self):
         self.publish()
         self.bind_call()
