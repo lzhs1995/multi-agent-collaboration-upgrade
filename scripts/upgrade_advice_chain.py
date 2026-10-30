@@ -279,10 +279,19 @@ def publish_follows_the_read(read, publish) -> bool:
 def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     """The one original publisher call/result pair for this exact script.
 
-    Requires exactly one supervisor ``custom_tool_call`` whose input equals the
-    script, no other call record of any input sharing its call_id, exactly one
-    output record for that call_id, a terminal rc0 result whose complete stdout
-    is the JSON envelope, and all of it inside the fenced window.
+    Requires one supervisor ``custom_tool_call`` whose input equals the script,
+    no other call record of any input sharing its call_id, exactly one output
+    record for that call_id, a terminal rc0 result whose complete stdout is the
+    JSON envelope, and all of it inside the fenced window.
+
+    A transiently refused publish (a busy lock, a gate) leaves its own call and
+    failed result, and the retry is a byte-identical call, because the decision
+    is published once and never republished. Several identical calls are
+    therefore accepted only when every one already has exactly one result and
+    exactly one of those results is a terminal rc0 success: that one call is
+    the publisher call. An identical call without a result may still be
+    running, and two successes cannot both have created one exclusive file, so
+    both refuse.
 
     The window ends at ``until`` - the bind control call - and never at the
     live EOF (design Q25). A frozen binding is re-derived on every claim and
@@ -308,11 +317,27 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
         for call_id, value, _ in outputs:
             if isinstance(call_id, str) and call_id:
                 results.setdefault(call_id, []).append((ref, record, value))
-    require(len(calls) == 1, "DECISION_PUBLISH_CALL: exactly one original publisher call required")
+    require(calls, "DECISION_PUBLISH_CALL: exactly one original publisher call required")
+    for _ref, _record, found_id in calls:
+        require(isinstance(found_id, str) and found_id, "DECISION_PUBLISH_CALL: the call has no call_id")
+        require(call_ids.get(found_id) == 1,
+                "DECISION_PUBLISH_CALL: another call record shares the publisher call's call_id")
+    if len(calls) > 1:
+        # A refused publish leaves its call and its failed result behind, and
+        # the decision is never republished, so a retry is one more identical
+        # call. Each must already have exactly one result (an unanswered
+        # identical call may still be running), and exactly one of them may be
+        # the terminal rc0 success that created the decision.
+        require(all(len(results.get(found_id, [])) == 1 for _ref, _record, found_id in calls),
+                "DECISION_PUBLISH_CALL: exactly one original publisher call required; "
+                "an identical call has no single result")
+        succeeded = [entry for entry in calls
+                     if isinstance(codex_stdout(results[entry[2]][0][2]), str)]
+        require(len(succeeded) == 1,
+                "DECISION_PUBLISH_CALL: exactly one original publisher call required; "
+                "identical calls must include exactly one success")
+        calls = succeeded
     call_ref, call_record, call_id = calls[0]
-    require(isinstance(call_id, str) and call_id, "DECISION_PUBLISH_CALL: the call has no call_id")
-    require(call_ids.get(call_id) == 1,
-            "DECISION_PUBLISH_CALL: another call record shares the publisher call's call_id")
     require(call_ref["offset"] + call_ref["length"] <= end, "DECISION_PUBLISH_CALL: outside the fenced window")
     matched = results.get(call_id, [])
     require(len(matched) == 1, "DECISION_PUBLISH_RESULT: exactly one output record for the call required")

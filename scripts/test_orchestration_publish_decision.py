@@ -321,6 +321,59 @@ class PublishDecisionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, reason):
                     self.chain(self.off_arm(), published)
 
+    def test_a_transiently_refused_publish_is_retried_with_an_identical_call(self):
+        """A refused publish leaves its call and failed result; the retry still joins.
+
+        A decision is published once and never republished, so if an identical
+        retry made every later join refuse as a duplicate, one transient
+        refusal (here a busy node lock) would leave the node permanently
+        unbindable. The publisher call is the one identical call whose result
+        is a terminal rc0 envelope; every other identical call must already
+        have its own single result that is not.
+        """
+        from orchestration_common import exclusive_lock
+        fields = self.fields()
+        exact = control_script(self.f.campaign, self.f.ref, "publish-decision", self.run,
+                               node_id="unbound", decision_fields=fields)
+        client = self.f.clients["codex"]
+
+        def refused_attempt(call_id):
+            client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call", name="exec", call_id=call_id, input=exact)))
+            with exclusive_lock(self.co.root / "nodes" / "unbound" / "runner.lock"), \
+                    self.assertRaisesRegex(ContractError, "already active"):
+                self.r.publish_decision(self.run, "unbound", fields)
+            client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call_output", call_id=call_id,
+                output=json.dumps(dict(exit_code=2, output="REJECTED\n", wall_time_seconds=0.1)))))
+
+        refused_attempt("publish-refused")
+        self.assertFalse(published_decision_path(self.co, "unbound").exists())
+        published = self.publish(fields)
+        chain = self.chain(self.off_arm(), published)
+        self.assertIs(chain["decision_publish_natively_joined"], True)
+        self.assertEqual(chain["decision_publish"]["call_id"], "publish-decision")
+        # The successful call is found wherever the refused one sits.
+        self.fresh()
+        published = self.publish(self.fields())
+        client = self.f.clients["codex"]
+        refused_attempt("publish-repeated")
+        self.assertEqual(self.chain(self.off_arm(), published)["decision_publish"]["call_id"],
+                         "publish-decision")
+        # Two identical calls that both print a success envelope stay refused:
+        # only one call can have created the decision.
+        self.fresh()
+        published = self.publish(self.fields())
+        printed = published["results"][0]
+        client = self.f.clients["codex"]
+        client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            type="custom_tool_call", name="exec", call_id="publish-twice", input=published["script"])))
+        record = NativeReader(self.f.campaign["sessions"]["codex"], fixtures=True).record(printed)
+        client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            record["payload"], call_id="publish-twice")))
+        with self.assertRaisesRegex(ContractError, "DECISION_PUBLISH_CALL"):
+            self.chain(self.off_arm(), published)
+
     def test_a_second_call_record_sharing_the_publisher_call_id_is_refused(self):
         # One exact publisher call and one rc0 output, plus a second call record
         # with another input under the same call_id: the output could belong to

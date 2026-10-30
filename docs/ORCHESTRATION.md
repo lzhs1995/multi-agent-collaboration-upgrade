@@ -165,12 +165,18 @@ again. Two invocations that are both still running are ambiguous and refuse.
 The published decision is never republished, so without this a single transient
 refusal would leave the node permanently unbindable.
 
-The join requires exactly one publisher call and exactly one matching result
-inside the same original session fence: correctly paired, terminal rc0, complete
-output, the call input equal byte for byte to the reconstructed frozen script,
-and an envelope that pins the decision file's current bytes. A missing,
-duplicated, failed, truncated or non-terminal pair refuses, as does a publish
-the transcript places or stamps before the read it must follow. On the on arm
+The join requires one publisher call and exactly one matching result inside the
+same original session fence: correctly paired, terminal rc0, complete output,
+the call input equal byte for byte to the reconstructed frozen script, and an
+envelope that pins the decision file's current bytes. A missing, duplicated,
+failed, truncated or non-terminal pair refuses, as does a publish the
+transcript places or stamps before the read it must follow. A transiently
+refused publish leaves its own identical call and failed result, and the
+decision is never republished, so identical calls are accepted when every one
+already has exactly one result and exactly one result is the terminal rc0
+success; an identical call still without a result, or two successes, refuse.
+The window ends at the bind control call, so nothing the transcript gains after
+the bind changes the verdict. On the on arm
 the bind additionally requires one complete original read of exactly the advice
 the decision cites; a range read, a truncated output or a digest-only output is
 not a full read, and two valid pairs are ambiguous rather than consumed.
