@@ -1511,21 +1511,27 @@ class PinnedCausalObserverTests(unittest.TestCase):
 
     def test_causal_ack_order_follows_the_request_an_ack_answers_not_its_append_position(self):
         """Without append order, an ACK is joined by the request it answers: a late-written record answering the
-        Read request does not move consumption past a correct ACK, and an ACK answering that request, or naming
-        none, is refused even when it is written after the body response."""
+        Read request does not move consumption past a correct ACK, an ACK answering a request after the body
+        request is accepted, and an ACK answering the Read request, or naming none, is refused even when it is
+        written after the body response."""
         def text(name, request, identity, value):
             return self.chains[name]["assistant"](request, identity, [dict(type="text", text=value)])
+        def three(name):
+            return self.chains[name]["event"]("api-request", id="request-three", base="request-two",
+                                              querySource="repl_main_thread", tail=[])
         def late_record(events):
             # The ACK answers the body request; after a later request, a late record answers request-read.
-            events.extend([text(name, "request-two", "ack", ACK),
-                           self.chains[name]["event"]("api-request", id="request-three", base="request-two",
-                                                      querySource="repl_main_thread", tail=[]),
+            events.extend([text(name, "request-two", "ack", ACK), three(name),
                            text(name, "request-read", "late-read-response", "Late text of the Read turn.")])
+        def ack_to_later(events):
+            # The ACK answers a request issued after the body request, so outside the proof.
+            events.extend([three(name), text(name, "request-three", "ack", ACK)])
         late_ack = lambda name: text(name, "request-read", "ack", ACK)
         unnamed_ack = lambda name: {k: v for k, v in text(name, "request-two", "ack", ACK).items() if k != "requestRef"}
         for name, change, later, reason in (
                 ("late_record", late_record, None, None),
-                ("late_ack", None, late_ack, "answers a request issued before the full body was read"),
+                ("ack_to_later", ack_to_later, None, None),
+                ("late_ack", None, late_ack, "answers a request issued before full body consumption"),
                 ("unnamed_ack", None, unnamed_ack, "names no request it answers")):
             with self.subTest(case=name):
                 attempt, evidence = self.chain(name, change=change)
@@ -1535,10 +1541,12 @@ class PinnedCausalObserverTests(unittest.TestCase):
                 receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
                 if reason is None:
                     order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
-                    slices = json_ref(recorded)["observation"]["proof_slices"]
-                    # The late record is in the proof, after the ACK, which is the body response's last record.
-                    self.assertGreater(max(s["offset"] for s in slices), order["ack"]["offset"])
-                    self.assertEqual(order["body_consumed_at_offset"], order["ack"]["offset"])
+                    self.assertEqual(order["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
+                    if name == "late_record":
+                        slices = json_ref(recorded)["observation"]["proof_slices"]
+                        # The late record is in the proof, after the ACK, which is the body response's last record.
+                        self.assertGreater(max(s["offset"] for s in slices), order["ack"]["offset"])
+                        self.assertEqual(order["body_consumed_at_offset"], order["ack"]["offset"])
                 else:
                     with self.assertRaisesRegex(ContractError, "causal ACK " + reason):
                         downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))

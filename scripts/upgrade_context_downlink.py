@@ -498,7 +498,7 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
     the explicit ACK endpoint and may be no earlier than the response that
     consumed the full body. Under the causal class, whose proof does not rest on
     append order, the ACK must also name the request it answers, and that may not
-    be one the proof issued before the body was read. The observation is first
+    be one the proof issued before its body request. The observation is first
     reproduced at its own pinned endpoint.
     """
     result = verify(result_ref, policy_sha256, interpreter, timeout=timeout)
@@ -527,8 +527,8 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
                      and isinstance(body_request, str) and record.get("requestRef") == body_request]
         require(responses, "causal proof holds no response to its body request")
         consumed_at = max(responses)
-        # The proof's requests issued before the body's Read result was in context; an ACK answering one of them
-        # was generated without the full body, wherever it was appended.
+        # The proof's requests issued before its body request, the one that completed the read/hash chain; an ACK
+        # answering one of them was generated before full body consumption, wherever it was appended.
         earlier = {record.get("id") for ref, record in proof if record.get("type") == "api-request"} - {body_request}
     require(type(ack_end) is int, "explicit ACK endpoint required")
     found = [(ref, record) for ref, record in _records(transcript, transcript["offset"], ack_end)
@@ -540,7 +540,7 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
     if earlier is not None:
         answered = found[0][1].get("requestRef")
         require(isinstance(answered, str), "causal ACK names no request it answers")
-        require(answered not in earlier, "causal ACK answers a request issued before the full body was read")
+        require(answered not in earlier, "causal ACK answers a request issued before full body consumption")
     ack = dict(path=transcript["path"], device=transcript["device"], inode=transcript["inode"], **ref)
     if observed_ack is not None:
         claimed = json_ref(observed_ack, "observed ACK")
