@@ -450,6 +450,39 @@ class Coordinator:
                 State.EVIDENCE_READY: {"candidate"}, State.ACCEPTED: {"accepted_evidence", "verification"},
                 State.BLOCKED: {"blocker"}, State.FAILED_PRESERVED: {"failure", "verification"}}.get(target, set())
 
+    def verify_claimed_binding(self, key, pin, info):
+        """Re-derive an unbound node's binding from frozen evidence.
+
+        A binding file is an ordinary file in a run tree both the supervisor and
+        the runner can write, so "the claim pins a binding" is not by itself a
+        proof that ``bind_unbound`` wrote it. This runs the same join the bind
+        ran, and then the one check the bind could not run yet: the bind control
+        call's own terminal rc0 result, which prints the created binding's
+        path, bytes and sha256. ``bind-unbound`` creates that record with an
+        exclusive create, so only the call that actually created *this* binding
+        can have printed *this* pin - a refused attempt never does.
+
+        That is what makes the route, the eligible lanes and the recomputed
+        lane facts inside the record evidence rather than self-report. It runs
+        on the claim itself and on every ``state()`` replay, so a binding that
+        appeared beside the run tree by any other means is refused at the claim
+        instead of being executed, replayed and accepted.
+        """
+        from upgrade_advice_chain import advice_chain
+        readers = {"codex": NativeReader(self.campaign["sessions"]["codex"], fixtures=self.fixtures)}
+        binding = json_ref(pin, "claimed executor binding")
+        chain = advice_chain(self, key, info, readers, registration=None, binding_ref=pin,
+                             not_after=parse_time(binding["bound_at"]).timestamp())
+        require(chain["decision_publish_natively_joined"] is True,
+                "the claimed binding's decision has no joined native publisher call and result")
+        require(chain["bind_natively_verified"] is True,
+                "the claimed binding does not pin its own native bind control call")
+        require(chain["bind_result_joined"] is True,
+                "the bind control call has no result that created this binding yet; claim after it returns")
+        require(chain["arm"] == "advisory-off" or chain["read"] is not None,
+                "the on arm is claimed only after one complete original read of its advice")
+        return chain
+
     def _check_claim(self, key, info, target, prior):
         from orchestration_evidence import dependency_bindings, task_identity, work_request
         node = self.nodes[key]
@@ -476,6 +509,9 @@ class Coordinator:
             require(binding.get("mode") == binding.get("execution_kind") == mode and
                     binding.get("transport") == resolved_transport(self.campaign, lane),
                     "claimed executor binding resolved another execution ownership")
+            # Not "a binding exists" but "bind_unbound wrote this binding":
+            # re-derived here, so every replay re-derives it too.
+            self.verify_claimed_binding(key, pin, info)
         else:
             lane = node["executor"]
             mode = "local_cli" if node["executor"] == "codex" else "delegated_cli"
@@ -700,6 +736,10 @@ class Coordinator:
                             lane, self.leases.read(), self.campaign["sessions"], occupied,
                             scope=str(node_write_scope(self.root, node)), scope_root="/"),
                         "bound lane or write scope is held by another attempt; preserve it")
+                # Before any write: a binding bind_unbound did not create is
+                # refused here, so a refusal leaves no claim-gates residue.
+                # _check_claim re-derives it again, with the claim's own pins.
+                self.verify_claimed_binding(node_id, binding_pin, {})
             gates = dict(campaign=self.campaign_ref, authorization=self.campaign["authorization"],
                          identity_source="offline_fixture" if self.fixtures else "live_kernel_and_native_foreground",
                          identity=identity, states={k: v.value for k, v in states.items()}, scope=str(output), inputs=self.campaign["inputs"])

@@ -95,6 +95,28 @@ def publish_evidence_asserting_nothing(reader, *, fence, until, script):
                 envelope=strict_json(stdout, "decision publication envelope"))
 
 
+def bind_result_asserting_nothing(reader, bind, binding_pin, *, until):
+    """``bind_result_evidence`` with its record search and no judgment.
+
+    This predicate returns evidence, not a verdict, so "admit everything"
+    cannot be a constant: the caller needs the pair. The excision keeps the
+    original's own forward search for the first output of the bind call's
+    call_id and drops every ``require`` in it - the re-used call_id rule, the
+    terminal rc0 extraction, the printed-pin comparison and the stamp order.
+    Any output is accepted as that call's result, whatever it printed.
+    """
+    from upgrade_body_read_evidence import calls_and_results
+    call = bind["call_record"]
+    start = call["offset"] + call["length"]
+    call_id = bind.get("call_id")
+    for ref, record in reader.records(start, until):
+        _calls, outputs = calls_and_results(record, "codex")
+        if any(found_id == call_id for found_id, _value, _error in outputs):
+            return dict(kind="BIND_RESULT_OBSERVED", call_id=call_id, result_record=ref,
+                        timestamp=record.get("timestamp"))
+    return None
+
+
 def bind_call_taken_from_the_binding_itself(co, key, reader, binding, decision_ref):
     """``bind_call_evidence`` with its judgment removed, not its shape.
 
@@ -201,6 +223,9 @@ REGISTRY = {
         upgrade_advice_chain, bind_call_taken_from_the_binding_itself,
         "test_orchestration_publish_decision.PublishDecisionTests."
         "test_a_published_decision_must_pin_its_own_bind_control_call", NEGATIVE_FLIPS, None),
+    "bind_result_evidence": (
+        upgrade_advice_chain, bind_result_asserting_nothing,
+        _bind("test_a_bind_result_printing_another_binding_is_refused"), NEGATIVE_FLIPS, None),
     # --- orchestration_binding ----------------------------------------------
     "lane_verified": (
         orchestration_binding, ADMIT_EVERYTHING,

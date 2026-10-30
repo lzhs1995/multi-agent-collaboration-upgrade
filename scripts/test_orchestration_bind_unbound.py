@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import orchestration_binding
 from orchestration_binding import (CONTEXT_FACT, POLICY, binding_path, bound_lane, claim_lane, claimed_lanes,
-                                   read_binding)
+                                   read_binding, write_binding)
 from orchestration_campaign import NO_ADVICE, control_script
 from orchestration_common import (ContractError, file_ref, json_ref, parse_time, read_json, tree_manifest,
                                   utc_now, write_json)
@@ -48,7 +48,7 @@ class BindFixtureMixin:
         self.co = self.f.start()
         self.run = self.co.spec["run_id"]
         self.r = Runner(self.f.ref, fixtures=True)
-        self.stamps, self.issued, self.bind_refs = [], None, []
+        self.stamps, self.issued, self.bind_refs, self.bind_call_ids = [], None, [], []
 
     def fixture(self, *, extra_unbound=False, base=None):
         f = CampaignFixture(base or self.temp.name, strategies=("omo",), version=3, arm="B", unbound=True)
@@ -120,19 +120,61 @@ class BindFixtureMixin:
         path = decision if decision is not None else str(co.root / "decisions" / (node_id + ".json"))
         exact = script if script is not None else control_script(
             f.campaign, f.ref, "bind-unbound", co.spec["run_id"], node_id=node_id, decision=path)
-        refs = []
+        refs, call_ids = [], []
         for index in range(count):
             when = at or self.next_stamp()
+            # Unique per appended call: a real supervisor retry is a new call
+            # with its own call_id, and an earlier attempt's output must never
+            # be read as this one's.
+            call_id = f"bind-{node_id}-{len(self.bind_call_ids)}-{index}"
+            call_ids.append(call_id)
             refs.append(f.clients["codex"].append(dict(type="response_item", timestamp=when, payload=dict(
-                type="custom_tool_call", name="exec", call_id="bind-" + node_id + f"-{index}", input=exact))))
+                type="custom_tool_call", name="exec", call_id=call_id, input=exact))))
             self.stamps.append(when)
         self.bind_refs = refs
-        return dict(refs=refs, script=exact, path=path)
+        self.bind_call_ids.extend(call_ids)
+        return dict(refs=refs, call_ids=call_ids, script=exact, path=path)
 
     def bind(self, *, node_id="unbound", co=None, f=None, decision=None):
+        """Bind, then append the bind call's own result as the CLI's exit does.
+
+        ``main`` prints the created binding's ``file_ref`` and the original CLI
+        records that as the bind call's terminal rc0 output, so a claim can join
+        it. Only a *successful* bind gets a result here: a refused attempt's
+        failure output is appended explicitly by the retry cases, so every other
+        refusal test keeps exactly today's transcript.
+        """
         co = co or self.co
+        f = f or self.f
         path = decision if decision is not None else str(co.root / "decisions" / (node_id + ".json"))
-        return co.bind_unbound(node_id, path)
+        ref = co.bind_unbound(node_id, path)
+        self.bind_result(ref, node_id=node_id, co=co, f=f)
+        return ref
+
+    def bind_result(self, ref, *, node_id="unbound", co=None, f=None, exit_code=0, printed=None):
+        """Append the bind call's terminal output for the call the binding pins."""
+        f, co = f or self.f, co or self.co
+        value = json_ref(ref, "binding")
+        call_id = NativeReader(f.campaign["sessions"]["codex"], fixtures=True).record(
+            value["bound_native"])["payload"]["call_id"]
+        text = json.dumps(dict(ref) if printed is None else printed,
+                          ensure_ascii=False, sort_keys=True, allow_nan=False)
+        when = self.next_stamp()
+        record = f.clients["codex"].append(dict(type="response_item", timestamp=when, payload=dict(
+            type="custom_tool_call_output", call_id=call_id,
+            output=json.dumps(dict(exit_code=exit_code, output=text + "\n", wall_time_seconds=0.1)))))
+        self.stamps.append(when)
+        return record
+
+    def refused_bind_output(self, call, *, f=None, index=-1):
+        """Append the failed output a refused bind control call really leaves."""
+        f = f or self.f
+        when = self.next_stamp()
+        record = f.clients["codex"].append(dict(type="response_item", timestamp=when, payload=dict(
+            type="custom_tool_call_output", call_id=call["call_ids"][index],
+            output=json.dumps(dict(exit_code=1, output="REFUSED\n", wall_time_seconds=0.1)))))
+        self.stamps.append(when)
+        return record
 
     def advice(self, *, node_id="unbound", transport=None, budget=None, co=None, f=None, **kwargs):
         """Publish a worker answer as a pinned advice body and its journal."""
@@ -472,6 +514,105 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
             self.bind()
         self.assertFalse(binding_path(self.co.root, "unbound").exists())
 
+    def test_a_binding_bind_unbound_never_wrote_is_refused_by_claim_and_replay(self):
+        """A hand-written binding file routes nothing, however well-formed.
+
+        The run tree is writable, so "the claim pins a binding" is not a proof
+        that `bind_unbound` wrote it. Each case here is the shape a supervisor
+        could place beside a real published decision; all of them are refused
+        before any claim write, and the node stays claimable afterwards.
+        """
+        published = self.publish()["result"]["decision"]
+        pin = {k: published[k] for k in ("path", "bytes", "sha256")}
+        base = dict(schema=orchestration_binding.SCHEMA, campaign=self.f.ref, run_id=self.run,
+                    node_id="unbound", lane="codex", execution_kind="local_cli", transport="codex_cli",
+                    mode="local_cli", arm=self.f.campaign.get("arm"), decision=pin, advice=dict(
+                        arm="advisory-off", advice_sha256=None, worker_status=None, worker_journal=None,
+                        fence=self.co.header["native_start"]["codex"]),
+                    eligible_lanes=["codex"], lane_facts=dict(lanes=self.lane_facts(self.f), context=CONTEXT_FACT),
+                    bound_at="2000-01-01T00:00:00+00:00", bound_native=None,
+                    input_units=self.f.campaign["inputs"],
+                    supervisor_session=self.f.campaign["sessions"]["codex"]["session_id"])
+        call = self.bind_call()
+        cases = {
+            # No bind control call at all: forged from nothing.
+            "no_bind_call": (dict(base), "BIND_CALL"),
+            # A real bind call that was refused: its call exists in the
+            # transcript, but it never printed this binding.
+            "refused_bind_call": (dict(base, bound_native=call["refs"][0], bound_at=self.stamps[-1]),
+                                  "no result that created this binding"),
+        }
+        for label, (value, reason) in cases.items():
+            with self.subTest(label=label):
+                path = binding_path(self.co.root, "unbound")
+                if path.exists():
+                    path.chmod(0o600)
+                    path.unlink()
+                write_binding(self.co, "unbound", value)
+                with self.assertRaisesRegex(ContractError, reason):
+                    self.co.claim("unbound")
+                # Refused before any claim write: no residue, still PENDING.
+                self.assertFalse((self.co.root / "claims" / "unbound.json").exists())
+                self.assertFalse((self.co.root / "nodes" / "unbound" / "claim-gates.json").exists())
+                self.assertEqual(self.co.state()[0]["unbound"], State.PENDING)
+        # The same node binds and claims normally once bind_unbound writes it.
+        path = binding_path(self.co.root, "unbound")
+        path.chmod(0o600)
+        path.unlink()
+        binding = self.bind()
+        self.wait_past(json_ref(binding, "binding")["bound_at"])
+        self.assertEqual(self.co.claim("unbound")["executor_binding"], binding)
+
+    def test_a_bind_result_printing_another_binding_is_refused(self):
+        # The bind call's result is joined by what it printed, so a result that
+        # prints any other pin cannot stand in for this binding's own.
+        self.publish()
+        self.bind_call()
+        ref = self.co.bind_unbound("unbound", str(self.co.root / "decisions" / "unbound.json"))
+        self.bind_result(ref, printed=dict(ref, sha256="0" * 64))
+        with self.assertRaisesRegex(ContractError, "BIND_RESULT: the bind call did not print this"):
+            self.co.claim("unbound")
+        self.assertFalse((self.co.root / "claims" / "unbound.json").exists())
+
+    def test_a_claim_before_the_bind_result_is_refused_and_succeeds_after_it(self):
+        # A crash between the exclusive write and the CLI's own exit leaves a
+        # binding whose creation no result proves yet. Honest refusal, then the
+        # ordinary claim once the original call returns.
+        self.publish()
+        self.bind_call()
+        ref = self.co.bind_unbound("unbound", str(self.co.root / "decisions" / "unbound.json"))
+        with self.assertRaisesRegex(ContractError, "no result that created this binding yet"):
+            self.co.claim("unbound")
+        self.bind_result(ref)
+        self.wait_past(json_ref(ref, "binding")["bound_at"])
+        self.assertEqual(self.co.claim("unbound")["executor_binding"], ref)
+
+    def test_the_claim_leg_names_the_evidence_that_orders_it(self):
+        # R62 wants the chain's order from native records. The claim's own
+        # started_at is the coordinator's wall clock, so the chain says which
+        # evidence orders the claim instead of calling that stamp native.
+        from upgrade_advice_chain import advice_chain
+        for node_id, route, work_kind, expected in (
+                ("unbound", "codex", "coding",
+                 "native_codex_offset_after_the_bind_result_and_coordinator_wall_clock"),
+                ("unbound", "claude_b", "review",
+                 "binding_sha256_pin_of_the_bind_result_and_coordinator_wall_clock")):
+            with self.subTest(route=route):
+                self.doCleanups()
+                self.setUp()
+                self.publish(self.fields(work_kind=work_kind, actual_route=route), node_id=node_id)
+                self.bind_call(node_id=node_id)
+                binding = self.bind(node_id=node_id)
+                self.wait_past(json_ref(binding, "binding")["bound_at"])
+                info = self.co.claim(node_id)
+                chain = advice_chain(self.co, node_id, info, self.readers(), registration=None,
+                                     not_after=parse_time(utc_now()).timestamp() + 600)
+                self.assertIs(chain["bind_result_joined"], True)
+                self.assertEqual(chain["order_basis"]["claim_after_bind"], expected)
+                self.assertEqual(chain["order_basis"]["bound_at"], "native_bind_control_record")
+                self.assertEqual(chain["order_basis"]["claim_started_at"], expected)
+                self.assertTrue(chain["order_verified"])
+
     def test_claim_replay_recomputes_the_same_decision_after_restart(self):
         self.publish()
         self.bind_call()
@@ -712,7 +853,7 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
         self.publish(self.fields(work_kind=work_kind, actual_route=route), node_id=node_id,
                      runner=r, co=co, f=f)
         self.bind_call(node_id=node_id, co=co, f=f)
-        value = json_ref(self.bind(node_id=node_id, co=co), "binding")
+        value = json_ref(self.bind(node_id=node_id, co=co, f=f), "binding")
         self.wait_past(value["bound_at"])
         return co.claim(node_id)
 

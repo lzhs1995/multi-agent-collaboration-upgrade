@@ -389,6 +389,71 @@ def bind_call_evidence(co, key, reader, binding, decision_ref) -> dict:
                 timestamp=record.get("timestamp"))
 
 
+def bind_result_evidence(reader, bind, binding_pin, *, until) -> dict | None:
+    """The bind call's own terminal rc0 result, printing exactly this binding.
+
+    ``bind-unbound`` creates the binding record with an exclusive create and
+    prints its ``path``/``bytes``/``sha256``, so a result that prints this
+    binding's current pin is proof that this call is the one that wrote this
+    file. A refused bind leaves its call in the transcript but never such a
+    result, so a binding that cites a refused attempt cannot pass here.
+
+    ``None`` means "no output record for this call yet" - the bind is still in
+    flight, or it died between its exclusive write and its own exit. That is
+    reported as ``bind_result_joined: false`` and is a refusal only where the
+    binding is relied on (``Coordinator.verify_claimed_binding``), never a
+    silently invented join. A result that exists but is wrong, ambiguous,
+    non-terminal or prints any other pin refuses here.
+
+    The scan stops at the *first* output record carrying the call's call_id, so
+    the verdict is fixed as soon as that record exists and cannot change as the
+    journal grows. A second call record re-using the call_id before that output
+    makes the pairing ambiguous and refuses.
+    """
+    call = bind["call_record"]
+    start = count(call["offset"], "bind call offset") + count(call["length"], "bind call length")
+    end = count(until, "bind result window end")
+    require(start <= end, "BIND_RESULT: the bind result window is inverted")
+    call_id = bind.get("call_id")
+    require(isinstance(call_id, str) and call_id, "BIND_RESULT: the bind call has no call_id")
+    found, scanned = None, 0
+    for ref, record in reader.records(start, end):
+        scanned += ref["length"]
+        require(scanned <= WINDOW_BYTES, "BIND_RESULT_PENDING: original interval exceeds bound")
+        require(globals()["advice_session_consistent"](record, reader),
+                "CONTRADICTORY_NATIVE_SESSION in the bind result window")
+        calls, outputs = calls_and_results(record, "codex")
+        require(not any(found_id == call_id for found_id, _name, _args in calls),
+                "BIND_RESULT: another call record re-uses the bind call's call_id")
+        match = next((value for found_id, value, _error in outputs if found_id == call_id), None)
+        if match is not None:
+            found = (ref, record, match)
+            break
+    if found is None:
+        return None
+    result_ref, result_record, value = found
+    require(result_record.get("payload", {}).get("type") == "custom_tool_call_output",
+            "BIND_RESULT: the output belongs to another tool family")
+    stdout = codex_stdout(value)
+    require(isinstance(stdout, str), "BIND_RESULT: not a complete terminal rc0 result")
+    if stdout.startswith(RTK_NOTICE):
+        stdout = stdout[len(RTK_NOTICE):]
+    try:
+        printed = strict_json(stdout, "bind result")
+    except ContractError as exc:
+        raise ContractError("BIND_RESULT: the printed result is truncated or not JSON") from exc
+    require(isinstance(printed, dict) and all(printed.get(name) == binding_pin.get(name)
+                                              for name in ("path", "bytes", "sha256"))
+            and set(printed) == {"path", "bytes", "sha256"},
+            "BIND_RESULT: the bind call did not print this executor binding")
+    require(parse_time(result_record.get("timestamp"), "bind result timestamp")
+            >= parse_time(bind["timestamp"], "bind call timestamp"),
+            "BIND_RESULT: the output is stamped before its call")
+    reader.record(result_ref)
+    return dict(kind="BIND_RESULT_OBSERVED", call_id=call_id, result_record=result_ref,
+                timestamp=result_record.get("timestamp"))
+
+
 def _publish_join(co, key, reader, decision, decision_ref, binding, advice, read, until):
     """Join the publisher's own native call and result, or state that none exists.
 
@@ -443,6 +508,9 @@ def advice_chain(co, key, info, readers, *, registration, not_after, binding_ref
     Nothing here is taken from a self-reported field: the binding is read
     through its pin, the decision through the pin the binding carries, and the
     read is re-derived from the original native journal inside a fenced window.
+    A frozen binding also has its bind call's own result joined, which is what
+    separates the binding ``bind-unbound`` wrote from one that merely cites a
+    refused attempt.
     """
     require(key in co.nodes, "unknown frozen node")
     if binding_ref is None:
@@ -451,17 +519,24 @@ def advice_chain(co, key, info, readers, *, registration, not_after, binding_ref
         binding_ref = info["executor_binding"]
     binding = json_ref(binding_ref, "original executor binding")
     return chain_from_binding(co, key, info, readers, binding, registration=registration, not_after=not_after,
-                              binding_pin=lambda: file_ref(binding_ref["path"]))
+                              binding_pin=lambda: file_ref(binding_ref["path"]),
+                              result_pin=file_ref(binding_ref["path"]))
 
 
 @contract_errors("advice chain")
-def chain_from_binding(co, key, info, readers, binding, *, registration, not_after, binding_pin) -> dict:
+def chain_from_binding(co, key, info, readers, binding, *, registration, not_after, binding_pin,
+                       result_pin=None) -> dict:
     """The one join, over a binding *value*.
 
     ``advice_chain`` calls it on a frozen binding; ``Coordinator.bind_unbound``
     calls it on the value it is about to create, so a bind can only ever write
     a record this same code will later re-derive identically. ``binding_pin``
     is called last, only once every check has passed.
+
+    ``result_pin`` is the frozen binding's own path/bytes/sha256. It is absent
+    at bind time, where the bind call's result cannot exist yet, and present
+    for every frozen binding, where the result is joined and reported in
+    ``bind_result_joined``.
     """
     require(key in co.nodes, "unknown frozen node")
     require(binding.get("run_id") == co.spec["run_id"] and binding.get("node_id") == key,
@@ -538,6 +613,20 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
     diagnostic_decided_at = None if publish is not None else decision.get("decided_at")
     bound_at = bind["timestamp"] if bind is not None else binding.get("bound_at")
     claim_started_at = info.get("started_at") if isinstance(info, dict) else None
+    # The claim leg. A claim on the Codex lane is in the same transcript, so
+    # the bind result must end before the claim's own native start offset. A
+    # Claude-lane claim has no position in this transcript: it is ordered after
+    # the bind by the claim's sha256 pin of the binding these very bytes
+    # created, which no record could predate. The claim's ``started_at`` is the
+    # coordinator's wall clock, never a native record, and is labelled as such.
+    claim_native = info.get("native_start") if isinstance(info, dict) else None
+    on_codex = binding.get("lane") == "codex" and isinstance(claim_native, dict)
+    result_until = (reader.verify_pin(claim_native) if on_codex else reader.snapshot()["offset"])
+    bind_result = (globals()["bind_result_evidence"](reader, bind, result_pin, until=result_until)
+                   if bind is not None and result_pin is not None else None)
+    claim_basis = None if claim_started_at is None else (
+        "native_codex_offset_after_the_bind_result_and_coordinator_wall_clock" if on_codex
+        else "binding_sha256_pin_of_the_bind_result_and_coordinator_wall_clock")
     order_verified = globals()["ordered_chain"](read_at, decided_at if publish is not None
                                                 else diagnostic_decided_at, bound_at, claim_started_at)
     require(order_verified, "the advice chain is not in read/decide/bind/claim order")
@@ -545,6 +634,7 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
                 decision_write_natively_recognized=False, decision_write_proof=DECISION_WRITE_PROOF,
                 decision_publish_natively_joined=publish is not None,
                 bind_natively_verified=bind is not None, bind_call=bind,
+                bind_result_joined=bind_result is not None, bind_result=bind_result,
                 counted_as_advisory_consumption=counted, worker_status=worker_status,
                 advice=advice.get("advice_sha256"), decision=decision_ref,
                 decided_at=decided_at, diagnostic_decided_at=diagnostic_decided_at,
@@ -556,8 +646,7 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
                                 "decision_file_self_written_consistency_only"),
                     bound_at=("native_bind_control_record" if bind is not None else
                               "binding_self_reported_consistency_only"),
-                    claim_started_at=("coordinator_claim_journal_wall_clock"
-                                      if claim_started_at is not None else None)),
+                    claim_started_at=claim_basis, claim_after_bind=claim_basis),
                 registration=registration, predicates=sorted(ADVICE_PREDICATES))
 
 
@@ -569,4 +658,4 @@ ADVICE_PREDICATES = {name: value for name, value in sorted(globals().items())
                                  "fallback_not_counted_as_consumed", "advice_read_attempts",
                                  "decision_publish_evidence", "publish_call_is_the_frozen_script",
                                  "publication_pins_the_decision", "publish_follows_the_read",
-                                 "decision_is_published", "bind_call_evidence")}
+                                 "decision_is_published", "bind_call_evidence", "bind_result_evidence")}

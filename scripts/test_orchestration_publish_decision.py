@@ -189,7 +189,7 @@ class PublishDecisionTests(unittest.TestCase):
         self.assertEqual(result["order_basis"], dict(read_at="native_read_result_record",
                                                      decided_at="native_publish_result_record",
                                                      bound_at="native_bind_control_record",
-                                                     claim_started_at=None))
+                                                     claim_started_at=None, claim_after_bind=None))
         self.assertTrue(result["order_verified"])
         self.assertEqual(publish["envelope"]["inputs"]["advice"]["sha256"], advice["advice_sha256"])
 
