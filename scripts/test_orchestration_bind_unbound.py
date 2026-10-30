@@ -612,6 +612,42 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
         self.wait_past(json_ref(binding, "binding")["bound_at"])
         self.assertEqual(self.co.claim("unbound")["executor_binding"], binding)
 
+    def test_a_claim_replayed_over_a_forged_binding_is_refused(self):
+        """Replay re-derives the binding too, not only the first claim.
+
+        Every ``state()`` replay runs ``_check_claim``. Here a real bind and
+        claim exist, then the binding file is replaced and the claim's pin is
+        pointed at the replacement (the run tree is writable). Two shapes the
+        reviewers placed: a lane that is not the decision's route, and a
+        decision pin naming a file that was never written.
+        """
+        self.publish()
+        self.bind_call()
+        real = self.bind()
+        self.wait_past(json_ref(real, "binding")["bound_at"])
+        info = self.co.claim("unbound")
+        target = State.LOCAL_RUNNING
+        self.co._check_claim("unbound", info, target, {})
+        value = json_ref(real, "binding")
+        decision = json_ref(value["decision"], "decision")
+        # The forged decision routes elsewhere; the forged binding keeps codex.
+        elsewhere = write_json(self.co.root / "forged-decision.json",
+                               dict(decision, actual_route="claude_b"))
+        forgeries = {
+            "lane outside the decision's route": dict(
+                value, decision={k: elsewhere[k] for k in ("path", "bytes", "sha256")}),
+            "decision never written": dict(
+                value, decision=dict(path=str(self.co.root / "never-written.json"), bytes=0, sha256="0" * 64)),
+        }
+        path = binding_path(self.co.root, "unbound")
+        for label, forged in forgeries.items():
+            with self.subTest(case=label):
+                path.chmod(0o600)
+                path.unlink()
+                pin = write_binding(self.co, "unbound", forged)
+                with self.assertRaises(ContractError):
+                    self.co._check_claim("unbound", dict(info, executor_binding=pin), target, {})
+
     def test_a_bind_result_printing_another_binding_is_refused(self):
         # The bind call's result is joined by what it printed, so a result that
         # prints any other pin cannot stand in for this binding's own.
