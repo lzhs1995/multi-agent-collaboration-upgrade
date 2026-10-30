@@ -70,6 +70,64 @@ class AdviceArmTests(BindFixtureMixin, unittest.TestCase):
             self.bind()
         self.residue()
 
+    def test_off_arm_exposure_to_any_advice_body_is_an_arm_violation(self):
+        """Exposure is recognised however the advice path is spelt.
+
+        The check used to match only this run's own absolute advice directory,
+        so a complete read of another run's or a sibling node's advice, or a
+        relative-path read of this node's advice, bound as advisory-off.
+        """
+        import tempfile
+        from upgrade_advice_publish import advice_marker
+        from orchestration_test_support import CampaignFixture
+
+        def peek(command, *, workdir=None, call_id="peek"):
+            args = dict(cmd=command, login=False, max_output_tokens=12000)
+            if workdir is not None:
+                args["workdir"] = workdir
+            self.f.clients["codex"].append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call", name="exec", call_id=call_id,
+                input="text(await tools.exec_command(" + json.dumps(args) + "));\n")))
+
+        def other_run_full_read():
+            # Another campaign's real advice, read in full with this campaign's
+            # frozen reader: the shared matcher would call it one full read.
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            other = CampaignFixture(directory.name, strategies=("omo",), version=3, arm="B", unbound=True)
+            elsewhere = other.publish_fixture_advice(other.start(), "unbound", transport=suggesting_transport,
+                                                     budget=dict(max_model_requests=80),
+                                                     lanes=self.lane_facts(other))
+            self.assertNotIn(str(self.co.root), elsewhere["command"])
+            self.read(elsewhere)
+
+        cases = {
+            "another run's advice, read in full": other_run_full_read,
+            "a sibling node's advice": lambda: peek(
+                "cat " + str(self.co.root / "nodes" / "unbound-b" / "advice" / ("0" * 64 + ".txt"))),
+            "this node's advice by a relative path": lambda: peek(
+                "cat nodes/unbound/advice/" + "0" * 64 + ".txt", workdir=str(self.co.root)),
+            "a named advice marker": lambda: peek(
+                "grep -r " + advice_marker(self.run, "unbound", "0123456789abcdef") + " ."),
+        }
+        for label, expose in cases.items():
+            with self.subTest(case=label):
+                self.doCleanups()
+                self.setUp()
+                self.publish()
+                expose()
+                self.bind_call()
+                with self.assertRaisesRegex(ContractError, "ADVICE_ARM_VIOLATION: off arm read advice"):
+                    self.bind()
+                self.residue()
+        # A near miss is not advice: a sibling journal file binds.
+        self.doCleanups()
+        self.setUp()
+        self.publish()
+        peek("cat " + str(self.co.root / "nodes" / "unbound-b" / "advice-worker-journal.json"))
+        self.bind_call()
+        self.assertIsNotNone(self.bind())
+
     # --- negative 6: a fallback is never counted as consumption ------------
 
     def test_fallback_or_stopped_auth_is_not_counted_as_consumption(self):

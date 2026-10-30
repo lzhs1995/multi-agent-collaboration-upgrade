@@ -174,7 +174,11 @@ def off_arm_worker_requests_zero(journal) -> bool:
 
 
 def off_arm_has_no_advice_read(evidence) -> bool:
-    """Nothing in the fenced window read an advice body on the off arm."""
+    """No call in the fenced window named an advice body on the off arm.
+
+    ``evidence`` is ``advice_read_attempts``'s list, which matches call
+    arguments only; see that function for what it does not detect.
+    """
     return not evidence
 
 
@@ -183,20 +187,44 @@ def fallback_not_counted_as_consumed(worker_status) -> bool:
     return worker_status not in FALLBACK_STATUSES
 
 
+# Any run's or node's advice directory, absolute or relative: "nodes/<id>/advice"
+# followed by a path separator, a quote, whitespace or the end. A sibling file
+# such as nodes/<id>/advice-worker-journal.json is not an advice body.
+ADVICE_PATH = re.compile(r"(?:^|[\\/\"'\s=])nodes[\\/][A-Za-z0-9][A-Za-z0-9_.:-]{0,63}[\\/]advice(?=[\\/\"'\s]|$)")
+# A concrete advice marker (upgrade_advice_publish.advice_marker): prefix, run,
+# node and the 16-hex advice tag. Only a call that names one can match.
+ADVICE_MARKER = re.compile(r"JEV_ADVICE_[A-Za-z0-9][A-Za-z0-9_.:-]*_[0-9a-f]{16}(?![0-9a-f])")
+
+
 def advice_read_attempts(records, node_root, provider) -> list:
-    """Window calls that *mention* this node's advice directory.
+    """Window calls that name an advice body, however it is spelled.
 
     Deliberately broader than ``valid_command``: this feeds a refusal, so an
-    unparsed or unusual wrapper must not let an off-arm read slip through. A hit
-    is therefore evidence of an attempt, never proof of a complete read - proof
-    is only ever ``advice_read_evidence``'s exact pair.
+    unparsed or unusual wrapper must not let an off-arm read slip through. A
+    call counts when its arguments contain this node's advice directory, *any*
+    run's or node's advice directory in absolute or relative form, or a
+    concrete advice marker. A hit is therefore evidence of an attempt, never
+    proof of a complete read - proof is only ever ``advice_read_evidence``'s
+    exact pair.
+
+    Only call arguments are matched, never tool results. Advice bodies and
+    markers also occur in this repository's own test fixtures and can appear in
+    their output, and an off-arm bind refused by its own window can never be
+    retried (the offending record stays inside every later window), so a
+    result-content rule would turn ordinary test runs on the off arm into
+    permanently unbindable nodes. The trade-offs are stated rather than hidden:
+    a read whose argv names no advice path or marker (for example a path
+    assembled at run time) is not detected, and a call whose argv names a
+    concrete ``nodes/<id>/advice`` path for another reason (a literal code
+    search, say) is refused.
     """
     target = str(Path(node_root) / "advice")
     found = []
     for ref, record in records:
         calls, _ = calls_and_results(record, provider)
         for call_id, name, arguments in calls:
-            if target in str(arguments):
+            text = str(arguments)
+            if target in text or ADVICE_PATH.search(text) or ADVICE_MARKER.search(text):
                 found.append(dict(kind="ADVICE_READ_ATTEMPT", call_id=call_id, name=name, call_record=ref))
     return found
 
