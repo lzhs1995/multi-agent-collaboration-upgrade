@@ -15,13 +15,25 @@ because the body travels inside a JSON envelope. Exposure in a tool result is
 not semantic acceptance; the adopted meaning shows up later, in the real
 decision and its result.
 
-The window is fenced on both sides and bounded. An interval that exceeds the
-bound raises ``ADVICE_READ_WINDOW_PENDING`` instead of returning a false
-negative, and the from-zero scan pattern of ``upgrade_child_budget`` is
+The window is fenced on both sides and bounded: it opens at the advice fence
+and closes at the original bind control call, which every binding must name.
+Nothing after the bind call changes a verdict, so a frozen binding re-derives
+the same chain however long the transcript has grown since. An interval that
+exceeds the bound raises ``ADVICE_READ_WINDOW_PENDING`` instead of returning a
+false negative, and the from-zero scan pattern of ``upgrade_child_budget`` is
 deliberately not copied.
+
+Every stamp in the read < decided < bound < claim order is a native record
+time: the read result, the fixed publisher's success result, the bind call and
+the supervisor's claim or advance call. A leg with no native record is listed
+as missing and is never filled from a self-written field, and only a chain
+with every leg its arm requires is counted as advisory consumption. A decision
+outside the publisher's path is the older exclusive-file shape: it is reported
+as diagnostic and never counted (ROOT R94 section 2).
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from orchestration_common import (ContractError, contract_errors, count, file_ref, json_ref, parse_time,
@@ -127,6 +139,32 @@ def ordered_chain(read_at, decided_at, bound_at, claim_started_at) -> bool:
     return all(earlier < later for earlier, later in zip(moments, moments[1:]))
 
 
+NATIVE_LEGS = ("read", "decided", "bound", "claim")
+
+
+def native_order_complete(legs, arm) -> bool:
+    """Every leg the arm requires has a native record.
+
+    The off arm has no read, so it needs decided, bound and claim; the on arm
+    needs all four. ``ordered_chain`` already refuses a present pair that is
+    out of order, so a leg that is merely missing is reported as unproven
+    order, never as a refusal and never as proven.
+    """
+    required = NATIVE_LEGS[1:] if arm == "advisory-off" else NATIVE_LEGS
+    return isinstance(legs, dict) and all(legs.get(name) is not None for name in required)
+
+
+def bound_at_is_the_native_bind_time(bound_at, native_at) -> bool:
+    """The binding's bound_at is exactly its native bind call's own timestamp.
+
+    ``native_at`` is the datetime ``native_control`` returns for the record the
+    binding names; ``bind_unbound`` writes its ``isoformat()``. Only that exact
+    text matches, so a self-written stamp, even an equivalent spelling of the
+    same moment, never stands in for the native record.
+    """
+    return isinstance(bound_at, str) and bound_at == native_at.isoformat()
+
+
 def off_arm_has_no_advice_file(node_root) -> bool:
     """No advice body exists under this node at all on the off arm."""
     directory = Path(node_root) / "advice"
@@ -221,18 +259,27 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     """The one original publisher call/result pair for this exact script.
 
     Requires exactly one supervisor ``custom_tool_call`` whose input equals the
-    script, exactly one output record for its call_id anywhere after it up to
-    EOF (a duplicate result after the window still refuses), a terminal rc0
-    result whose complete stdout is the JSON envelope, and the pair inside the
-    fenced window. The stdout is extracted with the shared ``codex_stdout``
-    exactly as the advice read does; ``codex_stdout`` itself is unchanged.
+    script, no other call record of any input sharing its call_id, exactly one
+    output record for that call_id, a terminal rc0 result whose complete stdout
+    is the JSON envelope, and all of it inside the fenced window.
+
+    The window ends at ``until`` - the bind control call - and never at the
+    live EOF (design Q25). A frozen binding is re-derived on every claim and
+    replay, so a record appended after the bind (for example a repeated
+    publish command the publisher itself refused) must not change the verdict
+    of a binding that already passed: the verdict depends on the frozen
+    evidence, not on when it is evaluated. The stdout is extracted with the
+    shared ``codex_stdout`` exactly as the advice read does; ``codex_stdout``
+    itself is unchanged.
     """
     end = count(until, "decision publish window end")
-    records = _window(reader, fence, reader.snapshot()["offset"])
-    calls, results = [], {}
+    records = _window(reader, fence, end)
+    calls, results, call_ids = [], {}, {}
     for ref, record in records:
         found, outputs = calls_and_results(record, "codex")
         for call_id, name, arguments in found:
+            if isinstance(call_id, str) and call_id:
+                call_ids[call_id] = call_ids.get(call_id, 0) + 1
             if (record.get("payload", {}).get("type") == "custom_tool_call"
                     and name in ("exec", "functions.exec")
                     and globals()["publish_call_is_the_frozen_script"](arguments, script)):
@@ -243,6 +290,8 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     require(len(calls) == 1, "DECISION_PUBLISH_CALL: exactly one original publisher call required")
     call_ref, call_record, call_id = calls[0]
     require(isinstance(call_id, str) and call_id, "DECISION_PUBLISH_CALL: the call has no call_id")
+    require(call_ids.get(call_id) == 1,
+            "DECISION_PUBLISH_CALL: another call record shares the publisher call's call_id")
     require(call_ref["offset"] + call_ref["length"] <= end, "DECISION_PUBLISH_CALL: outside the fenced window")
     matched = results.get(call_id, [])
     require(len(matched) == 1, "DECISION_PUBLISH_RESULT: exactly one output record for the call required")

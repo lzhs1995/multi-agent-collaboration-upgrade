@@ -301,6 +301,70 @@ class PublishDecisionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, reason):
                     self.chain(self.off_arm(), published)
 
+    def test_a_second_call_record_sharing_the_publisher_call_id_is_refused(self):
+        # One exact publisher call and one rc0 output, plus a second call record
+        # with another input under the same call_id: the output could belong to
+        # either call, so it is credited to neither.
+        client = self.f.clients["codex"]
+        args = json.dumps(dict(cmd="cat envelope.json", login=False))
+
+        def foreign_call():
+            client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call", name="exec", call_id="publish-decision",
+                input="text(await tools.exec_command(" + args + "));\n")))
+        published = self.publish(between=foreign_call)
+        with self.assertRaisesRegex(ContractError, "shares the publisher call's call_id"):
+            self.chain(self.off_arm(), published)
+
+    def test_a_late_repeated_publish_after_the_bind_does_not_change_a_frozen_verdict(self):
+        # The window ends at the bind call (design Q25), so what the transcript
+        # gains afterwards cannot change the verdict of a binding that passed.
+        published = self.publish()
+        bind = self.bind_call()
+        pin = {k: published["result"]["decision"][k] for k in ("path", "bytes", "sha256")}
+        ref = write_binding(self.co, "unbound", self.binding(self.off_arm(), pin, bound_native=bind["ref"],
+                                                             bound_at=bind["at"]))
+        later = parse_time(utc_now()).timestamp() + 600
+
+        def chain():
+            return advice_chain(self.co, "unbound", {}, self.readers(), registration=None,
+                                not_after=later, binding_ref=ref)
+        first = chain()
+        self.assertIs(first["decision_publish_natively_joined"], True)
+        client = self.f.clients["codex"]
+        # The supervisor repeats the exact publish command; the publisher
+        # refuses it, but the call and its failed result stay in the transcript.
+        client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            type="custom_tool_call", name="exec", call_id="publish-again", input=published["script"])))
+        with self.assertRaisesRegex(ContractError, "original published decision exists"):
+            self.r.publish_decision(self.run, "unbound", self.fields())
+        client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            type="custom_tool_call_output", call_id="publish-again",
+            output=json.dumps(dict(exit_code=1, output="refused\n", wall_time_seconds=0.1)))))
+        # A late second output for the original call_id is outside the window too.
+        client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            type="custom_tool_call_output", call_id="publish-decision",
+            output=json.dumps(dict(exit_code=1, output="late\n", wall_time_seconds=0.1)))))
+        self.assertEqual(chain(), first)
+        # The same repeated call *inside* the window, before any bind call,
+        # still refuses: the bound is the bind call, not a weaker rule.
+        self.fresh()
+        published = self.publish()
+        self.f.clients["codex"].append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+            type="custom_tool_call", name="exec", call_id="publish-again", input=published["script"])))
+        with self.assertRaisesRegex(ContractError, "DECISION_PUBLISH_CALL"):
+            self.chain(self.off_arm(), published)
+
+    def bind_call(self, node_id="unbound"):
+        """Append the original supervisor's bind control call for the published decision."""
+        script = control_script(self.f.campaign, self.f.ref, "bind-unbound", self.run, node_id=node_id,
+                                decision=str(published_decision_path(self.co, node_id)))
+        when = self.next_stamp()
+        ref = self.f.clients["codex"].append(dict(type="response_item", timestamp=when, payload=dict(
+            type="custom_tool_call", name="exec", call_id="bind-" + node_id, input=script)))
+        self.reads.append(dict(result_at=when))
+        return dict(ref=ref, at=when, script=script)
+
     def test_publishing_before_the_read_is_refused(self):
         advice = self.publish_advice()
         fields = self.fields(advice_sha256=advice["advice_sha256"])

@@ -68,14 +68,14 @@ def publish_evidence_asserting_nothing(reader, *, fence, until, script):
     be a constant: the caller needs a pair to compare against the expected
     envelope. The excision therefore keeps the original's own search over the
     same fenced window and drops every ``require`` in it - the pairing, the
-    single-call and single-result rules, the terminal rc0 extraction, the window
-    bound and the stamp order. It takes the first call and the first output it
-    sees. Nothing here reconstructs or repairs an envelope: if the window holds
-    no usable pair this raises, exactly as an absent join should.
+    single-call, shared-call_id and single-result rules, the terminal rc0
+    extraction and the stamp order. It takes the first call and the first output
+    it sees. Nothing here reconstructs or repairs an envelope: if the window
+    holds no usable pair this raises, exactly as an absent join should.
     """
     from upgrade_body_read_evidence import RTK_NOTICE, calls_and_results, codex_stdout
     from orchestration_common import strict_json
-    records = upgrade_advice_chain._window(reader, fence, reader.snapshot()["offset"])
+    records = upgrade_advice_chain._window(reader, fence, until)
     calls, results = [], {}
     for ref, record in records:
         found, outputs = calls_and_results(record, "codex")
