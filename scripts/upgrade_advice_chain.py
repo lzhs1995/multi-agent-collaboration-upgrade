@@ -26,21 +26,29 @@ its self-written stamp under ``diagnostic_decided_at``. ``order_basis`` names,
 per stamp, which record supplied it, so a true ``order_verified`` can never be
 read as a native proof of a leg that has none.
 
-The window is fenced on both sides and bounded: it opens at the advice fence
-and closes at the original bind control call, which every binding must name.
-Nothing after the bind call changes a verdict, so a frozen binding re-derives
-the same chain however long the transcript has grown since. An interval that
-exceeds the bound raises ``ADVICE_READ_WINDOW_PENDING`` instead of returning a
-false negative, and the from-zero scan pattern of ``upgrade_child_budget`` is
-deliberately not copied.
+The window is fenced on both sides and bounded. It opens at the advice fence.
+For a published decision it closes at the bind control call that
+``bind_call_evidence`` re-derives (design Q25), so nothing appended after that
+call changes the publish join or the read evidence; the bind call's own result
+is then the first output for its call_id, which settles it once it exists. The
+older diagnostic shape, which is never counted, keeps the binding's own offset
+or the current snapshot as its bound. An interval that exceeds the bound
+raises ``ADVICE_READ_WINDOW_PENDING`` instead of returning a false negative,
+and the from-zero scan pattern of ``upgrade_child_budget`` is deliberately not
+copied.
 
-Every stamp in the read < decided < bound < claim order is a native record
-time: the read result, the fixed publisher's success result, the bind call and
-the supervisor's claim or advance call. A leg with no native record is listed
-as missing and is never filled from a self-written field, and only a chain
-with every leg its arm requires is counted as advisory consumption. A decision
-outside the publisher's path is the older exclusive-file shape: it is reported
-as diagnostic and never counted (ROOT R94 section 2).
+In the read < decided < bound < claim order of a published decision, the first
+three stamps are native record times where the arm has them (the off arm has
+no read): the read result, the fixed publisher's success result and the bind
+control call. A claim has no one native control record to join: it is issued
+either by a direct ``claim`` call or from inside an ``advance`` call, whose
+argv also carries its step and time limits and which may take up to 32
+actions, so no reconstructed script identifies one claim. Its leg is therefore
+ordered by evidence rather than by a stamp. On the Codex lane the bind result
+must end before the claim's own native start offset; on a Claude lane the
+claim pins the sha256 of the binding that result printed. Its ``started_at`` is
+the coordinator's wall clock, checked only for contradiction and labelled so in
+``order_basis``.
 """
 from __future__ import annotations
 
@@ -148,32 +156,6 @@ def ordered_chain(read_at, decided_at, bound_at, claim_started_at) -> bool:
     stamps = [value for value in (read_at, decided_at, bound_at, claim_started_at) if value is not None]
     moments = [parse_time(value, "chain timestamp") for value in stamps]
     return all(earlier < later for earlier, later in zip(moments, moments[1:]))
-
-
-NATIVE_LEGS = ("read", "decided", "bound", "claim")
-
-
-def native_order_complete(legs, arm) -> bool:
-    """Every leg the arm requires has a native record.
-
-    The off arm has no read, so it needs decided, bound and claim; the on arm
-    needs all four. ``ordered_chain`` already refuses a present pair that is
-    out of order, so a leg that is merely missing is reported as unproven
-    order, never as a refusal and never as proven.
-    """
-    required = NATIVE_LEGS[1:] if arm == "advisory-off" else NATIVE_LEGS
-    return isinstance(legs, dict) and all(legs.get(name) is not None for name in required)
-
-
-def bound_at_is_the_native_bind_time(bound_at, native_at) -> bool:
-    """The binding's bound_at is exactly its native bind call's own timestamp.
-
-    ``native_at`` is the datetime ``native_control`` returns for the record the
-    binding names; ``bind_unbound`` writes its ``isoformat()``. Only that exact
-    text matches, so a self-written stamp, even an equivalent spelling of the
-    same moment, never stands in for the native record.
-    """
-    return isinstance(bound_at, str) and bound_at == native_at.isoformat()
 
 
 def off_arm_has_no_advice_file(node_root) -> bool:
@@ -539,9 +521,13 @@ def _advice_expectation(co, key, decision):
 def advice_chain(co, key, info, readers, *, registration, not_after, binding_ref=None) -> dict:
     """Recompute the advice/read/decision/binding join from frozen evidence.
 
-    Nothing here is taken from a self-reported field: the binding is read
-    through its pin, the decision through the pin the binding carries, and the
-    read is re-derived from the original native journal inside a fenced window.
+    No proof is taken from a self-reported field: the binding is read through
+    its pin, the decision through the pin the binding carries, and the read is
+    re-derived from the original native journal inside a fenced window. For a
+    published decision the decision and bind times are the publisher result's
+    and the bind call's own native timestamps. The self-written stamps that
+    remain (a diagnostic decision's ``decided_at``, the claim's ``started_at``)
+    are only checked for contradiction and are labelled in ``order_basis``.
     A frozen binding also has its bind call's own result joined, which is what
     separates the binding ``bind-unbound`` wrote from one that merely cites a
     refused attempt.
