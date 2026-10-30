@@ -146,6 +146,38 @@ class AdviceChainTests(unittest.TestCase):
         self.assertEqual(envelope["reference"]["sha256"], advice["advice_sha256"])
         self.assertEqual(result["read"]["reference"], envelope["reference"])
 
+    def test_an_unpublished_decision_is_still_checked_before_it_is_reported(self):
+        """The diagnostic shape is never counted, and it is not read unchecked.
+
+        A decision outside the publisher's path used to skip ``check_decision``
+        and the supervisor-session check, so a record with any schema, session,
+        work kind, reason or extra key came back as consumption. It now refuses
+        with the same reasons the publisher and the bind give.
+        """
+        cases = {
+            "bind decision schema changed": dict(schema="not-a-decision-schema"),
+            "another supervisor session": dict(supervisor_session="0" * 32),
+            "not a frozen S0 work kind": dict(work_kind="deploying"),
+            "supervisor's reason": dict(reason=""),
+            "bind decision fields changed": dict(extra="x"),
+            "action must be accepted, rejected or supervisor_review": dict(action="ignored-it"),
+        }
+        for reason, change in cases.items():
+            with self.subTest(case=reason):
+                self.fresh()
+                advice = self.on_arm()
+                self.read(advice)
+                decision = self.decision(advice, **change)
+                with self.assertRaisesRegex(ContractError, reason):
+                    self.chain(advice, decision=decision)
+        # The same shape with valid fields is reported, and still not counted.
+        self.fresh()
+        advice = self.on_arm()
+        self.read(advice)
+        result = self.chain(advice)
+        self.assertEqual(result["status"], "DIAGNOSTIC_NOT_NATIVELY_JOINED")
+        self.assertIs(result["counted_as_advisory_consumption"], False)
+
     def test_partial_or_truncated_codex_read_is_not_full(self):
         # Each case derives its mutation from its *own* fixture's complete read.
         mutations = {
