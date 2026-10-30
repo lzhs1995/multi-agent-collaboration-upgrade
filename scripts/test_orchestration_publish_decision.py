@@ -329,7 +329,7 @@ class PublishDecisionTests(unittest.TestCase):
         refusal (here a busy node lock) would leave the node permanently
         unbindable. The publisher call is the one identical call whose result
         is a terminal rc0 envelope; every other identical call must already
-        have its own single result that is not.
+        have its own single result that is a terminal failure.
         """
         from orchestration_common import exclusive_lock
         fields = self.fields()
@@ -373,6 +373,48 @@ class PublishDecisionTests(unittest.TestCase):
             record["payload"], call_id="publish-twice")))
         with self.assertRaisesRegex(ContractError, "DECISION_PUBLISH_CALL"):
             self.chain(self.off_arm(), published)
+
+    def test_an_identical_call_that_has_not_terminally_failed_blocks_the_retry(self):
+        """Only a terminal failure lets an identical retry be the publisher call.
+
+        ``codex_stdout`` returns ``None`` both for a terminal nonzero exit and
+        for a result that is not terminal at all. A yielded ``session_id`` or
+        ``cell_id`` snapshot, or an envelope with no measured exit, belongs to a
+        call that may still be running and may still create the decision, so
+        it is no more a refused attempt than a call with no result.
+        """
+        nonterminal = {
+            "yielded_session": json.dumps(dict(session_id="42", output="running")),
+            "yielded_cell": json.dumps(dict(exit_code=0, cell_id="7", output="", wall_time_seconds=0.1)),
+            "rc0_with_open_session": json.dumps(dict(exit_code=0, session_id="42", output="",
+                                                     wall_time_seconds=0.1)),
+            "no_exit_code": json.dumps(dict(output="publishing\n", wall_time_seconds=0.1)),
+            "unmeasured_text": "Process running with session ID 42\n",
+        }
+
+        def earlier_attempt(call_id, output):
+            exact = control_script(self.f.campaign, self.f.ref, "publish-decision", self.run,
+                                   node_id="unbound", decision_fields=self.fields())
+            client = self.f.clients["codex"]
+            client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call", name="exec", call_id=call_id, input=exact)))
+            client.append(dict(type="response_item", timestamp=self.next_stamp(), payload=dict(
+                type="custom_tool_call_output", call_id=call_id, output=output)))
+        for label, output in nonterminal.items():
+            with self.subTest(label=label):
+                self.fresh()
+                earlier_attempt("publish-earlier", output)
+                published = self.publish(self.fields())
+                with self.assertRaisesRegex(ContractError, "has not terminally failed"):
+                    self.chain(self.off_arm(), published)
+        # A terminal failure in the measured text envelope is a refused attempt
+        # like the JSON one, so the retry still joins.
+        self.fresh()
+        earlier_attempt("publish-refused-text",
+                        "Wall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nREFUSED\n")
+        published = self.publish(self.fields())
+        self.assertEqual(self.chain(self.off_arm(), published)["decision_publish"]["call_id"],
+                         "publish-decision")
 
     def test_a_second_call_record_sharing_the_publisher_call_id_is_refused(self):
         # One exact publisher call and one rc0 output, plus a second call record

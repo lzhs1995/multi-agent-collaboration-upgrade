@@ -161,7 +161,10 @@ A refused bind does leave its own native call and that call's failed result in
 the transcript, and that is what makes a retry possible. The bind joins the one
 invocation that has not returned yet, so a transiently refused bind - the bound
 lane taken at that moment, a busy lock - is retried by invoking `bind-unbound`
-again. Two invocations that are both still running are ambiguous and refuse.
+again. Only a terminal output is a return: an attempt whose only output is a
+yielded `session_id`/`cell_id` snapshot or an unmeasured envelope may still be
+running, so it stays live. Two invocations that are both still running are
+ambiguous and refuse.
 The published decision is never republished, so without this a single transient
 refusal would leave the node permanently unbindable.
 
@@ -173,8 +176,10 @@ failed, truncated or non-terminal pair refuses, as does a publish the
 transcript places or stamps before the read it must follow. A transiently
 refused publish leaves its own identical call and failed result, and the
 decision is never republished, so identical calls are accepted when every one
-already has exactly one result and exactly one result is the terminal rc0
-success; an identical call still without a result, or two successes, refuse.
+already has exactly one terminal result, exactly one result is the terminal rc0
+success and every other is a terminal failure; an identical call still without
+a result, one whose result is a yielded or unmeasured snapshot (it may still be
+running and create the decision), or two successes, refuse.
 The window ends at the bind control call, so nothing the transcript gains after
 the bind changes the verdict. On the on arm
 the bind additionally requires one complete original read of exactly the advice

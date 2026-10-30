@@ -73,8 +73,9 @@ Four more predicates return evidence: `decision_publish_evidence`,
 the strong form through a shape-preserving excision that keeps the original's
 own record search and drops its judgments, so it admits what the real function
 refuses. For `decision_publish_evidence` that means the pairing rule, the
-one-success rule over identical retries, the shared-call_id and single-result
-rules, the terminal rc0 extraction and the stamp order, over the same window
+one-success and terminal-failure rules over identical retries, the
+shared-call_id and single-result rules, the terminal rc0 extraction and the
+stamp order, over the same window
 bounded by the bind call;
 it is mapped to a duplicate-result negative, where the records are present
 either way and only that single-result rule can refuse. `bind_call_evidence`

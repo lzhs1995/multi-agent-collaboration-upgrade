@@ -58,6 +58,7 @@ from pathlib import Path
 from orchestration_common import (ContractError, contract_errors, count, file_ref, json_ref, parse_time,
                                   require, strict_json)
 from upgrade_body_read_evidence import RTK_NOTICE, body_read_evidence, calls_and_results, codex_stdout
+from upgrade_body_read_evidence import strict_json as _envelope_json
 
 SCHEMA = "upgrade-advice-chain-v1"
 READ_PROOF = "exact_envelope_plus_body_sha256_not_whole_output_sha256"
@@ -276,6 +277,41 @@ def publish_follows_the_read(read, publish) -> bool:
     return publish["call_record"]["offset"] >= read_end and call_at > read_at
 
 
+def _attempt_state(value) -> str:
+    """How one native result of an identical control call ended.
+
+    ``codex_stdout`` returns ``None`` both for a terminal nonzero exit and for a
+    result that is not terminal at all, so it cannot say whether an earlier
+    identical attempt is over. This reads the same measured envelopes the same
+    way: ``SUCCEEDED`` where ``codex_stdout`` extracts the stdout, ``FAILED``
+    only for a measured terminal nonzero exit, and ``UNKNOWN`` for everything
+    else - a yielded ``session_id``/``cell_id`` snapshot, a missing exit or an
+    unmeasured envelope - because that call may still be running.
+    """
+    if isinstance(codex_stdout(value), str):
+        return "SUCCEEDED"
+    if isinstance(value, list):
+        if (len(value) != 2 or any(not isinstance(v, dict) or v.get("type") != "input_text"
+                                  or set(v) != {"type", "text"} for v in value)
+                or re.fullmatch(r"Script completed\nWall time [0-9.]+ seconds\nOutput:\n",
+                                value[0]["text"]) is None):
+            return "UNKNOWN"
+        value = value[1]["text"]
+    if isinstance(value, str):
+        try:
+            value = _envelope_json(value)
+        except (ValueError, TypeError):
+            failed = re.fullmatch(r"(?:Chunk ID: [^\n]+\n)?Wall time: [0-9.]+ seconds\n"
+                                  r"Process exited with code [1-9][0-9]*\n(?:Final output|Output):\n[\s\S]*", value)
+            return "FAILED" if failed else "UNKNOWN"
+    if (isinstance(value, dict) and type(value.get("exit_code")) is int and value["exit_code"] != 0
+            and value.get("session_id") is None and value.get("cell_id") is None
+            and not set(value) - {"exit_code", "output", "chunk_id", "wall_time_seconds",
+                                  "original_token_count", "session_id"}):
+        return "FAILED"
+    return "UNKNOWN"
+
+
 def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     """The one original publisher call/result pair for this exact script.
 
@@ -287,11 +323,12 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     A transiently refused publish (a busy lock, a gate) leaves its own call and
     failed result, and the retry is a byte-identical call, because the decision
     is published once and never republished. Several identical calls are
-    therefore accepted only when every one already has exactly one result and
-    exactly one of those results is a terminal rc0 success: that one call is
-    the publisher call. An identical call without a result may still be
-    running, and two successes cannot both have created one exclusive file, so
-    both refuse.
+    therefore accepted only when every one already has exactly one terminal
+    result: exactly one terminal rc0 success, which is the publisher call, and
+    every other a terminal failure. An identical call without a result, or
+    whose result is a yielded or unmeasured snapshot (``_attempt_state``), may
+    still be running, and two successes cannot both have created one exclusive
+    file, so these refuse.
 
     The window ends at ``until`` - the bind control call - and never at the
     live EOF (design Q25). A frozen binding is re-derived on every claim and
@@ -326,11 +363,15 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
         # A refused publish leaves its call and its failed result behind, and
         # the decision is never republished, so a retry is one more identical
         # call. Each must already have exactly one result (an unanswered
-        # identical call may still be running), and exactly one of them may be
-        # the terminal rc0 success that created the decision.
+        # identical call may still be running), every result must be terminal
+        # (a yielded or unmeasured one may still be running too), and exactly
+        # one of them may be the terminal rc0 success that created the decision.
         require(all(len(results.get(found_id, [])) == 1 for _ref, _record, found_id in calls),
                 "DECISION_PUBLISH_CALL: exactly one original publisher call required; "
                 "an identical call has no single result")
+        require(all(_attempt_state(results[found_id][0][2]) != "UNKNOWN" for _ref, _record, found_id in calls),
+                "DECISION_PUBLISH_CALL: exactly one original publisher call required; "
+                "an identical call has not terminally failed")
         succeeded = [entry for entry in calls
                      if isinstance(codex_stdout(results[entry[2]][0][2]), str)]
         require(len(succeeded) == 1,
@@ -436,8 +477,11 @@ def live_bind_call(reader, script, *, after) -> dict:
 
     A refused attempt has returned, so the original CLI has already recorded
     its terminal output. The invocation executing *now* is therefore the one
-    matching call with no output record. Exactly one such call is required: two
-    unanswered identical calls are genuinely ambiguous, so they still refuse.
+    matching call with no terminal output record. Only a terminal output counts
+    as a return: a yielded or unmeasured output (``_attempt_state``) may belong
+    to an attempt that is still running, so that call stays live. Exactly one
+    live call is required: two such identical calls are genuinely ambiguous, so
+    they still refuse.
     A *successful* earlier attempt cannot be among them because its binding
     exists, which ``bind_unbound`` refuses long before reaching here.
     """
@@ -451,8 +495,8 @@ def live_bind_call(reader, script, *, after) -> dict:
             native_control(reader, ref, script)
             matches.append((ref, payload.get("call_id")))
         _calls, outputs = calls_and_results(record, "codex")
-        answered.update(call_id for call_id, _value, _error in outputs
-                        if isinstance(call_id, str) and call_id)
+        answered.update(call_id for call_id, value, _error in outputs
+                        if isinstance(call_id, str) and call_id and _attempt_state(value) != "UNKNOWN")
     live = [ref for ref, call_id in matches if call_id not in answered]
     require(len(live) == 1, "one original supervisor control invocation required; duplicate/absent request")
     return live[0]

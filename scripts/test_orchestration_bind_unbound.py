@@ -546,6 +546,28 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
         self.refused_bind_output(call, index=0)
         self.assertIsNotNone(self.bind())
 
+    def test_an_earlier_bind_that_has_not_returned_terminally_stays_live(self):
+        # A yielded or unmeasured output is not a return: that attempt may still
+        # be running, so beside the new call two invocations are live and the
+        # bind refuses as ambiguous, exactly as for two unanswered calls.
+        nonterminal = (json.dumps(dict(session_id="42", output="running")),
+                       json.dumps(dict(exit_code=0, cell_id="7", output="", wall_time_seconds=0.1)),
+                       json.dumps(dict(output="binding\n", wall_time_seconds=0.1)))
+        for output in nonterminal:
+            with self.subTest(output=output):
+                self.doCleanups()
+                self.setUp()
+                self.publish()
+                first = self.bind_call()
+                when = self.next_stamp()
+                self.f.clients["codex"].append(dict(type="response_item", timestamp=when, payload=dict(
+                    type="custom_tool_call_output", call_id=first["call_ids"][0], output=output)))
+                self.stamps.append(when)
+                self.bind_call()
+                with self.assertRaisesRegex(ContractError, "one original supervisor control invocation required"):
+                    self.bind()
+                self.residue()
+
     def test_bind_is_new_work_under_stop_and_preserved_failure(self):
         self.publish()
         self.bind_call()
