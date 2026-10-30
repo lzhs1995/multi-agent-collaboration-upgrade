@@ -1210,7 +1210,8 @@ class CausalContextClassTests(unittest.TestCase):
         self.assertEqual((call["ignore_environment"], call["dont_write_bytecode"]), (1, True))
         recorded = write_json(f.root / "evidence" / "result.json", result)
         self.assertEqual(downlink.verify(recorded, f.policy["sha256"], INTERPRETER), json_ref(recorded))
-        f.append(ack_record())
+        # A causal ACK names the request it answers; this one answers the body request.
+        f.append(ack_record(requestRef="request-two"))
         self.assertEqual(f.order(recorded)["ordering"], "ACK_AFTER_FULL_BODY_CONSUMPTION")
 
     def test_causal_class_never_crosses_with_the_other_policies_or_observer_outputs(self):
@@ -1489,6 +1490,57 @@ class PinnedCausalObserverTests(unittest.TestCase):
                     self.assertGreater(max(s["offset"] for s in slices), order["ack"]["offset"])
                 else:
                     with self.assertRaisesRegex(ContractError, "ACK precedes full body consumption"):
+                        downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
+
+    def test_ack_order_waits_for_every_observed_record_of_the_body_response(self):
+        """An ACK followed by another record of the same body response is refused, as the sequential class refuses
+        it on the in-order chain: consumption is the body response's last observed record, so a lane's ACK ends its
+        turn."""
+        def split(events):
+            events.extend([self.chains[name]["assistant"]("request-two", "ack", [dict(type="text", text=ACK)]),
+                           self.chains[name]["assistant"]("request-two", "response-more",
+                                                          [dict(type="text", text="More of the same response.")])])
+        for name, inverted, policy in (("split_inverted", True, None), ("split_ordered", False, self.sequential)):
+            with self.subTest(case=name):
+                attempt, evidence = self.chain(name, inverted=inverted, change=split)
+                recorded = write_json(evidence / "result.json", self.observe(name, attempt, evidence, policy))
+                receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
+                with self.assertRaisesRegex(ContractError, "ACK precedes full body consumption"):
+                    downlink.ack_order(recorded, (policy or self.policy)["sha256"], INTERPRETER, receipt,
+                                       self.eof(name))
+
+    def test_causal_ack_order_follows_the_request_an_ack_answers_not_its_append_position(self):
+        """Without append order, an ACK is joined by the request it answers: a late-written record answering the
+        Read request does not move consumption past a correct ACK, and an ACK answering that request, or naming
+        none, is refused even when it is written after the body response."""
+        def text(name, request, identity, value):
+            return self.chains[name]["assistant"](request, identity, [dict(type="text", text=value)])
+        def late_record(events):
+            # The ACK answers the body request; after a later request, a late record answers request-read.
+            events.extend([text(name, "request-two", "ack", ACK),
+                           self.chains[name]["event"]("api-request", id="request-three", base="request-two",
+                                                      querySource="repl_main_thread", tail=[]),
+                           text(name, "request-read", "late-read-response", "Late text of the Read turn.")])
+        late_ack = lambda name: text(name, "request-read", "ack", ACK)
+        unnamed_ack = lambda name: {k: v for k, v in text(name, "request-two", "ack", ACK).items() if k != "requestRef"}
+        for name, change, later, reason in (
+                ("late_record", late_record, None, None),
+                ("late_ack", None, late_ack, "answers a request issued before the full body was read"),
+                ("unnamed_ack", None, unnamed_ack, "names no request it answers")):
+            with self.subTest(case=name):
+                attempt, evidence = self.chain(name, change=change)
+                recorded = write_json(evidence / "result.json", self.observe(name, attempt, evidence))
+                if later:
+                    self.append(name, later(name))
+                receipt = handshake(evidence / "handshake.json", json_ref(attempt)["native_binding"])
+                if reason is None:
+                    order = downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
+                    slices = json_ref(recorded)["observation"]["proof_slices"]
+                    # The late record is in the proof, after the ACK, which is the body response's last record.
+                    self.assertGreater(max(s["offset"] for s in slices), order["ack"]["offset"])
+                    self.assertEqual(order["body_consumed_at_offset"], order["ack"]["offset"])
+                else:
+                    with self.assertRaisesRegex(ContractError, "causal ACK " + reason):
                         downlink.ack_order(recorded, self.policy["sha256"], INTERPRETER, receipt, self.eof(name))
 
 

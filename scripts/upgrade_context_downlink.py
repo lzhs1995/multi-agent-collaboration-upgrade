@@ -496,8 +496,10 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
     never compared with them. The ACK is joined to its original handshake by
     payload and nonce, must be the only exact ACK between the original fence and
     the explicit ACK endpoint and may be no earlier than the response that
-    consumed the full body. The observation is first reproduced at its own
-    pinned endpoint.
+    consumed the full body. Under the causal class, whose proof does not rest on
+    append order, the ACK must also name the request it answers, and that may not
+    be one the proof issued before the body was read. The observation is first
+    reproduced at its own pinned endpoint.
     """
     result = verify(result_ref, policy_sha256, interpreter, timeout=timeout)
     attempt = json_ref(result["attempt"], "dispatch attempt")
@@ -513,17 +515,21 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
             and handshake.get("marker", binding["receipt_marker"]) == binding["receipt_marker"],
             "handshake receipt is not this notice's original ACK contract")
     slices = result["observation"]["proof_slices"]
-    consumed_at = max(s["offset"] for s in slices)
+    consumed_at, earlier = max(s["offset"] for s in slices), None
     if result["evidence_class"] == CAUSAL_EVIDENCE_CLASS:
         # A causally joined Read result may be appended after the response it fed; the body is consumed by the
         # body request's own responses, so a late result slice does not move the consumption point.
         body_request, end = result["observation"].get("body_request_id"), result["snapshot"]["end"]
         offsets = {s["offset"] for s in slices}
-        responses = [ref["offset"] for ref, record in _records(transcript, transcript["offset"], end)
-                     if ref["offset"] in offsets and record.get("type") == "assistant"
+        proof = [(ref, record) for ref, record in _records(transcript, transcript["offset"], end)
+                 if ref["offset"] in offsets]
+        responses = [ref["offset"] for ref, record in proof if record.get("type") == "assistant"
                      and isinstance(body_request, str) and record.get("requestRef") == body_request]
         require(responses, "causal proof holds no response to its body request")
         consumed_at = max(responses)
+        # The proof's requests issued before the body's Read result was in context; an ACK answering one of them
+        # was generated without the full body, wherever it was appended.
+        earlier = {record.get("id") for ref, record in proof if record.get("type") == "api-request"} - {body_request}
     require(type(ack_end) is int, "explicit ACK endpoint required")
     found = [(ref, record) for ref, record in _records(transcript, transcript["offset"], ack_end)
              if _is_ack(record, line, binding["session_id"])]
@@ -531,6 +537,10 @@ def ack_order(result_ref, policy_sha256, interpreter, handshake_ref, ack_end, *,
     require(len(found) == 1, "more than one exact ACK after the original fence")
     ref = found[0][0]
     require(ref["offset"] >= consumed_at, "ACK precedes full body consumption")
+    if earlier is not None:
+        answered = found[0][1].get("requestRef")
+        require(isinstance(answered, str), "causal ACK names no request it answers")
+        require(answered not in earlier, "causal ACK answers a request issued before the full body was read")
     ack = dict(path=transcript["path"], device=transcript["device"], inode=transcript["inode"], **ref)
     if observed_ack is not None:
         claimed = json_ref(observed_ack, "observed ACK")
