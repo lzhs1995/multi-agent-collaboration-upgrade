@@ -364,6 +364,10 @@ print('MATERIALIZED_CLAUDE_REGISTRATION_PASS')
     def test_materialized_standalone_tool_hook_and_public_proof(self):
         # Execute the actual transformed collectors in a fresh interpreter.
         # Only kernel/foreground observations are fixtures; dispatch is absent.
+        # The fixture pids sit above XNU's PID_MAX (99999) so this interpreter's
+        # real pid can never equal one: d.process returns the first record with a
+        # matching pid, and a client pid equal to os.getpid() makes the client
+        # re-read return `current`, which the collector rejects as ancestry drift.
         controller = Path(self.spec["controller"]) / "scripts"
         code = f'''
 import copy, os, sys
@@ -379,15 +383,15 @@ scope = dict(CMUX_SURFACE_ID='00000000-0000-0000-0000-000000000002',
              CMUX_WORKSPACE_ID='00000000-0000-0000-0000-000000000003')
 session = '00000000-0000-0000-0000-000000000001'
 env = dict(scope, CODEX_THREAD_ID=session)
-client = dict(pid=44992, ppid=1, birth=[1000, 1], executable='/native/codex',
+client = dict(pid=100000, ppid=1, birth=[1000, 1], executable='/native/codex',
               argv=['/native/codex', '--disable', 'computer_use'], env=scope)
-server = dict(pid=45091, ppid=44992, birth=[1001, 1], executable='/native/codex',
+server = dict(pid=100001, ppid=100000, birth=[1001, 1], executable='/native/codex',
               argv=['/native/codex', 'app-server', '--listen'], env=scope)
-current = dict(pid=os.getpid(), ppid=45091, birth=[1002, 1], executable='/native/python',
+current = dict(pid=os.getpid(), ppid=100001, birth=[1002, 1], executable='/native/python',
                argv=['/native/python'], env=env)
 chain = [server, client]
 with patch.object(d.sys, 'platform', 'darwin'), \\
-     patch.object(d.os, 'getppid', return_value=45091), \\
+     patch.object(d.os, 'getppid', return_value=100001), \\
      patch.object(d, '_ancestry', side_effect=lambda: (copy.deepcopy(chain), None)), \\
      patch.object(d, 'process', side_effect=lambda pid: copy.deepcopy(next(p for p in [current]+chain if p['pid']==pid))), \\
      patch.object(foreground, 'read', return_value=dict(thread_id=session)), \\
