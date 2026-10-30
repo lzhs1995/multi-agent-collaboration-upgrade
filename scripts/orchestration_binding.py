@@ -11,11 +11,16 @@ This module is deliberately named ``orchestration_*`` so live maintenance
 re-reads its exact frozen bytes (``orchestration_maintenance.bound_source``
 filters on that prefix): it decides which session a claim reserves.
 
-Every judgment here is a named module-level callable registered in
-:data:`BIND_PREDICATES`, so each one can be excised, flipped and restored
-individually. Nothing in this module measures time, reads an environment
-variable, or asks any model: all inputs arrive as arguments or as pinned
-file references.
+Every judgment this module decides is a named module-level callable registered
+in :data:`BIND_PREDICATES`, so each one can be excised, flipped and restored
+individually. Callers reach them through the module attribute, never through a
+name imported at import time, because an imported name is a second reference
+the excision could not replace. The schema, field-set, type and non-empty
+``require`` calls that frame those predicates (for example in
+:func:`check_decision` and :func:`read_binding`) are record-shape checks, not
+judgments about a lane, a route or a plan, and are not registered. Nothing in
+this module measures time, reads an environment variable, or asks any model:
+all inputs arrive as arguments or as pinned file references.
 """
 from __future__ import annotations
 
@@ -374,7 +379,7 @@ def write_binding(co, node_id, value) -> dict:
         raise ContractError("original executor binding exists; observe only") from exc
 
 
-BIND_PREDICATES = {"unbound_claim_started": unbound_claim_started,
+BIND_PREDICATES = {"unbound_plan": unbound_plan, "unbound_claim_started": unbound_claim_started,
                    "lane_verified": lane_verified, "lane_idle_write_domain": lane_idle_write_domain,
                    "lane_is_author": lane_is_author, "decision_route_recomputed": decision_route_recomputed,
                    "decision_matches_run_node": decision_matches_run_node,

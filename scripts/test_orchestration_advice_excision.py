@@ -249,6 +249,11 @@ REGISTRY = {
         upgrade_advice_chain, any_matching_bind_call,
         _bind("test_two_bind_invocations_still_running_are_ambiguous"), NEGATIVE_FLIPS, None),
     # --- orchestration_binding ----------------------------------------------
+    "unbound_plan": (
+        # Excised every plan counts as opted in, so a plain v3 run's header
+        # grows the unbound_nodes key the opt-in alone may add.
+        orchestration_binding, ADMIT_EVERYTHING,
+        _bind("test_run_header_carries_unbound_nodes_only_under_the_opt_in"), NEGATIVE_FLIPS, None),
     "unbound_claim_started": (
         # Excised it reports no claim as started, so a real interrupted claim
         # artefact on an unbound node would no longer be reported incomplete.

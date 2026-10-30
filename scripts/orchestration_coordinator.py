@@ -19,7 +19,7 @@ from orchestration_common import (ContractError, boot_id, checked_path, contract
 import orchestration_binding
 from orchestration_binding import (bind_facts, binding_path, binding_ref, bound_lane, claim_lane, claimed_lanes,
                                    eligible_candidates, is_unbound, lane_facts, read_binding, resolved_mode,
-                                   resolved_transport, unbound_nodes, unbound_plan, validate_decision,
+                                   resolved_transport, unbound_nodes, validate_decision,
                                    write_binding)
 from orchestration_campaign import (control_script, find_control, native_control, node_output, node_write_scope,
                                     require_live_identity, validate_campaign)
@@ -106,7 +106,7 @@ def select_ready(plan, states, strategy, scope_root, queues, *, lanes=None):
         # refusal now. No validated v3 campaign can present this combination
         # (every run's strategy is mac_native or omo), so this is reachable
         # only through a direct module-level call.
-        require(not (unbound_plan(plan) and unbound_nodes(plan)),
+        require(not (orchestration_binding.unbound_plan(plan) and unbound_nodes(plan)),
                 "codeg cannot schedule a node that is not in a lane queue")
         # Persistent FIFO per original session, never a queue of terminal input.
         heads = set()
@@ -247,7 +247,7 @@ class Coordinator:
         require(set(self.header) == {"version", "campaign", "run", "queues", "started_at",
                                     "created_at", "started_monotonic_ns", "boot_id", "native_start", "start_native"}
                                     | ({"run_permit", "launch_start"} if live_v3 else set())
-                                    | ({"unbound_nodes"} if unbound_plan(self.plan) else set()),
+                                    | ({"unbound_nodes"} if orchestration_binding.unbound_plan(self.plan) else set()),
                 "run header fields changed")
         require(type(self.header["version"]) is int and self.header["version"] == campaign_version(self.campaign) and
                 self.header["campaign"] == campaign_ref, "run belongs to another frozen campaign")
@@ -268,7 +268,7 @@ class Coordinator:
         require(self.header["queues"] == queues, "frozen FIFO queues changed")
         # The queues keep excluding an unbound node (it is in no lane FIFO).
         # The exclusion stops being silent: the header states which nodes it is.
-        if unbound_plan(self.plan):
+        if orchestration_binding.unbound_plan(self.plan):
             require(self.header["unbound_nodes"] == unbound_nodes(self.plan),
                     "frozen unbound nodes changed")
         count(self.header["started_monotonic_ns"], "run clock")
@@ -365,7 +365,7 @@ class Coordinator:
             root.mkdir(parents=True, exist_ok=False)
             ordered = topological_nodes(plan)
             queues = {lane: [n["id"] for n in ordered if n["executor"] == lane] for lane in campaign["sessions"]}
-            unbound = dict(unbound_nodes=unbound_nodes(plan)) if unbound_plan(plan) else {}
+            unbound = dict(unbound_nodes=unbound_nodes(plan)) if orchestration_binding.unbound_plan(plan) else {}
             starts = {lane: NativeReader(session, fixtures=fixtures).snapshot() for lane, session in campaign["sessions"].items()}
             header = dict(version=campaign_version(campaign), campaign=campaign_ref, run=spec, queues=queues, started_at=started_at,
                           created_at=utc_now(), started_monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), native_start=starts,
@@ -805,7 +805,7 @@ class Coordinator:
         from upgrade_advice_chain import chain_from_binding, live_bind_call, published_decision_path
         require(node_id in self.nodes, "unknown frozen node")
         node = self.nodes[node_id]
-        require(unbound_plan(self.plan) and is_unbound(node),
+        require(orchestration_binding.unbound_plan(self.plan) and is_unbound(node),
                 "only a deliberately unbound frozen node is bound before claiming")
         with exclusive_lock(self.root / "nodes" / node_id / "runner.lock"), self.state_lock(new_work=True):
             identity = self._gate(new_work=True)
