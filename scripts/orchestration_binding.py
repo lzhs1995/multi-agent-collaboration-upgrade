@@ -310,6 +310,27 @@ def decision_work_kind_known(decision) -> bool:
     return decision.get("work_kind") in jev_advice.WORK_KINDS
 
 
+# R62 decision.on_arm: the supervisor writes accepted, rejected or
+# supervisor_review. The ported R32 checker enforces the same three
+# (jev_s2_checks.consumption_join).
+DECISION_ACTIONS = ("accepted", "rejected", "supervisor_review")
+
+
+def decision_action_known(decision) -> bool:
+    """The action is one R62 names, and an off-arm decision adopts nothing.
+
+    ``accepted`` and ``rejected`` say what the supervisor did with the advice.
+    R62 decision.off_arm has no advice - the supervisor decides alone on the
+    original request - so a decision citing no advice can only be the
+    supervisor's own review; claiming it accepted or rejected advice that
+    does not exist would be a false statement in a pinned record.
+    """
+    action = decision.get("action")
+    if action not in DECISION_ACTIONS:
+        return False
+    return decision.get("advice_sha256") is not None or action == "supervisor_review"
+
+
 def decision_matches_run_node(decision, run_id, node_id) -> bool:
     """The decision was authored for exactly this run and this frozen node."""
     return decision.get("run_id") == run_id and decision.get("node_id") == node_id
@@ -334,6 +355,9 @@ def check_decision(decision, run_id, node_id) -> dict:
             "bind decision belongs to another run or frozen node")
     require(globals()["decision_work_kind_known"](decision),
             "bind decision work_kind is missing or not a frozen S0 work kind")
+    require(globals()["decision_action_known"](decision),
+            "bind decision action must be accepted, rejected or supervisor_review, and "
+            "supervisor_review when it cites no advice")
     require(isinstance(decision["actual_route"], str) and decision["actual_route"],
             "bind decision must name the actual route")
     require(decision["advice_sha256"] is None or
@@ -385,5 +409,6 @@ BIND_PREDICATES = {"unbound_plan": unbound_plan, "unbound_claim_started": unboun
                    "decision_matches_run_node": decision_matches_run_node,
                    "node_is_unbound": node_is_unbound, "binding_absent": binding_absent,
                    "decision_work_kind_known": decision_work_kind_known,
+                   "decision_action_known": decision_action_known,
                    "advice_inputs_unchanged": advice_inputs_unchanged,
                    "claim_mode_matches_frozen_kind": claim_mode_matches_frozen_kind}

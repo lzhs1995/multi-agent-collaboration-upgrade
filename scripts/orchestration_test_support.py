@@ -238,7 +238,7 @@ class CampaignFixture:
         """
         from orchestration_binding import DECISION_SCHEMA
         value = dict(schema=DECISION_SCHEMA, run_id=run_id, node_id=node_id, work_kind="coding",
-                     advice_sha256=None, actual_route="codex", action="accepted",
+                     advice_sha256=None, actual_route="codex", action="supervisor_review",
                      reason="offline fixture: the supervisor chose this lane", decided_at=utc_now(),
                      supervisor_session=self.campaign["sessions"]["codex"]["session_id"])
         value.update(changes)

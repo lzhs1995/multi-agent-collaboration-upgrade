@@ -90,7 +90,7 @@ class BindFixtureMixin:
             sleep(0.002)
 
     def fields(self, **changes):
-        value = dict(work_kind="coding", actual_route="codex", action="accepted",
+        value = dict(work_kind="coding", actual_route="codex", action="supervisor_review",
                      reason="the supervisor chose the idle codex lane", advice_sha256=NO_ADVICE)
         value.update(changes)
         return value

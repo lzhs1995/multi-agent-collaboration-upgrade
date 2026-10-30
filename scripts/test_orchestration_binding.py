@@ -47,7 +47,7 @@ class BindingHelperTests(unittest.TestCase):
 
     def decision(self, co, **changes):
         base = dict(schema=DECISION_SCHEMA, run_id=co.spec["run_id"], node_id="unbound", work_kind="review",
-                    advice_sha256=None, actual_route="claude_a", action="accepted",
+                    advice_sha256=None, actual_route="claude_a", action="supervisor_review",
                     reason="the supervisor chose this lane", decided_at="2026-10-29T00:00:00+00:00",
                     supervisor_session="codex-session")
         base.update(changes)
@@ -297,6 +297,11 @@ class BindingHelperTests(unittest.TestCase):
             "must name the actual route": [dict(actual_route=None), dict(actual_route="")],
             "advice pin must be a sha256": [dict(advice_sha256="abc"), dict(advice_sha256=64 * "z" + "z")],
             "supervisor's reason": [dict(reason="  "), dict(reason=None)],
+            # R62 decision.on_arm names three actions; the off arm has no
+            # advice, so only the supervisor's own review is a true statement.
+            "action must be accepted, rejected or supervisor_review": [
+                dict(action="ignored-it"), dict(action=""), dict(action=None), dict(action="Accepted"),
+                dict(action="accepted"), dict(action="rejected")],
         }
         for expected, variants in cases.items():
             for index, change in enumerate(variants):
@@ -309,6 +314,12 @@ class BindingHelperTests(unittest.TestCase):
                 with self.subTest(expected=expected, change=change), \
                         self.assertRaisesRegex(ContractError, expected):
                     validate_decision(ref, co.spec["run_id"], "unbound")
+        # On the on arm all three R62 actions are valid statements.
+        for action in ("accepted", "rejected", "supervisor_review"):
+            ref = write_json(co.root / f"decision-on-{action}.json",
+                             self.decision(co, action=action, advice_sha256=64 * "a"))
+            with self.subTest(on_arm_action=action):
+                self.assertEqual(validate_decision(ref, co.spec["run_id"], "unbound")["action"], action)
 
     def test_decision_work_kind_must_be_a_known_work_kind(self):
         f = self.fixture()
@@ -370,7 +381,7 @@ class BindingHelperTests(unittest.TestCase):
             "lane_verified", "lane_idle_write_domain", "lane_is_author", "decision_route_recomputed",
             "decision_matches_run_node", "node_is_unbound", "binding_absent",
             "decision_work_kind_known", "advice_inputs_unchanged", "claim_mode_matches_frozen_kind",
-            "unbound_claim_started", "unbound_plan"})
+            "unbound_claim_started", "unbound_plan", "decision_action_known"})
         import orchestration_binding
         for name, function in BIND_PREDICATES.items():
             with self.subTest(name=name):

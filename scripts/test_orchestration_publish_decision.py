@@ -63,7 +63,7 @@ class PublishDecisionTests(unittest.TestCase):
                 for lane in self.f.campaign["sessions"]}
 
     def fields(self, **changes):
-        value = dict(work_kind="coding", actual_route="codex", action="accepted",
+        value = dict(work_kind="coding", actual_route="codex", action="supervisor_review",
                      reason="the supervisor chose the idle codex lane", advice_sha256=NO_ADVICE)
         value.update(changes)
         return value
@@ -537,6 +537,22 @@ class PublishDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "citing no advice"):
             self.r.publish_decision(self.run, "unbound", self.fields())
         self.assertFalse(published_decision_path(self.co, "unbound").exists())
+
+    def test_the_publisher_refuses_an_action_r62_does_not_name(self):
+        """R62 decision.on_arm: accepted, rejected or supervisor_review, nothing else.
+
+        The off arm has no advice to accept or reject, so there only the
+        supervisor's own review is a true statement. Each refusal precedes the
+        exclusive write, so no decision file is left for a retry to trip on.
+        """
+        for action in ("ignored-it", "accepted", "rejected"):
+            with self.subTest(action=action), \
+                    self.assertRaisesRegex(ContractError, "action must be accepted, rejected or supervisor_review"):
+                self.r.publish_decision(self.run, "unbound", self.fields(action=action))
+            self.assertFalse(published_decision_path(self.co, "unbound").exists())
+        # The one off-arm action that is true publishes.
+        self.assertEqual(self.r.publish_decision(self.run, "unbound", self.fields())["node_id"], "unbound")
+        self.assertEqual(read_json(published_decision_path(self.co, "unbound"))["action"], "supervisor_review")
 
     # --- the pinned call shape and the pure predicates --------------------
 

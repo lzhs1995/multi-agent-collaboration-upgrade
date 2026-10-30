@@ -293,6 +293,12 @@ REGISTRY = {
         orchestration_binding, ADMIT_EVERYTHING,
         _bind("test_bind_refuses_an_unknown_or_missing_work_kind"), NEGATIVE_FLIPS,
         "candidates must not be recomputed"),
+    "decision_action_known": (
+        # The publisher's in-memory check is the only gate before the write:
+        # excised, an action R62 does not name is published.
+        orchestration_binding, ADMIT_EVERYTHING,
+        "test_orchestration_publish_decision.PublishDecisionTests."
+        "test_the_publisher_refuses_an_action_r62_does_not_name", NEGATIVE_FLIPS, None),
     "advice_inputs_unchanged": (
         orchestration_binding, ADMIT_EVERYTHING,
         _bind("test_bind_refuses_a_changed_input_version"), NEGATIVE_FLIPS, None),
@@ -324,7 +330,7 @@ class ExcisionNegatives(BindFixtureMixin, unittest.TestCase):
         before anything is written.
         """
         value = dict(schema=DECISION_SCHEMA, run_id=self.run, node_id="unbound", work_kind="coding",
-                     advice_sha256=None, actual_route="codex", action="accepted",
+                     advice_sha256=None, actual_route="codex", action="supervisor_review",
                      reason="the supervisor chose the idle codex lane", decided_at=None,
                      supervisor_session=self.f.campaign["sessions"]["codex"]["session_id"])
         self.assertEqual(check_decision(value, self.run, "unbound"), value)
