@@ -322,6 +322,83 @@ REGISTRY = {
 }
 
 
+_PUBLISH = "test_orchestration_publish_decision.PublishDecisionTests."
+_SHAPES = "test_orchestration_advice_read_shapes.AdviceReadShapeTests."
+_S2 = "test_jev_s2_checks."
+
+# R62 checks.control, beyond the excision rows: the frozen complete-chain
+# positive, the v1 first-run values and each of R62's seven new_negatives
+# (design 4.3 table), named as the committed tests that assert them. The
+# control harness runs and registers every one; the gate below only proves
+# each name still resolves to exactly one test, so a rename cannot silently
+# drop a check from the artefact.
+CONTROL_CHECKS = {
+    "complete_chain_positive": (
+        # The natively joined, counted chain, and its run-level bind and claim.
+        _PUBLISH + "test_on_arm_publish_joins_after_the_full_read",
+        _bind("test_bind_then_claim_resolves_the_lane_end_to_end"),
+    ),
+    "diagnostic_shape_not_counted": (
+        # ROOT R94 section 2: the exclusive-file shape is diagnostic only.
+        _chain("test_complete_chain_is_valid_and_claims_nothing_more"),
+        _PUBLISH + "test_a_decision_outside_the_publisher_path_is_not_joined",
+    ),
+    "v1_synthetic_self_check": (
+        _S2 + "V1SelfCheckTests.test_every_v1_first_run_value_is_reproduced_by_the_port",
+    ),
+    "off_arm_with_advice": (
+        _arms("test_off_arm_with_an_advice_file_is_an_arm_violation"),
+        _arms("test_off_arm_with_worker_requests_is_an_arm_violation"),
+        _arms("test_off_arm_with_an_advice_read_is_an_arm_violation"),
+        _chain("test_off_arm_with_an_advice_file_requests_or_a_read_is_an_arm_violation"),
+    ),
+    "codex_partial_read": (
+        _chain("test_partial_or_truncated_codex_read_is_not_full"),
+        _SHAPES + "test_range_read_is_not_a_full_read",
+        _SHAPES + "test_truncated_output_is_not_a_full_read",
+        _SHAPES + "test_sha_only_output_is_not_a_full_read",
+    ),
+    "binding_without_decision": (
+        _chain("test_binding_without_a_matching_decision_is_refused"),
+        _bind("test_decision_for_another_run_or_node_is_refused"),
+    ),
+    "decision_cites_other_advice": (
+        _chain("test_decision_citing_another_advice_is_refused"),
+    ),
+    "bind_bound_node": (
+        _bind("test_binding_a_bound_node_is_refused"),
+        "test_jev_advice.RouteAdviceTests.test_bound_task_never_reads_answers",
+    ),
+    "fallback_counted_as_consumed": (
+        _arms("test_fallback_or_stopped_auth_is_not_counted_as_consumption"),
+    ),
+    "route_from_advice_not_recomputed": (
+        _chain("test_route_outside_the_recomputed_candidates_is_refused"),
+        _bind("test_route_not_in_recomputed_candidates_is_refused_before_any_write"),
+    ),
+}
+R62_NEW_NEGATIVES = ("off_arm_with_advice", "codex_partial_read", "binding_without_decision",
+                     "decision_cites_other_advice", "bind_bound_node", "fallback_counted_as_consumed",
+                     "route_from_advice_not_recomputed")
+
+
+def resolves_to_one_test(test_name):
+    """The dotted name names exactly one existing test method.
+
+    ``loadTestsFromName`` turns a misspelt name into one synthetic failing
+    test, so counting cases cannot tell a typo from a real test. The module,
+    class and method are therefore resolved directly.
+    """
+    import importlib
+    module_name, class_name, method = test_name.rsplit(".", 2)
+    try:
+        owner = getattr(importlib.import_module(module_name), class_name)
+    except (ImportError, AttributeError):
+        return False
+    return (isinstance(owner, type) and issubclass(owner, unittest.TestCase)
+            and method.startswith("test_") and callable(getattr(owner, method, None)))
+
+
 class ExcisionNegatives(BindFixtureMixin, unittest.TestCase):
     """Negatives no existing test isolates, each mapped by one registry row.
 
@@ -548,6 +625,17 @@ class PredicateExcisionTests(unittest.TestCase):
         # Exactly one predicate, advice_read_evidence, may use the weaker form.
         self.assertEqual({name for name, row in REGISTRY.items() if row[3] == POSITIVE_BREAKS},
                          {"advice_read_evidence"})
+
+    def test_every_mapped_and_control_name_resolves_to_one_real_test(self):
+        """A renamed or misspelt test cannot silently leave the gate or the artefact."""
+        self.assertLessEqual(set(R62_NEW_NEGATIVES), set(CONTROL_CHECKS))
+        self.assertEqual(len(R62_NEW_NEGATIVES), 7)
+        names = [row[2] for row in REGISTRY.values()]
+        names += [name for group in CONTROL_CHECKS.values() for name in group]
+        for name in names:
+            with self.subTest(test=name):
+                self.assertTrue(resolves_to_one_test(name), name)
+        self.assertFalse(resolves_to_one_test(_bind("test_no_such_test_exists")))
 
     def test_every_patched_attribute_is_restored_by_identity(self):
         for name, (module, excised, _test, _kind, _other) in sorted(REGISTRY.items()):

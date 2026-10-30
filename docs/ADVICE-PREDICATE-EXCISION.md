@@ -108,12 +108,35 @@ other-layer reason, the three outcomes with their test counts, whether the
 attribute was restored by identity, and whether it was vacuous. It also records
 every predicate-bearing module's source sha256 before and after the whole run.
 
+It registers R62 `checks.control` as well, after every excision has been
+restored:
+
+- every test the gate's `CONTROL_CHECKS` names, run once by name: the natively
+  joined complete-chain positive and its run-level bind and claim, the
+  exclusive-file shape that is diagnostic and not counted, and each of R62's
+  seven `new_negatives` as design 4.3's table maps them;
+- the v1 plan's `synthetic_self_check` values (plan sha256 `da34a9c5...`):
+  the valid join, the 9 join rejections, the 3 estimator rejections and the
+  estimator cases, including the pass-case median `0.19999999999999996`, each
+  next to what the ported checker produces now. The v1 plan froze the values
+  but not their inputs, so those fixtures are reconstructed from the ported
+  R32 fixtures and labelled `RECONSTRUCTED_NOT_V1_ORIGINAL`;
+- for `checks.restore`, the sha256 of every fixture-bearing module (each module
+  holding a mapped negative or a control check, plus
+  `orchestration_test_support`) before and after.
+
+The gate itself does not run the control checks (they are ordinary discovered
+tests), but it proves every mapped and control name still resolves to exactly
+one real test method, so a rename cannot silently drop a check from the
+artefact.
+
     PYTHONDONTWRITEBYTECODE=1 python3.14 -B jev_advice_control_harness.py \
         --verify --out /ABS/PATH/CONTROL-VERDICTS-v1.json
 
 `--verify` recomputes everything and requires equality with the registered file
 on every field a checker's state leakage would change: the outcomes, the test
-counts, the expectations, the restoration flags and the module source hashes.
+counts, the expectations, the restoration flags, the control results, the v1
+values, and the module and fixture source hashes.
 Failure-detail text is compared separately and reported as
 `detail_text_differs_only`, because a traceback's last line carries the absolute
 path of a temporary fixture directory, which differs between runs for reasons
@@ -121,10 +144,11 @@ that have nothing to do with the checker. A difference anywhere else is reported
 as `PAUSE_REGISTRATION_AND_INVESTIGATE`: the response is to investigate the
 leakage, never to re-register over it.
 
-`--out` must be absolute and is chosen by the operator. The file this increment
-measured was written to a scratch directory; the owner decides where the
-registered artefact finally lives, and that placement is a manual step outside
-this repository.
+`--out` must be absolute and is chosen by the operator. Design Q46 names the
+design directory as the artefact's home; that directory is outside this
+repository, so the files this increment measured were written to scratch
+directories, and the owner places the registered artefact there as a manual
+step outside this repository.
 
 ## What passing this proves, and what it does not
 

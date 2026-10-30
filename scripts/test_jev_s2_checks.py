@@ -8,7 +8,9 @@ including ``median_paired_improvement == 0.3`` and the exact-boundary case. Only
 this header differs. The ported checker takes its provider, model and arm labels
 from the frozen registration (design Q44), so the two call shims below supply
 exactly R32's own literals; a test that wants another registration passes it
-explicitly. ``R62Negatives`` and ``RegistrationTests`` are new.
+explicitly. ``R62Negatives``, ``RegistrationTests`` and ``V1SelfCheckTests``
+are new; the last recomputes the v1 plan's first-run values on reconstructed
+fixtures, which the control harness also registers.
 """
 import unittest
 
@@ -370,6 +372,137 @@ class RegistrationTests(unittest.TestCase):
                     jev_s2_checks.estimate_jev_increment([pair()], ["one"], registration=registration)
         with self.assertRaisesRegex(EvidenceError, "registered arms must differ"):
             jev_s2_checks.consumption_join(trace(), registration=dict(REGISTRATION, off_arm="advisory-on"))
+
+
+# The v1 plan's synthetic_self_check block, verbatim except its "label" key:
+# OWNER43-JEV-S2-CONSUMER-ATTRIBUTION-PLAN-v1.json, sha256
+# da34a9c5d09dbe53456f600645fe90a90ac394c70b7d3e1a010fa04b264581db (the design's
+# input table pins the same digest). These are R62 checks.control's first-run
+# values: the valid join, the 9 join rejections and the estimator cases.
+V1_PLAN_SHA256 = "da34a9c5d09dbe53456f600645fe90a90ac394c70b7d3e1a010fa04b264581db"
+V1_SYNTHETIC_SELF_CHECK = {
+    "consumption_join_valid": {"structural_join": "VALID", "native_authenticated": False,
+                               "runtime_consumption_proven": False, "upgrade_accepted": False},
+    "consumption_join_rejections": {
+        "shadow_mode": "shadow/off is not actual on-arm consumption",
+        "partial_read": "partial/notice-only reading is not full advice consumption",
+        "rebind_existing": "existing tasks may not be rebound through JEV",
+        "auth_failure_as_negative": "failed inference must not become a semantic negative",
+        "bind_before_decision": "advice read/decision must precede fresh task binding",
+        "route_outside_eligible": "actual route must preserve the code-verified eligible write domain",
+        "accepted_but_different_route": "accepted advice differs from the actual route",
+        "empty_reason": "record why advice was adopted or rejected",
+        "other_supervisor_read": "the original supervisor must read and decide"},
+    "estimator_pass_case": {"median": 0.19999999999999996, "gate": True},
+    "estimator_flat_case_gate": False,
+    "estimator_failed_pair_retained": {"incomplete": ["jev-warm-01-03"], "gate": False},
+    "estimator_rejections": {
+        "dropped_pair": "missing, duplicate or extra pairs cannot change the frozen denominator",
+        "strategy_confounded": "JEV-only attribution confounded by strategy",
+        "off_arm_queried_jev": "off arm must not silently query JEV"},
+}
+# Frozen pair ids from the same v1 plan (design.pairs[1:5]); no new label.
+V1_WARM_PAIRS = ("jev-warm-01-01", "jev-warm-01-02", "jev-warm-01-03", "jev-warm-01-04")
+
+
+def _rejection(call):
+    try:
+        call()
+    except EvidenceError as exc:
+        return str(exc)
+    return None
+
+
+def _mutated_trace(change):
+    value = trace()
+    change(value)
+    return value
+
+
+def reconstruct_v1_self_check():
+    """The v1 block recomputed from the ported checker, on reconstructed fixtures.
+
+    The v1 plan froze these verdicts but not the inputs that produced them, so
+    every fixture here is RECONSTRUCTED: a minimal mutation of the ported R32
+    ``trace()``/``pair()`` fixtures chosen to reach the named branch, never the
+    v1 original. What is compared is the checker's own output on it. The pass
+    median is computed, not typed: four warm pairs with 80 s against 100 s give
+    ``1 - 80/100`` each, whose float value is the v1 0.19999999999999996.
+    """
+    join = {
+        "shadow_mode": lambda v: v.update(mode="shadow"),
+        "partial_read": lambda v: v["read"].update(complete=False),
+        "rebind_existing": lambda v: v["binding"].update(new_binding=False),
+        "auth_failure_as_negative": lambda v: v["request"].update(status="HTTP_401"),
+        "bind_before_decision": lambda v: v["decision"].update(decided_at=6),
+        "route_outside_eligible": lambda v: v["binding"].update(eligible_lanes=["codex"]),
+        "accepted_but_different_route": lambda v: v["advice"].update(route="codex"),
+        "empty_reason": lambda v: v["decision"].update(reason=""),
+        "other_supervisor_read": lambda v: v["read"].update(actor_session="foreign"),
+    }
+
+    def warm(elapsed=80):
+        return [pair(pair_id, elapsed=elapsed) for pair_id in V1_WARM_PAIRS]
+
+    def estimate(pairs):
+        return estimate_jev_increment(pairs, list(V1_WARM_PAIRS))
+
+    passing = estimate(warm())
+    failed = warm()
+    failed[2]["on"]["outcome"] = "FAILED"
+    retained = estimate(failed)
+
+    def confounded():
+        pairs = warm()
+        pairs[0]["on"]["strategy"] = "codeg"
+        return estimate(pairs)
+
+    def queried():
+        pairs = warm()
+        pairs[0]["off"]["model_requests"] = 1
+        return estimate(pairs)
+
+    return {
+        "consumption_join_valid": consumption_join(trace()),
+        "consumption_join_rejections": {
+            name: _rejection(lambda change=change: consumption_join(_mutated_trace(change)))
+            for name, change in join.items()},
+        "estimator_pass_case": {"median": passing["median_paired_improvement"],
+                                "gate": passing["numeric_gate_only"]},
+        "estimator_flat_case_gate": estimate(warm(elapsed=100))["numeric_gate_only"],
+        "estimator_failed_pair_retained": {"incomplete": retained["performance_incomplete_pairs"],
+                                           "gate": retained["numeric_gate_only"]},
+        "estimator_rejections": {
+            "dropped_pair": _rejection(lambda: estimate(warm()[:-1])),
+            "strategy_confounded": _rejection(confounded),
+            "off_arm_queried_jev": _rejection(queried),
+        },
+    }
+
+
+class V1SelfCheckTests(unittest.TestCase):
+    """R62 checks.control: the v1 first-run values, recomputed by the port.
+
+    Each value is compared exactly - the rejection text and the float median
+    included - so a port that changed any of them fails here. The fixtures are
+    reconstructed (see ``reconstruct_v1_self_check``); only the values are v1's.
+    """
+
+    def test_every_v1_first_run_value_is_reproduced_by_the_port(self):
+        observed = reconstruct_v1_self_check()
+        self.assertEqual(set(observed), set(V1_SYNTHETIC_SELF_CHECK))
+        for section, expected in V1_SYNTHETIC_SELF_CHECK.items():
+            if isinstance(expected, dict) and section.endswith("rejections"):
+                self.assertEqual(set(observed[section]), set(expected))
+                for name, text in expected.items():
+                    with self.subTest(section=section, name=name):
+                        self.assertEqual(observed[section][name], text)
+            else:
+                with self.subTest(section=section):
+                    self.assertEqual(observed[section], expected)
+        # Twelve R32 verdicts: the 9 join and 3 estimator rejections.
+        self.assertEqual(len(V1_SYNTHETIC_SELF_CHECK["consumption_join_rejections"])
+                         + len(V1_SYNTHETIC_SELF_CHECK["estimator_rejections"]), 12)
 
 
 if __name__ == "__main__":

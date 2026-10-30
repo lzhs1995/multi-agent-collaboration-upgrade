@@ -15,11 +15,25 @@ It runs exactly the protocol that test runs, over exactly that registry:
 * restoration by ``is`` identity, with every predicate-bearing module's source
   sha256 measured before and after.
 
+It also registers R62 ``checks.control`` itself: every test named in the
+gate's ``CONTROL_CHECKS`` (the natively joined complete-chain positive, the
+diagnostic shape that is not counted, and each of R62's seven new negatives),
+run once by name, and the v1 plan's ``synthetic_self_check`` values (the valid
+join, the 9 join and 3 estimator rejections, the estimator cases) with what the
+ported checker produces now. The v1 plan froze those values but not their
+inputs, so their fixtures are reconstructed and labelled so. For R62
+``checks.restore`` it records the sha256 of every fixture-bearing module (each
+module holding a mapped negative or a control check, plus
+``orchestration_test_support``) before and after.
+
 ``--register`` writes the verdict file once and refuses to overwrite it.
-``--verify`` recomputes every verdict and requires byte equality with the
-registered file, plus equality of every recorded source sha256. Any difference
-is reported as checker state leakage and is a reason to pause registration, not
-to re-register.
+``--verify`` recomputes every verdict and requires equality with the
+registered file on the outcomes, test counts, control results, v1 values and
+every recorded source and fixture sha256. Any difference is reported as
+checker state leakage and is a reason to pause registration, not to
+re-register. Design Q46 names the design directory, which is outside this
+repository, as the artefact's home; its owner places the registered file
+there.
 
 Zero model, JEV or network requests; no HTTP or SDK client; nothing here reads a
 budget, a limit or a key from a file or an environment variable. The verdict
@@ -48,10 +62,44 @@ def protocol():
     return gate
 
 
+def fixture_sources(gate):
+    """sha256 of every module that holds a mapped negative or a control check.
+
+    These are the fixtures R62 checks.restore names: the committed tests the
+    protocol runs, plus the shared fixture support module they build on.
+    """
+    import importlib
+    names = {row[2].rsplit(".", 2)[0] for row in gate.REGISTRY.values()}
+    names |= {test.rsplit(".", 2)[0] for group in gate.CONTROL_CHECKS.values() for test in group}
+    names |= {"orchestration_test_support"}
+    return {name: hashlib.sha256(Path(importlib.import_module(name).__file__).read_bytes()).hexdigest()
+            for name in sorted(names)}
+
+
+def control_checks(gate):
+    """R62 checks.control: every named control test, run once by name."""
+    return {group: {name: gate.run_mapped(name) for name in tests}
+            for group, tests in sorted(gate.CONTROL_CHECKS.items())}
+
+
+def v1_self_check():
+    """The v1 first-run values, and what the ported checker produces now.
+
+    The fixtures are reconstructed, not v1's (the v1 plan froze the values
+    only); see ``test_jev_s2_checks.reconstruct_v1_self_check``.
+    """
+    import test_jev_s2_checks as s2
+    observed = s2.reconstruct_v1_self_check()
+    return dict(plan_sha256=s2.V1_PLAN_SHA256, fixtures="RECONSTRUCTED_NOT_V1_ORIGINAL",
+                expected=s2.V1_SYNTHETIC_SELF_CHECK, observed=observed,
+                reproduced=observed == s2.V1_SYNTHETIC_SELF_CHECK)
+
+
 def verdicts():
     """Run the protocol once and return its canonical verdict object."""
     gate = protocol()
     before = gate.module_sources()
+    fixtures_before = fixture_sources(gate)
     rows = {}
     for name, (module, excised, test_name, kind, other) in sorted(gate.REGISTRY.items()):
         original = getattr(module, name)
@@ -72,7 +120,12 @@ def verdicts():
                           expected_other_refusal=other, control=control, wrapper=wrapped,
                           excised=cut, restored_by_identity=restored,
                           vacuous=cut["outcome"] == "PASSED")
+    # R62 checks.restore: after every excision has been restored, the control
+    # checks and the v1 values must still come out as they do on a clean run.
+    controls = control_checks(gate)
+    first_run = v1_self_check()
     after = gate.module_sources()
+    fixtures_after = fixture_sources(gate)
     return dict(schema=SCHEMA, predicates=len(rows),
                 registries=dict(advice=sorted(gate.ADVICE_PREDICATES),
                                 bind=sorted(gate.BIND_PREDICATES),
@@ -80,6 +133,13 @@ def verdicts():
                 shared_predicates_excluded=list(gate.SHARED_MATCHER_PREDICATES),
                 module_sources_before=before, module_sources_after=after,
                 module_sources_unchanged=before == after,
+                fixture_sources_before=fixtures_before, fixture_sources_after=fixtures_after,
+                fixture_sources_unchanged=fixtures_before == fixtures_after,
+                controls=controls,
+                controls_all_passed=all(result["outcome"] == "PASSED"
+                                        for group in controls.values() for result in group.values()),
+                r62_new_negatives=list(gate.R62_NEW_NEGATIVES),
+                v1_self_check=first_run,
                 vacuous=[name for name, row in rows.items() if row["vacuous"]],
                 all_restored=all(row["restored_by_identity"] for row in rows.values()),
                 rows=rows)
@@ -103,11 +163,19 @@ def comparable(value):
             | {phase: row[phase]["outcome"] for phase in ("control", "wrapper", "excised")}
             | {phase + "_ran": row[phase]["ran"] for phase in ("control", "wrapper", "excised")}
             for name, row in value["rows"].items()}
+    controls = {group: {name: dict(outcome=result["outcome"], ran=result["ran"])
+                        for name, result in tests.items()}
+                for group, tests in value["controls"].items()}
     return dict(schema=value["schema"], predicates=value["predicates"], registries=value["registries"],
                 shared_predicates_excluded=value["shared_predicates_excluded"],
                 module_sources_before=value["module_sources_before"],
                 module_sources_after=value["module_sources_after"],
                 module_sources_unchanged=value["module_sources_unchanged"],
+                fixture_sources_before=value["fixture_sources_before"],
+                fixture_sources_after=value["fixture_sources_after"],
+                fixture_sources_unchanged=value["fixture_sources_unchanged"],
+                controls=controls, controls_all_passed=value["controls_all_passed"],
+                r62_new_negatives=value["r62_new_negatives"], v1_self_check=value["v1_self_check"],
                 vacuous=value["vacuous"], all_restored=value["all_restored"], rows=rows)
 
 
@@ -136,10 +204,16 @@ def verify(path: Path):
                    if name in stored["rows"] and name not in differences
                    and any(row[phase].get("detail") != stored["rows"][name][phase].get("detail")
                            for phase in ("control", "wrapper", "excised"))]
+    stored_view, fresh_view = comparable(stored), comparable(fresh)
+    differing_controls = sorted(group for group in set(stored_view["controls"]) | set(fresh_view["controls"])
+                                if stored_view["controls"].get(group) != fresh_view["controls"].get(group))
     return dict(action="verify", path=str(path), reproduced=same,
-                differing_predicates=differences, detail_text_differs_only=detail_only,
+                differing_predicates=differences, differing_control_groups=differing_controls,
+                detail_text_differs_only=detail_only,
                 stored_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                 module_sources_equal=stored["module_sources_before"] == fresh["module_sources_before"],
+                fixture_sources_equal=stored["fixture_sources_before"] == fresh["fixture_sources_before"],
+                v1_self_check_equal=stored["v1_self_check"] == fresh["v1_self_check"],
                 state_leakage="NONE_OBSERVED" if same else "PAUSE_REGISTRATION_AND_INVESTIGATE",
                 recomputed=fresh)
 
@@ -158,7 +232,9 @@ def main(argv=None):
     print(json.dumps(result, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False))
     if args.verify and not result["reproduced"]:
         return 1
-    if result.get("registered", result.get("recomputed", {})).get("vacuous"):
+    value = result.get("registered", result.get("recomputed", {}))
+    if (value.get("vacuous") or not value.get("controls_all_passed")
+            or not value.get("v1_self_check", {}).get("reproduced")):
         return 1
     return 0
 
