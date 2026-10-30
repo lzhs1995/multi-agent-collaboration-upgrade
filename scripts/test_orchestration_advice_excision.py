@@ -95,6 +95,25 @@ def publish_evidence_asserting_nothing(reader, *, fence, until, script):
                 envelope=strict_json(stdout, "decision publication envelope"))
 
 
+def any_matching_bind_call(reader, script, *, after):
+    """``live_bind_call`` with its record search and no judgment.
+
+    The real predicate requires exactly one *unanswered* matching call, so two
+    invocations still running are ambiguous. This excision returns the last
+    matching call whatever its result state, so a genuinely ambiguous pair is
+    accepted and the bind proceeds on an arbitrary one of them.
+    """
+    found = None
+    for ref, record in reader.records(after, reader.snapshot()["offset"]):
+        payload = record.get("payload", {})
+        if (record.get("type") == "response_item" and payload.get("type") == "custom_tool_call"
+                and payload.get("input") == script):
+            found = ref
+    if found is None:
+        raise ContractError("one original supervisor control invocation required; duplicate/absent request")
+    return found
+
+
 def bind_result_asserting_nothing(reader, bind, binding_pin, *, until):
     """``bind_result_evidence`` with its record search and no judgment.
 
@@ -226,6 +245,9 @@ REGISTRY = {
     "bind_result_evidence": (
         upgrade_advice_chain, bind_result_asserting_nothing,
         _bind("test_a_bind_result_printing_another_binding_is_refused"), NEGATIVE_FLIPS, None),
+    "live_bind_call": (
+        upgrade_advice_chain, any_matching_bind_call,
+        _bind("test_two_bind_invocations_still_running_are_ambiguous"), NEGATIVE_FLIPS, None),
     # --- orchestration_binding ----------------------------------------------
     "lane_verified": (
         orchestration_binding, ADMIT_EVERYTHING,
