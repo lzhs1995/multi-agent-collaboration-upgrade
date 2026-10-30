@@ -95,6 +95,24 @@ def publish_evidence_asserting_nothing(reader, *, fence, until, script):
                 envelope=strict_json(stdout, "decision publication envelope"))
 
 
+def bind_call_taken_from_the_binding_itself(co, key, reader, binding, decision_ref):
+    """``bind_call_evidence`` with its judgment removed, not its shape.
+
+    The real predicate re-derives the bind control call from the journal and
+    requires ``bound_at`` to be that record's own native timestamp. This
+    excision believes the binding instead: whatever it names as its bind call,
+    with whatever stamp, is accepted. A missing pin becomes "no window bound
+    from a call", which is the most admitting value this can return.
+    """
+    pin = binding.get("bound_native")
+    if not isinstance(pin, dict):
+        return dict(kind="BIND_CALL_OBSERVED", call_id=None,
+                    call_record=dict(offset=reader.snapshot()["offset"], length=0),
+                    timestamp=binding.get("bound_at"))
+    return dict(kind="BIND_CALL_OBSERVED", call_id=None, call_record=pin,
+                timestamp=binding.get("bound_at"))
+
+
 def _chain(name):
     return "test_upgrade_advice_chain.AdviceChainTests." + name
 
@@ -146,8 +164,11 @@ REGISTRY = {
         upgrade_advice_chain, ADMIT_EVERYTHING,
         _arms("test_off_arm_with_an_advice_read_is_an_arm_violation"), NEGATIVE_FLIPS, None),
     "fallback_not_counted_as_consumed": (
+        # Mapped at run level, where this predicate decides `counted` on a
+        # natively joined chain. At checker level the decision is outside the
+        # publisher path, so nothing there is counted whatever this returns.
         upgrade_advice_chain, ADMIT_EVERYTHING,
-        _chain("test_fallback_or_stopped_auth_is_not_counted_as_consumption"), NEGATIVE_FLIPS, None),
+        _arms("test_fallback_or_stopped_auth_is_not_counted_as_consumption"), NEGATIVE_FLIPS, None),
     "advice_read_attempts": (
         upgrade_advice_chain, NO_EVIDENCE,
         _arms("test_off_arm_with_an_advice_read_is_an_arm_violation"), NEGATIVE_FLIPS, None),
@@ -169,6 +190,17 @@ REGISTRY = {
         "test_orchestration_publish_decision.PublishDecisionTests."
         "test_a_publish_stamped_before_the_read_is_refused", NEGATIVE_FLIPS,
         "the advice chain is not in read/decide/bind/claim order"),
+    "decision_is_published": (
+        # "Admit everything" here is to recognise no decision as published, so
+        # the mandatory publisher join and bind check are never reached and a
+        # published decision with no publisher call becomes a mere diagnostic.
+        upgrade_advice_chain, ADMIT_NOTHING_EXCLUDED,
+        "test_orchestration_publish_decision.PublishDecisionTests."
+        "test_a_missing_publish_call_is_refused", NEGATIVE_FLIPS, None),
+    "bind_call_evidence": (
+        upgrade_advice_chain, bind_call_taken_from_the_binding_itself,
+        "test_orchestration_publish_decision.PublishDecisionTests."
+        "test_a_published_decision_must_pin_its_own_bind_control_call", NEGATIVE_FLIPS, None),
     # --- orchestration_binding ----------------------------------------------
     "lane_verified": (
         orchestration_binding, ADMIT_EVERYTHING,
@@ -317,19 +349,25 @@ class ExcisionNegatives(BindFixtureMixin, unittest.TestCase):
         return dict(result=result, script=exact)
 
     def join(self, published, *, node_id="unbound"):
-        """Run the real join over a binding of this published decision."""
+        """Run the real join over a binding of this published decision.
+
+        The bind control call is appended and pinned, because a published
+        decision's window ends at that call and its ``bound_at`` must be that
+        record's own native timestamp.
+        """
         from orchestration_binding import write_binding
         from orchestration_common import file_ref, parse_time, utc_now
         from orchestration_native import NativeReader
         from upgrade_advice_chain import advice_chain
         pin = {name: published["result"]["decision"][name] for name in ("path", "bytes", "sha256")}
+        bind = self.bind_call(node_id=node_id)
         value = dict(schema=BINDING_SCHEMA, campaign=self.f.ref, run_id=self.run, node_id=node_id,
                      lane="codex", execution_kind="local_cli", transport="codex_cli", mode="local_cli",
                      arm=self.f.campaign.get("arm"), decision=pin,
                      advice=dict(arm="advisory-off", advice_sha256=None, worker_status=None,
                                  worker_journal=None, fence=self.co.header["native_start"]["codex"]),
-                     eligible_lanes=["codex"], lane_facts={}, bound_at=self.next_stamp(),
-                     bound_native=None, input_units=self.f.campaign["inputs"],
+                     eligible_lanes=["codex"], lane_facts={}, bound_at=self.stamps[-1],
+                     bound_native=bind["refs"][-1], input_units=self.f.campaign["inputs"],
                      supervisor_session=self.f.campaign["sessions"]["codex"]["session_id"])
         ref = write_binding(self.co, node_id, value)
         readers = {lane: NativeReader(session, fixtures=True)

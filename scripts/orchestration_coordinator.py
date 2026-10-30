@@ -806,6 +806,8 @@ class Coordinator:
                                        not_after=parse_time(bound_at).timestamp(), binding_pin=lambda: None)
             require(chain["decision_publish_natively_joined"] is True and chain["decision_publish"] is not None,
                     "the published decision has no joined native publisher call and result")
+            require(chain["bind_natively_verified"] is True,
+                    "the binding does not pin this bind step's own native control call")
             require(chain["arm"] == "advisory-off" or chain["read"] is not None,
                     "the on arm binds only after one complete original read of its advice")
             publish = chain["decision_publish"]

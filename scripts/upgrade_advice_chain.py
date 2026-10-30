@@ -15,6 +15,17 @@ because the body travels inside a JSON envelope. Exposure in a tool result is
 not semantic acceptance; the adopted meaning shows up later, in the real
 decision and its result.
 
+What counts as advisory consumption: ``CONSUMED`` and
+``counted_as_advisory_consumption`` require the whole native chain - one
+complete original read, a non-fallback advisor, the publisher's own joined
+call and result, and the binding's own natively verified bind control call. A
+decision that lives outside the publisher's exclusive path is the older
+exclusive-file shape; ROOT R94 section 2 keeps it as a diagnostic, so it is
+reported as ``DIAGNOSTIC_NOT_NATIVELY_JOINED`` with ``decided_at: null`` and
+its self-written stamp under ``diagnostic_decided_at``. ``order_basis`` names,
+per stamp, which record supplied it, so a true ``order_verified`` can never be
+read as a native proof of a leg that has none.
+
 The window is fenced on both sides and bounded: it opens at the advice fence
 and closes at the original bind control call, which every binding must name.
 Nothing after the bind call changes a verdict, so a frozen binding re-derives
@@ -339,7 +350,46 @@ def published_decision_path(co, key):
     return co.root / "decisions" / (str(key) + ".json")
 
 
-def _publish_join(co, key, reader, decision, decision_ref, binding, advice, read):
+def decision_is_published(co, key, decision_ref) -> bool:
+    """The decision lives at the fixed publisher's exclusive path for this node.
+
+    Only such a decision can be natively joined. Any other path is the older
+    exclusive-file shape, which ROOT R94 section 2 keeps as a diagnostic only:
+    it is evaluated and reported, never counted as proven consumption.
+    """
+    return Path(decision_ref["path"]) == published_decision_path(co, key)
+
+
+def bind_call_evidence(co, key, reader, binding, decision_ref) -> dict:
+    """The binding's own bind control call, re-derived from the journal.
+
+    A published decision is bound only by ``bind-unbound``, so its binding must
+    pin the exact original bind call for that decision path, and ``bound_at``
+    must be that record's native timestamp. Nothing is taken from the binding's
+    own fields: a missing pin, a pin to any other record, or a self-written
+    ``bound_at`` refuses. There is no EOF fallback on this path.
+    """
+    from orchestration_campaign import control_script, native_control
+    pin = binding.get("bound_native")
+    require(isinstance(pin, dict), "BIND_CALL: the binding of a published decision pins no bind control call")
+    # Exactly the path expression Coordinator.bind_unbound passes, so the two
+    # scripts can only ever agree byte for byte.
+    script = control_script(co.campaign, co.campaign_ref, "bind-unbound", co.spec["run_id"],
+                            node_id=key, decision=str(published_decision_path(co, key)))
+    try:
+        at = native_control(reader, pin, script)
+        stamped = parse_time(binding.get("bound_at"), "binding bound_at")
+    except ContractError as exc:
+        raise ContractError("BIND_CALL: the pinned record is not the original bind control call") from exc
+    require(stamped == at, "BIND_CALL: bound_at is not the bind call's own native timestamp")
+    require(count(pin.get("offset"), "bind call offset") >= co.header["native_start"]["codex"]["offset"],
+            "BIND_CALL: the bind call predates this run")
+    record = reader.record(pin)
+    return dict(kind="BIND_CALL_OBSERVED", call_id=record["payload"].get("call_id"), call_record=pin,
+                timestamp=record.get("timestamp"))
+
+
+def _publish_join(co, key, reader, decision, decision_ref, binding, advice, read, until):
     """Join the publisher's own native call and result, or state that none exists.
 
     A decision that does not live at the publisher's exclusive path was authored
@@ -349,13 +399,13 @@ def _publish_join(co, key, reader, decision, decision_ref, binding, advice, read
     mandatory: a missing or broken pair refuses.
     """
     from orchestration_campaign import control_script, decision_argument_fields
-    if Path(decision_ref["path"]) != published_decision_path(co, key):
+    if not globals()["decision_is_published"](co, key, decision_ref):
         return None
     script = control_script(co.campaign, co.campaign_ref, "publish-decision", co.spec["run_id"],
                             node_id=key, decision_fields=decision_argument_fields(decision))
     publish = globals()["decision_publish_evidence"](
         reader, fence=(advice.get("fence") or co.header["native_start"]["codex"]),
-        until=_bound_window(reader, binding), script=script)
+        until=until, script=script)
     expected = dict(run_id=co.spec["run_id"], node_id=key,
                     supervisor_session=decision.get("supervisor_session"),
                     decision={name: decision_ref[name] for name in ("path", "bytes", "sha256")},
@@ -427,12 +477,26 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
     decision = json_ref(decision_ref, "original bind decision")
     require(decision.get("run_id") == co.spec["run_id"] and decision.get("node_id") == key,
             "bind decision belongs to another run or frozen node")
+    # The field, schema, work-kind and reason checks the publisher and the bind
+    # run, so a diagnostic decision outside the publisher path is not read
+    # unchecked either.
+    from orchestration_binding import check_decision
+    check_decision(decision, co.spec["run_id"], key)
+    require(decision.get("supervisor_session") == binding.get("supervisor_session")
+            == co.campaign["sessions"]["codex"]["session_id"],
+            "the decision and its binding name another supervisor session")
     require(globals()["route_within_recomputed"](binding),
             "bound lane is outside the candidates recomputed at binding time")
     require(decision.get("actual_route") == binding.get("lane"),
             "bound lane differs from the decision's actual route")
     reader = readers["codex"]
     node_root = co.root / "nodes" / key
+    # A published decision's window ends at its natively verified bind call.
+    # Only the older diagnostic shape, which is never counted, may still fall
+    # back to the binding's own offset or the snapshot.
+    published = globals()["decision_is_published"](co, key, decision_ref)
+    bind = globals()["bind_call_evidence"](co, key, reader, binding, decision_ref) if published else None
+    until = bind["call_record"]["offset"] if bind is not None else _bound_window(reader, binding)
     advice = binding.get("advice") or {}
     arm = advice.get("arm") or ("advisory-off" if decision.get("advice_sha256") is None else "advisory-on")
     worker_status = advice.get("worker_status")
@@ -441,8 +505,7 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
     status = "ADVICE_NOT_CONSUMED"
     if arm == "advisory-off":
         require(decision.get("advice_sha256") is None, "the off arm must cite no advice")
-        records = _window(reader, advice.get("fence") or co.header["native_start"]["codex"],
-                          _bound_window(reader, binding))
+        records = _window(reader, advice.get("fence") or co.header["native_start"]["codex"], until)
         attempts = globals()["advice_read_attempts"](records, node_root, reader.provider)
         require(globals()["off_arm_has_no_advice_file"](node_root), "ADVICE_ARM_VIOLATION: off arm published advice")
         require(globals()["off_arm_worker_requests_zero"](journal), "ADVICE_ARM_VIOLATION: off arm made worker requests")
@@ -451,7 +514,7 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
         require(globals()["decision_cites_this_advice"](decision, advice.get("advice_sha256")),
                 "the decision cites a different advice than this run published")
         evidence = globals()["advice_read_evidence"](
-            reader, fence=advice.get("fence"), until=_bound_window(reader, binding),
+            reader, fence=advice.get("fence"), until=until,
             notice=advice["notice"], command=advice["command"],
             not_before=advice["not_before_epoch"], not_after=not_after)
         if globals()["read_is_full"](evidence):
@@ -460,21 +523,41 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
             status = "CONSUMED"
         else:
             require(not evidence, "AMBIGUOUS_ADVICE_READ: more than one valid pair is not a FULL read")
-    counted = status == "CONSUMED" and globals()["fallback_not_counted_as_consumed"](worker_status)
-    if status == "CONSUMED" and not counted:
+    publish = _publish_join(co, key, reader, decision, decision_ref, binding, advice, read, until)
+    if status == "CONSUMED" and not globals()["fallback_not_counted_as_consumed"](worker_status):
+        # A fallback or stopped advisor is reported as such first: its own
+        # status is more informative than the missing-join one.
         status = "NOT_CONFIGURED" if worker_status == "NOT_CONFIGURED" else "JEV_FALLBACK"
-    publish = _publish_join(co, key, reader, decision, decision_ref, binding, advice, read)
-    decided_at = publish["timestamp"] if publish is not None else decision.get("decided_at")
-    order_verified = globals()["ordered_chain"](read_at, decided_at, binding.get("bound_at"),
-                                                info.get("started_at") if isinstance(info, dict) else None)
+    elif status == "CONSUMED" and publish is None:
+        status = "DIAGNOSTIC_NOT_NATIVELY_JOINED"
+    counted = status == "CONSUMED"
+    # Only the native publish result may supply a decision time. The older
+    # shape's self-written stamp is kept under its own diagnostic key and is
+    # still order-checked for contradiction, never used as proof (R94 2.4).
+    decided_at = publish["timestamp"] if publish is not None else None
+    diagnostic_decided_at = None if publish is not None else decision.get("decided_at")
+    bound_at = bind["timestamp"] if bind is not None else binding.get("bound_at")
+    claim_started_at = info.get("started_at") if isinstance(info, dict) else None
+    order_verified = globals()["ordered_chain"](read_at, decided_at if publish is not None
+                                                else diagnostic_decided_at, bound_at, claim_started_at)
     require(order_verified, "the advice chain is not in read/decide/bind/claim order")
     return dict(schema=SCHEMA, arm=arm, status=status, read_proof=READ_PROOF,
                 decision_write_natively_recognized=False, decision_write_proof=DECISION_WRITE_PROOF,
                 decision_publish_natively_joined=publish is not None,
+                bind_natively_verified=bind is not None, bind_call=bind,
                 counted_as_advisory_consumption=counted, worker_status=worker_status,
                 advice=advice.get("advice_sha256"), decision=decision_ref,
-                decided_at=decided_at, decision_publish=publish,
+                decided_at=decided_at, diagnostic_decided_at=diagnostic_decided_at,
+                bound_at=bound_at, decision_publish=publish,
                 binding=binding_pin(), read=read, order_verified=order_verified,
+                order_basis=dict(
+                    read_at="native_read_result_record" if read_at is not None else None,
+                    decided_at=("native_publish_result_record" if publish is not None else
+                                "decision_file_self_written_consistency_only"),
+                    bound_at=("native_bind_control_record" if bind is not None else
+                              "binding_self_reported_consistency_only"),
+                    claim_started_at=("coordinator_claim_journal_wall_clock"
+                                      if claim_started_at is not None else None)),
                 registration=registration, predicates=sorted(ADVICE_PREDICATES))
 
 
@@ -485,4 +568,5 @@ ADVICE_PREDICATES = {name: value for name, value in sorted(globals().items())
                                  "off_arm_worker_requests_zero", "off_arm_has_no_advice_read",
                                  "fallback_not_counted_as_consumed", "advice_read_attempts",
                                  "decision_publish_evidence", "publish_call_is_the_frozen_script",
-                                 "publication_pins_the_decision", "publish_follows_the_read")}
+                                 "publication_pins_the_decision", "publish_follows_the_read",
+                                 "decision_is_published", "bind_call_evidence")}

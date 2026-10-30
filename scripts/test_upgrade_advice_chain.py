@@ -26,7 +26,7 @@ DOCUMENTED_PREDICATES = {"advice_session_consistent", "advice_read_evidence", "r
                          "off_arm_has_no_advice_read", "fallback_not_counted_as_consumed",
                          "advice_read_attempts", "decision_publish_evidence",
                          "publish_call_is_the_frozen_script", "publication_pins_the_decision",
-                         "publish_follows_the_read"}
+                         "publish_follows_the_read", "decision_is_published", "bind_call_evidence"}
 
 
 def suggesting_transport(request):
@@ -108,17 +108,33 @@ class AdviceChainTests(unittest.TestCase):
         self.setUp()
 
     def test_complete_chain_is_valid_and_claims_nothing_more(self):
+        """Read, decision and binding all join - and that is still not consumption.
+
+        Every decision in this checker-level file is authored outside the run
+        tree, which is the older exclusive-file shape. It is evaluated and
+        reported, never counted: ROOT R94 section 2 keeps that shape as a
+        diagnostic. The natively joined positive lives at run level
+        (``test_orchestration_publish_decision.test_on_arm_publish_joins_after_the_full_read``).
+        """
         advice = self.on_arm()
         self.read(advice)
         result = self.chain(advice)
         self.assertEqual(result["schema"], SCHEMA)
-        self.assertEqual(result["status"], "CONSUMED")
+        self.assertEqual(result["status"], "DIAGNOSTIC_NOT_NATIVELY_JOINED")
         self.assertEqual(result["arm"], "advisory-on")
         self.assertEqual(result["read_proof"], READ_PROOF)
         self.assertIs(result["decision_write_natively_recognized"], False)
         self.assertEqual(result["decision_write_proof"], "NOT_RECOGNIZED_AT_THIS_HEAD")
         self.assertEqual(result["decision_write_proof"], DECISION_WRITE_PROOF)
-        self.assertIs(result["counted_as_advisory_consumption"], True)
+        self.assertIs(result["counted_as_advisory_consumption"], False)
+        self.assertIs(result["decision_publish_natively_joined"], False)
+        self.assertIs(result["bind_natively_verified"], False)
+        # The file's own stamp never lands in decided_at.
+        self.assertIsNone(result["decided_at"])
+        self.assertEqual(result["diagnostic_decided_at"], self.decided)
+        self.assertEqual(result["order_basis"]["decided_at"],
+                         "decision_file_self_written_consistency_only")
+        self.assertEqual(result["order_basis"]["read_at"], "native_read_result_record")
         self.assertEqual(result["advice"], advice["advice_sha256"])
         self.assertTrue(result["order_verified"])
         self.assertIsNone(result["registration"])

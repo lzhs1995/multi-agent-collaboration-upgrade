@@ -144,10 +144,19 @@ class PublishDecisionTests(unittest.TestCase):
         return {key: advice[key] for key in ("arm", "advice_sha256", "notice", "command", "fence",
                                              "not_before_epoch", "worker_status", "worker_journal")}
 
-    def chain(self, advice, published, *, node_id="unbound", binding=None, decision_ref=None, **kw):
+    def chain(self, advice, published, *, node_id="unbound", binding=None, decision_ref=None, bind=True, **kw):
+        """Bind the published decision the way bind-unbound does, then join.
+
+        ``bind`` appends the original supervisor's bind control call and pins it
+        in the binding, because a published decision's window ends at that call
+        and its ``bound_at`` must be that record's own native timestamp. A case
+        that deliberately has no bind call passes ``bind=False``.
+        """
         if decision_ref is None:
             decision_ref = {name: published["result"]["decision"][name] for name in ("path", "bytes", "sha256")}
-        value = binding if binding is not None else self.binding(advice, decision_ref, node_id=node_id)
+        pinned = self.bind_call(node_id) if bind else None
+        changes = dict(bound_native=pinned["ref"], bound_at=pinned["at"]) if bind else {}
+        value = binding if binding is not None else self.binding(advice, decision_ref, node_id=node_id, **changes)
         ref = write_binding(self.co, node_id, value)
         later = parse_time(utc_now()).timestamp() + 600
         return advice_chain(self.co, node_id, {}, self.readers(), registration=None,
@@ -162,6 +171,10 @@ class PublishDecisionTests(unittest.TestCase):
         result = self.chain(self.on_arm(advice), published)
         self.assertEqual((result["arm"], result["status"]), ("advisory-on", "CONSUMED"))
         self.assertIs(result["decision_publish_natively_joined"], True)
+        self.assertIs(result["bind_natively_verified"], True)
+        # This is the one natively joined complete chain: the only shape that
+        # may be counted as proven advisory consumption.
+        self.assertIs(result["counted_as_advisory_consumption"], True)
         self.assertIs(result["decision_write_natively_recognized"], False)
         self.assertEqual(result["decision_write_proof"], "NOT_RECOGNIZED_AT_THIS_HEAD")
         publish = result["decision_publish"]
@@ -169,7 +182,14 @@ class PublishDecisionTests(unittest.TestCase):
         # decided_at is the publisher's own native success record time.
         self.assertEqual(result["decided_at"], published["result_at"])
         self.assertEqual(result["decided_at"], publish["timestamp"])
+        self.assertIsNone(result["diagnostic_decided_at"])
         self.assertIsNone(read_json(published["result"]["decision"]["path"])["decided_at"])
+        # bound_at is the bind control record's own native timestamp.
+        self.assertEqual(result["bound_at"], result["bind_call"]["timestamp"])
+        self.assertEqual(result["order_basis"], dict(read_at="native_read_result_record",
+                                                     decided_at="native_publish_result_record",
+                                                     bound_at="native_bind_control_record",
+                                                     claim_started_at=None))
         self.assertTrue(result["order_verified"])
         self.assertEqual(publish["envelope"]["inputs"]["advice"]["sha256"], advice["advice_sha256"])
 
@@ -432,7 +452,8 @@ class PublishDecisionTests(unittest.TestCase):
                        decision_ref={k: changed[k] for k in ("path", "bytes", "sha256")})
 
     def test_a_decision_outside_the_publisher_path_is_not_joined(self):
-        # The older diagnostic shape: honest about having no join, not a pass.
+        # The older diagnostic shape: honest about having no join, and
+        # deliberately not counted as proven consumption (ROOT R94 section 2).
         advice = self.publish_advice()
         self.read(advice)
         outside = self.f.write_decision(self.run, "unbound", work_kind="coding", actual_route="codex",
@@ -440,11 +461,44 @@ class PublishDecisionTests(unittest.TestCase):
                                         decided_at=self.next_stamp(),
                                         path=self.f.root / "decisions" / "outside.json")
         result = self.chain(self.on_arm(advice), dict(result=dict(decision=outside), result_at=None),
-                            decision_ref={k: outside[k] for k in ("path", "bytes", "sha256")})
+                            decision_ref={k: outside[k] for k in ("path", "bytes", "sha256")}, bind=False)
         self.assertIs(result["decision_publish_natively_joined"], False)
         self.assertIsNone(result["decision_publish"])
-        self.assertEqual(result["decided_at"], read_json(outside["path"])["decided_at"])
-        self.assertEqual(result["status"], "CONSUMED")
+        self.assertIs(result["bind_natively_verified"], False)
+        self.assertEqual(result["status"], "DIAGNOSTIC_NOT_NATIVELY_JOINED")
+        self.assertIs(result["counted_as_advisory_consumption"], False)
+        # The file's self-written stamp stays under its own diagnostic key.
+        self.assertIsNone(result["decided_at"])
+        self.assertEqual(result["diagnostic_decided_at"], read_json(outside["path"])["decided_at"])
+
+    def test_a_published_decision_must_pin_its_own_bind_control_call(self):
+        """A published chain is joined only through the bind step's own call.
+
+        Each case keeps a real publisher call and result, so only the bind pin
+        decides. R62 `native_joins.rule` forbids a self-written stamp as proof,
+        and there is no EOF fallback on the published path.
+        """
+        cases = ("absent", "another_record", "forged_stamp")
+        for label in cases:
+            with self.subTest(label=label):
+                self.fresh()
+                published = self.publish()
+                pin = {k: published["result"]["decision"][k] for k in ("path", "bytes", "sha256")}
+                if label == "absent":
+                    changes = dict(bound_native=None,
+                                   bound_at="2099-01-01T00:00:00+00:00")
+                elif label == "another_record":
+                    record = self.f.clients["codex"].append(dict(
+                        type="response_item", timestamp=self.next_stamp(),
+                        payload=dict(type="message", role="assistant",
+                                     content=[dict(type="output_text", text="binding it now")])))
+                    changes = dict(bound_native=record, bound_at=self.issued)
+                else:
+                    bind = self.bind_call()
+                    changes = dict(bound_native=bind["ref"], bound_at=self.next_stamp())
+                with self.assertRaisesRegex(ContractError, "BIND_CALL"):
+                    self.chain(self.off_arm(), published, bind=False,
+                               binding=self.binding(self.off_arm(), pin, **changes))
 
     # --- negatives: the publisher refuses ---------------------------------
 
