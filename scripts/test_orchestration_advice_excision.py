@@ -249,6 +249,11 @@ REGISTRY = {
         upgrade_advice_chain, any_matching_bind_call,
         _bind("test_two_bind_invocations_still_running_are_ambiguous"), NEGATIVE_FLIPS, None),
     # --- orchestration_binding ----------------------------------------------
+    "unbound_claim_started": (
+        # Excised it reports no claim as started, so a real interrupted claim
+        # artefact on an unbound node would no longer be reported incomplete.
+        orchestration_binding, ADMIT_NOTHING_EXCLUDED,
+        _bind("test_publishing_and_binding_do_not_look_like_an_incomplete_claim"), NEGATIVE_FLIPS, None),
     "lane_verified": (
         orchestration_binding, ADMIT_EVERYTHING,
         _bind("test_bind_recomputes_identity_in_code"), NEGATIVE_FLIPS, None),

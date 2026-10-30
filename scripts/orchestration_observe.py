@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import orchestration_binding
 from orchestration_binding import binding_path, bound_lane, claimed_lanes, is_unbound
 from orchestration_campaign import node_output, node_write_scope
 from orchestration_common import (checked_path, contract_errors, file_ref, json_ref, object_sha,
@@ -337,7 +338,9 @@ def _next_action_from_co(runner, run_id, co):
             for name in set(files) & {"candidate.json", "accepted-evidence.json", "failure-candidate.json", "settled-failure.json", "dispatch-intent.json"}:
                 _bound_record(co, key, files[name], name)
             operations = _operations(co, key, info)
-        elif ((root / "claims" / (key + ".json")).exists() or directory.exists() or node_output(root, node).exists()):
+        elif (orchestration_binding.unbound_claim_started(root, key, node) if is_unbound(node) else
+              ((root / "claims" / (key + ".json")).exists() or directory.exists()
+               or node_output(root, node).exists())):
             incomplete.append(key)
         row = dict(node_id=key, recorded_state=state.value, dependency_ids=node["depends_on"],
             operations=operations, evidence_files=files, timings=_timings(key, node, events),

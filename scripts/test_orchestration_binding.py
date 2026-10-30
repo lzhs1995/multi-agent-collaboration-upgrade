@@ -369,7 +369,8 @@ class BindingHelperTests(unittest.TestCase):
         self.assertEqual(set(BIND_PREDICATES), {
             "lane_verified", "lane_idle_write_domain", "lane_is_author", "decision_route_recomputed",
             "decision_matches_run_node", "node_is_unbound", "binding_absent",
-            "decision_work_kind_known", "advice_inputs_unchanged", "claim_mode_matches_frozen_kind"})
+            "decision_work_kind_known", "advice_inputs_unchanged", "claim_mode_matches_frozen_kind",
+            "unbound_claim_started"})
         import orchestration_binding
         for name, function in BIND_PREDICATES.items():
             with self.subTest(name=name):

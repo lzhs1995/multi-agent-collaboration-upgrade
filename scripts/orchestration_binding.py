@@ -48,6 +48,29 @@ def unbound_plan(plan) -> bool:
     return plan.get("unbound_executor_policy") == POLICY
 
 
+def unbound_claim_started(root, node_id, node) -> bool:
+    """A claim of this unbound node began and left an artefact behind.
+
+    For a bound node the node directory exists only once a claim created it,
+    so "the directory exists" is a sound incomplete-claim test there. An
+    unbound node's directory is created before any claim: ``publish-decision``
+    and ``bind-unbound`` both take ``nodes/<id>/runner.lock``, and the worker's
+    advice and journal live there too. Those are pre-claim artefacts and must
+    not read as an incomplete claim, which would otherwise suppress every
+    claim candidate in the run from the moment the decision is published.
+
+    Only artefacts a claim itself creates count: the claim intent, its gate
+    record, its work request, or its output directory.
+    """
+    from orchestration_campaign import node_output
+    root = Path(root)
+    return any(path.exists() or path.is_symlink() for path in (
+        root / "claims" / (node_id + ".json"),
+        root / "nodes" / node_id / "claim-gates.json",
+        root / "nodes" / node_id / "work-request.json",
+        node_output(root, node)))
+
+
 def node_is_unbound(node) -> bool:
     """The frozen node deliberately carries no executor."""
     return node.get("executor") is None
@@ -351,7 +374,8 @@ def write_binding(co, node_id, value) -> dict:
         raise ContractError("original executor binding exists; observe only") from exc
 
 
-BIND_PREDICATES = {"lane_verified": lane_verified, "lane_idle_write_domain": lane_idle_write_domain,
+BIND_PREDICATES = {"unbound_claim_started": unbound_claim_started,
+                   "lane_verified": lane_verified, "lane_idle_write_domain": lane_idle_write_domain,
                    "lane_is_author": lane_is_author, "decision_route_recomputed": decision_route_recomputed,
                    "decision_matches_run_node": decision_matches_run_node,
                    "node_is_unbound": node_is_unbound, "binding_absent": binding_absent,

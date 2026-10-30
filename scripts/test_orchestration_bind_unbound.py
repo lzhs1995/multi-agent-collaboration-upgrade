@@ -719,6 +719,54 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
         self.assertNotIn("binding_required", bound)
         self.assertEqual(self.r.drafts(self.run)["drafts"], drafts)
 
+    def test_publishing_and_binding_do_not_look_like_an_incomplete_claim(self):
+        """Pre-claim artefacts must not suppress the run's claim candidates.
+
+        ``publish-decision`` and ``bind-unbound`` both take the node's
+        ``runner.lock``, which creates ``nodes/<id>/``. For a bound node that
+        directory only ever appears with a claim, but here it appears before
+        one, and a non-empty incomplete list skips the whole candidate loop.
+        """
+        before = next_action(self.r, self.run)
+        self.assertEqual(before["incomplete_claims"], [])
+        self.assertEqual(sorted(before["recorded_claim_candidates"]), ["local", "parallel", "review"])
+
+        def row(view):
+            return next(r for r in view["nodes"] if r["node_id"] == "unbound")
+        self.publish()
+        after_publish = next_action(self.r, self.run)
+        # The only thing in the directory is the lock the publisher took.
+        self.assertEqual(sorted(p.name for p in (self.co.root / "nodes" / "unbound").iterdir()),
+                         ["runner.lock"])
+        self.assertEqual(after_publish["incomplete_claims"], [])
+        self.assertEqual(row(after_publish)["recommendation"]["action"], "bind-original-unbound-node")
+        self.assertEqual(sorted(after_publish["recorded_claim_candidates"]),
+                         ["local", "parallel", "review"])
+        self.bind_call()
+        binding = self.bind()
+        after_bind = next_action(self.r, self.run)
+        self.assertEqual(after_bind["incomplete_claims"], [])
+        # Now bound and unclaimed: the branch that recommends its claim.
+        self.assertEqual(row(after_bind)["recommendation"]["action"], "claim-after-live-gates")
+        self.assertEqual(row(after_bind)["recommendation"]["gated_command"], "claim")
+        self.assertIn("unbound", after_bind["recorded_claim_candidates"])
+        # Advance acts again instead of waiting on a phantom claim: before the
+        # fix every row said wait-dependencies-or-lane and actions was empty.
+        self.wait_past(json_ref(binding, "binding")["bound_at"])
+        # (`unbound` was asserted a candidate above; advance may pick `local`
+        # first by priority, as both want the codex lane.)
+        result = self.r.advance(self.run, max_steps=1)
+        self.assertEqual([r["action"] for r in result["actions"]], ["claim"])
+        # A real claim artefact without a lifecycle event still reports.
+        self.doCleanups()
+        self.setUp()
+        self.publish()
+        write_json(self.co.root / "nodes" / "unbound" / "claim-gates.json", dict(interrupted=True))
+        view = next_action(self.r, self.run)
+        self.assertEqual(view["incomplete_claims"], ["unbound"])
+        self.assertEqual(row(view)["recommendation"]["action"], "review-incomplete-claim")
+        self.assertEqual(view["recorded_claim_candidates"], [])
+
     def test_observation_recommends_bind_unbound_and_advance_never_executes_it(self):
         view = next_action(self.r, self.run)
         row = next(r for r in view["nodes"] if r["node_id"] == "unbound")
