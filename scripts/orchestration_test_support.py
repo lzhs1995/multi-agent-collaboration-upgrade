@@ -251,6 +251,26 @@ class CampaignFixture:
                           dict(schema="jev-advice-worker-journal-v1", entries=list(entries or ())),
                           exclusive=True)
 
+    def register_fixture_on_arm(self, co, node_id="unbound", *, model="jev-1.14.0"):
+        """An offline on-arm JEV registration and its record; idempotent per node.
+
+        The pins are fixture files: they prove the registration shape the
+        consumer re-derives, not any real authorization or transport.
+        """
+        import jev_registration
+        record = jev_registration.record_path(co.root, node_id)
+        if record.exists():
+            return file_ref(record)
+        run_id, folder = co.spec["run_id"], co.root / "jev-fixture-registrations"
+        pins = {name: write_json(folder / (node_id + "-" + name + ".json"), dict(fixture=name, run_id=run_id))
+                for name in ("transport_source", "authorization")}
+        registration = write_json(folder / (node_id + "-registration.json"), dict(
+            schema=jev_registration.SCHEMA, run_id=run_id, node_id=node_id, arm="advisory-on",
+            external_advice_exception=jev_registration.EXCEPTION, model=model, provider="fixture",
+            budget=dict(max_model_requests=1), **pins))
+        return write_json(record, dict(schema=jev_registration.RECORD_SCHEMA, run_id=run_id, node_id=node_id,
+                                       arm="advisory-on", registration=registration), exclusive=True)
+
     def publish_fixture_advice(self, co, node_id="unbound", *, transport=None, budget=None,
                                model="jev-1.14.0", lanes=None, state_text="route the unbound node"):
         """Run the worker offline and publish its advice as a pinned reference.
@@ -274,7 +294,10 @@ class CampaignFixture:
         published = publish_advice(co.root, run_id, key, body)
         command = read_command(self.campaign["python"]["path"], self.campaign["controller"]["path"],
                                published["notice"])
-        return dict(arm="advisory-off" if advice["status"] == "NOT_CALLED" else "advisory-on",
+        arm = "advisory-off" if advice["status"] == "NOT_CALLED" else "advisory-on"
+        if arm == "advisory-on":
+            self.register_fixture_on_arm(co, key, model=model)
+        return dict(arm=arm,
                     advice_sha256=published["body_sha256"], notice=published["notice"],
                     reference=published["reference"], command=command, fence=fence,
                     not_before_epoch=parse_time(utc_now()).timestamp() - 1,

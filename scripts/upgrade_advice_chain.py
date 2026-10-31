@@ -715,6 +715,12 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
             status = "CONSUMED"
         else:
             require(not evidence, "AMBIGUOUS_ADVICE_READ: more than one valid pair is not a FULL read")
+    # R486: the arm must be the one the node's own JEV registration pinned
+    # before the worker ran, never one inferred from an advice file. No record
+    # is the off arm, so advice cited without an on registration fails here.
+    from jev_registration import registered_arm
+    registered, _record = registered_arm(co.root, co.spec["run_id"], key)
+    require(registered == arm, "ADVICE_ARM_VIOLATION: arm differs from the node's JEV registration")
     publish = _publish_join(co, key, reader, decision, decision_ref, binding, advice, read, until)
     if status == "CONSUMED" and not globals()["fallback_not_counted_as_consumed"](worker_status):
         # A fallback or stopped advisor is reported as such first: its own

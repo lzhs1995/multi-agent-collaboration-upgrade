@@ -52,3 +52,33 @@ def load(ref, *, run_id: str, node_id: str) -> dict:
     return dict(schema=SCHEMA, run_id=run_id, node_id=node_id, arm=arm, registration=ref, provider=value["provider"],
                 model=value["model"], budget=dict(max_model_requests=limit), transport_source=value["transport_source"],
                 authorization=value["authorization"])
+
+
+RECORD_SCHEMA = "jev-advisory-registration-record-v1"
+RECORD_NAME = "jev-registration-record.json"
+
+
+def record_path(run_root, node_id):
+    """Beside the worker journal, outside nodes/<id>/advice, so it is never an advice body."""
+    from pathlib import Path
+    return Path(run_root) / "nodes" / str(node_id) / RECORD_NAME
+
+
+def registered_arm(run_root, run_id: str, node_id: str):
+    """The arm this node was registered under, re-measured; ``(arm, record_ref)``.
+
+    No record is the off arm. A record is re-validated through ``load``, so an
+    edited registration, transport source or authorization pin fails here
+    instead of being trusted from the record.
+    """
+    from orchestration_common import file_ref
+    path = record_path(run_root, node_id)
+    if not (path.exists() or path.is_symlink()):
+        return "advisory-off", None
+    ref = file_ref(path)
+    value = json_ref(ref, "jev registration record")
+    _require(value.get("schema") == RECORD_SCHEMA and value.get("run_id") == run_id and value.get("node_id") == node_id,
+             "record belongs to another run/node")
+    _require(load(value.get("registration"), run_id=run_id, node_id=node_id)["arm"] == value.get("arm"),
+             "record arm differs from its registration")
+    return value["arm"], ref

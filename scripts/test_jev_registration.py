@@ -45,6 +45,21 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
             record_advice(self.r.co(self.run), "unbound", registration=self.reg())
         self.assertFalse(self.journal().exists())
         self.assertFalse((self.co.root / "jev-request-ledger").exists())
+        self.assertFalse(jev_registration.record_path(self.co.root, "unbound").exists())
+
+    def test_the_record_pins_the_arm_and_is_re_derived(self):
+        self.assertEqual(jev_registration.registered_arm(self.co.root, self.run, "unbound"), ("advisory-off", None))
+        record_advice(self.r.co(self.run), "unbound")
+        arm, ref = jev_registration.registered_arm(self.co.root, self.run, "unbound")
+        self.assertEqual((arm, ref["path"]), ("advisory-off", str(jev_registration.record_path(self.co.root, "unbound"))))
+
+    def test_a_record_claiming_on_without_its_registration_is_refused(self):
+        path = jev_registration.record_path(self.co.root, "unbound")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(schema=jev_registration.RECORD_SCHEMA, run_id=self.run, node_id="unbound",
+                                        arm="advisory-on", registration=None)))
+        with self.assertRaisesRegex(ContractError, "record arm differs"):
+            jev_registration.registered_arm(self.co.root, self.run, "unbound")
 
     def cli(self, *extra):
         out, err = io.StringIO(), io.StringIO()
@@ -70,7 +85,10 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
 
 
 class RegistrationClosureTests(unittest.TestCase):
-    def test_registration_and_run_entry_stay_outside_both_closures(self):
+    def test_the_consumer_freezes_the_registration_check_but_not_the_caller(self):
+        """``upgrade_advice_chain`` re-derives the arm through ``jev_registration``,
+        so the validator is frozen with every adapter; the worker, its caller and
+        the publisher stay outside (design Q9)."""
         from orchestration_adapter import validate_adapter
         scripts = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as other:
@@ -81,9 +99,11 @@ class RegistrationClosureTests(unittest.TestCase):
             manifest = tree_manifest(root)
             closures = {p: validate_adapter(manifest, purpose=p) for p in ("maintenance", "campaign")}
         for purpose, closure in closures.items():
-            for outside in ("jev_registration", "jev_advice_run", "jev_advice_worker", "upgrade_advice_publish"):
-                with self.subTest(purpose=purpose, module=outside):
+            with self.subTest(purpose=purpose):
+                self.assertIn("scripts/jev_registration.py", closure)
+                for outside in ("jev_advice_run", "jev_advice_worker", "upgrade_advice_publish", "jev_transport"):
                     self.assertNotIn("scripts/" + outside + ".py", closure)
+
 
 
 if __name__ == "__main__":

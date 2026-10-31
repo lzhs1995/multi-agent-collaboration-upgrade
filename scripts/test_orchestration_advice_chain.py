@@ -176,6 +176,7 @@ class AdviceArmTests(BindFixtureMixin, unittest.TestCase):
         command = read_command(self.f.campaign["python"]["path"], self.f.campaign["controller"]["path"],
                                published["notice"])
         self.f.write_worker_journal(self.co, "unbound", entries=[])
+        self.f.register_fixture_on_arm(self.co, "unbound")
         return dict(advice_sha256=published["body_sha256"], notice=published["notice"], command=command,
                     worker_status="STOPPED_AUTH")
 

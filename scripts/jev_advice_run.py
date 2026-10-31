@@ -122,15 +122,35 @@ def record_advice(co, node_id: str, *, registration=None, send=None, parse=None)
         require(not (co.root / "decisions" / (node_id + ".json")).exists(),
                 "original published decision exists; observe only")
         lanes = orchestration_binding.lane_facts(co, node_id, identity, states, data)
+        record = jev_registration.record_path(co.root, node_id)
+        if not (co.root / "nodes" / node_id / "advice-worker-journal.json").exists():
+            # The arm is pinned before the worker runs; the consumer re-derives
+            # it from this record, never from whether an advice file exists.
+            require(not (record.exists() or record.is_symlink()),
+                    "a registration record exists without a journal; observe only")
+            write_json(record, dict(schema=jev_registration.RECORD_SCHEMA, run_id=run_id, node_id=node_id,
+                                    arm=reg["arm"], registration=reg["registration"]), exclusive=True)
         answer = run_and_record(co.root / "nodes" / node_id, ledger_root=co.root / LEDGER_DIRECTORY, run_id=run_id,
                                 decision=node_id, state_text="unbound node " + node_id, lanes=lanes, bound=False,
                                 arm=reg["arm"], marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider=reg["provider"],
                                 budget=reg["budget"], model=reg["model"],
                                 transport=build_transport(send, model=reg["model"], parse=parse) if on else None)
+        published = None
+        if on:
+            # The original publisher: a pinned reference the supervisor reads
+            # and the decision cites. The off arm publishes nothing.
+            from upgrade_advice_publish import advice_body, advice_marker, advice_tag, publish_advice
+            body = advice_body(co.campaign_ref, run_id, node_id, answer["advice"], answer["request"],
+                               marker=advice_marker(run_id, node_id, advice_tag(answer["advice"])),
+                               input_units=co.campaign["inputs"])
+            published = publish_advice(co.root, run_id, node_id, body)
     require(on or (answer["model_requests"] == 0 and answer["ledger"] is None), "the off arm made a request")
     return dict(schema="jev-worker-advice-record-v1", run_id=run_id, node_id=node_id, arm=reg["arm"],
-                registration=reg["registration"], worker_status=answer["advice"]["status"],
-                model_requests=answer["model_requests"], journal=answer["journal"], ledger=answer["ledger"])
+                registration=reg["registration"], registration_record=str(record),
+                worker_status=answer["advice"]["status"], model_requests=answer["model_requests"],
+                journal=answer["journal"], ledger=answer["ledger"],
+                advice_sha256=published["body_sha256"] if published else None,
+                notice=published["notice"] if published else None)
 
 
 def main(argv=None):
