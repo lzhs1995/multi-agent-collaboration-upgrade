@@ -99,27 +99,26 @@ def task_state(co, node_id: str) -> str:
         except UnicodeDecodeError:
             text = None
         units.append(dict(pin=dict(ref), text=text))
-    return json.dumps(dict(schema="jev-task-state-v1", task=task_identity(co.campaign, co.header, co.nodes[node_id]),
+    return json.dumps(dict(schema="jev_task_state_v1", task=task_identity(co.campaign, co.header, co.nodes[node_id]),
                            node=co.nodes[node_id], state="PENDING_UNBOUND", inputs=units),
                       ensure_ascii=False, sort_keys=True)
 
 
-def defined_in(function, source_ref) -> bool:
-    """Whether ``function``'s code was loaded from the registered transport file."""
-    import inspect
-    import sys
-    target = getattr(function, "__func__", function)
-    try:
-        path = inspect.getsourcefile(target)
-    except TypeError:
-        return False
-    module = sys.modules.get(getattr(target, "__module__", None) or "")
-    return (path is not None and Path(path).resolve() == Path(source_ref["path"]).resolve()
-            and module is not None and getattr(module, "__file__", None) is not None
-            and Path(module.__file__).resolve() == Path(source_ref["path"]).resolve())
+def load_transport(source_ref, connection, credential, *, model):
+    """Execute exactly the registered transport bytes and bind them.
+
+    ``read_ref`` re-checks the pinned bytes and sha256 and those bytes are what
+    runs, so no cached module or later edit can stand in for the registration.
+    """
+    from orchestration_common import read_ref
+    raw = read_ref(source_ref, "registered transport source")
+    namespace = dict(__name__="jev_registered_transport", __file__=source_ref["path"])
+    exec(compile(raw, source_ref["path"], "exec"), namespace)
+    require(callable(namespace.get("bind")), "the registered transport source has no bind")
+    return namespace["bind"](connection, credential, model=model)
 
 
-def record_advice(co, node_id: str, *, registration=None, send=None, parse=None) -> dict:
+def record_advice(co, node_id: str, *, registration=None, connection=None, credential=None) -> dict:
     """Production off-arm worker advice for one deliberately unbound node, before its decision.
 
     The caller of ``run_and_record`` on a real run. It lives here, outside the
@@ -144,11 +143,12 @@ def record_advice(co, node_id: str, *, registration=None, send=None, parse=None)
     require(node_id in co.nodes, "unknown frozen node")
     reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=node_id)
     on = reg["arm"] == "advisory-on"
-    require(not on or (callable(send) and callable(parse)),
-            "an on registration needs an in-process send and parse; nothing is read from the environment")
-    require(not on or (defined_in(send, reg["transport_source"]) and defined_in(parse, reg["transport_source"])),
-            "send and parse must be defined in the registered transport source")
-    require(on or (send is None and parse is None), "the off arm takes no transport")
+    require(not on or (connection is not None and isinstance(credential, str) and bool(credential)),
+            "an on registration needs an in-process send: a caller-held connection and credential; "
+            "nothing is read from the environment")
+    require(on or (connection is None and credential is None), "the off arm takes no transport")
+    send, parse = (load_transport(reg["transport_source"], connection, credential, model=reg["model"])
+                   if on else (None, None))
     require(orchestration_binding.unbound_plan(co.plan) and orchestration_binding.is_unbound(co.nodes[node_id]),
             "only a deliberately unbound frozen node gets worker advice")
     require(co.campaign.get("third_party_api") is False,

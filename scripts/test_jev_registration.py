@@ -13,20 +13,37 @@ from unittest.mock import patch
 import jev_registration
 from jev_advice_run import main, record_advice
 from orchestration_common import ContractError, file_ref, tree_manifest
-from test_orchestration_bind_unbound import BindFixtureMixin, suggesting_transport
+from test_orchestration_bind_unbound import BindFixtureMixin
 
 
-SENT = []
+ON_CALL = Path(__file__).resolve().with_name("jev_on_call.py")
+PLACEHOLDER = "offline-placeholder-not-a-key"
 
 
-def offline_send(request):
-    """Offline fixture transport registered as this file: records the request, no network."""
-    SENT.append(request)
-    return dict(http_status=200, payload=suggesting_transport(request))
+class OfflineConnection:
+    """Offline stand-in for http.client.HTTPSConnection; never touches the network.
 
+    It proves the attempt count and the S1 wire shape, not a real service or trio run.
+    """
+    def __init__(self, status=200):
+        self.status, self.calls = status, []
 
-def offline_parse(response):
-    return response["payload"]
+    def request(self, method, path, body, headers):
+        self.calls.append(dict(method=method, path=path, body=json.loads(body), headers=headers))
+
+    def getresponse(self):
+        payload, status = self.calls[-1]["body"], self.status
+        body = json.dumps(dict(model=payload["model"], usage=dict(input_tokens=10, output_tokens=2), answers=dict(
+            work_kind=dict(type="choice", choice="coding", confidence=0.9,
+                           probabilities=dict(coding=0.97, debugging=0.01, review=0.01, literature=0.01)),
+            work_kind_applies=dict(type="noul", noul=0.9))))
+
+        class Response:
+            def read(self):
+                return body.encode()
+        response = Response()
+        response.status = status
+        return response
 
 
 class RegistrationTests(BindFixtureMixin, unittest.TestCase):
@@ -35,7 +52,7 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
         value = dict(schema=jev_registration.SCHEMA, run_id=run or self.run, node_id="unbound", arm="advisory-on",
                      external_advice_exception=jev_registration.EXCEPTION, model="m", provider="p",
                      budget=dict(max_model_requests=1, max_cost_usd=0.03),
-                     transport_source=file_ref(Path(__file__).resolve()))
+                     transport_source=file_ref(ON_CALL))
         value.update(change)
         if "authorization" not in value:
             grant = co.root.parent / ("auth-" + name)
@@ -46,10 +63,11 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
         return file_ref(path)
 
     def test_one_offline_send_reaches_the_ledger_journal_and_original_publisher(self):
-        SENT.clear()
-        value = record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=offline_send,
-                              parse=offline_parse)
-        self.assertEqual((value["arm"], value["model_requests"], len(SENT)), ("advisory-on", 1, 1))
+        connection = OfflineConnection()
+        value = record_advice(self.r.co(self.run), "unbound", registration=self.reg(), connection=connection,
+                              credential=PLACEHOLDER)
+        self.assertEqual((value["arm"], value["model_requests"], len(connection.calls)), ("advisory-on", 1, 1))
+        self.assertEqual((connection.calls[0]["method"], connection.calls[0]["path"]), ("POST", "/v1/systemone"))
         self.assertEqual(value["ledger"]["reserved_attempts"], 1)
         journal = json.loads(self.journal().read_text())
         self.assertEqual([entry["model_requests"] for entry in journal["entries"]], [1])
@@ -72,18 +90,20 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
         def spy(*args, **kwargs):
             seen.append(real(*args, **kwargs))
             return seen[-1]
-        SENT.clear()
+        connection = OfflineConnection()
         with patch.object(orchestration_binding, "lane_facts", spy):
-            record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=offline_send,
-                          parse=offline_parse)
+            record_advice(self.r.co(self.run), "unbound", registration=self.reg(), connection=connection,
+                          credential=PLACEHOLDER)
             record_advice(Runner(f2.ref, fixtures=True).co(co2.spec["run_id"]), "unbound",
-                          registration=self.reg(run=co2.spec["run_id"], co=co2), send=offline_send, parse=offline_parse)
-        self.assertEqual(len(SENT), 2)
+                          registration=self.reg(run=co2.spec["run_id"], co=co2), connection=connection,
+                          credential=PLACEHOLDER)
+        sent = [call["body"]["state"]["task"] for call in connection.calls]
+        self.assertEqual(len(sent), 2)
         self.assertEqual(seen[0], seen[1])
-        self.assertNotEqual(SENT[0]["state"], SENT[1]["state"])
+        self.assertNotEqual(sent[0], sent[1])
         questions = []
-        for request in SENT:
-            state = json.loads(request["state"])
+        for task in sent:
+            state = json.loads(task)
             self.assertEqual(state["task"]["node_id"], "unbound")
             for unit in state["inputs"]:
                 raw = unit["text"].encode("utf-8")
@@ -92,12 +112,32 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
                 questions.append(json.loads(unit["text"])["question"])
         self.assertEqual(questions, ["6 * 7", "5 * 8"])
 
-    def test_a_send_defined_elsewhere_is_refused_before_any_write(self):
-        with self.assertRaisesRegex(ContractError, "registered transport source"):
-            record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=json.dumps,
-                          parse=offline_parse)
+    def test_a_registered_source_without_bind_is_refused_before_any_write(self):
+        source = self.co.root.parent / "no-bind.py"
+        source.write_text("VALUE = 1\n")
+        with self.assertRaisesRegex(ContractError, "has no bind"):
+            record_advice(self.r.co(self.run), "unbound", registration=self.reg(transport_source=file_ref(source)),
+                          connection=OfflineConnection(), credential=PLACEHOLDER)
         self.assertFalse(self.journal().exists())
         self.assertFalse(jev_registration.record_path(self.co.root, "unbound").exists())
+
+    def test_401_and_403_stop_after_exactly_one_attempt(self):
+        from jev_request_ledger import ledger_summary
+        from orchestration_run import Runner
+        for status in (401, 403):
+            with self.subTest(status=status):
+                other = tempfile.TemporaryDirectory()
+                self.addCleanup(other.cleanup)
+                f2 = self.fixture(base=Path(other.name).resolve())
+                co2 = f2.start()
+                connection = OfflineConnection(status)
+                with self.assertRaisesRegex(ContractError, "STOP"):
+                    record_advice(Runner(f2.ref, fixtures=True).co(co2.spec["run_id"]), "unbound",
+                                  registration=self.reg(run=co2.spec["run_id"], co=co2), connection=connection,
+                                  credential=PLACEHOLDER)
+                self.assertEqual(len(connection.calls), 1)
+                self.assertTrue(ledger_summary(co2.root / "jev-request-ledger")["stopped"])
+                self.assertFalse((co2.root / "nodes/unbound/advice").exists())
 
     def test_an_authorization_naming_another_budget_is_refused(self):
         grant = self.co.root.parent / "auth-other.json"
@@ -181,7 +221,8 @@ class RegistrationClosureTests(unittest.TestCase):
         for purpose, closure in closures.items():
             with self.subTest(purpose=purpose):
                 self.assertIn("scripts/jev_registration.py", closure)
-                for outside in ("jev_advice_run", "jev_advice_worker", "upgrade_advice_publish", "jev_transport"):
+                for outside in ("jev_advice_run", "jev_advice_worker", "upgrade_advice_publish", "jev_transport",
+                                "jev_on_call"):
                     self.assertNotIn("scripts/" + outside + ".py", closure)
 
 
