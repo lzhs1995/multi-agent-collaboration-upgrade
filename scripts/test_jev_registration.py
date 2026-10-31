@@ -236,13 +236,27 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "record arm differs"):
             jev_registration.registered_arm(self.co.root, self.run, "unbound")
 
-    def cli(self, *extra):
+    def cli(self, *extra, frozen=True):
+        """The CLI with the Runner patched, as test_orchestration_run does; not the real entry."""
         out, err = io.StringIO(), io.StringIO()
-        with patch("orchestration_run.Runner", return_value=self.r), contextlib.redirect_stdout(out), \
-                contextlib.redirect_stderr(err):
+        entry = str(Path(self.r.campaign["adapter"]["path"]) / "scripts/jev_advice_run.py")
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("orchestration_run.Runner", return_value=self.r))
+            if frozen:
+                stack.enter_context(patch("jev_advice_run.__file__", entry))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            stack.enter_context(contextlib.redirect_stderr(err))
             code = main(["--campaign", self.f.ref["path"], "--campaign-sha256", self.f.ref["sha256"],
                          "--run", self.run, "--node", "unbound", *extra])
         return code, out.getvalue(), err.getvalue()
+
+    def test_the_cli_refuses_the_mutable_checkout_before_any_write(self):
+        code, _, err = self.cli(frozen=False)
+        self.assertEqual(code, 2)
+        self.assertIn("frozen adapter, not the mutable checkout", err)
+        self.assertFalse(self.journal().exists())
+        self.assertFalse(jev_registration.record_path(self.co.root, "unbound").exists())
+        self.assertFalse((self.co.root / "jev-request-ledger").exists())
 
     def test_the_cli_runs_the_off_arm(self):
         code, out, _ = self.cli()

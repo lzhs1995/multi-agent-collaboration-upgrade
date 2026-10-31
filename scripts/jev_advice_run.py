@@ -196,8 +196,9 @@ def record_advice(co, node_id: str, *, registration=None, connection=None, crede
 def main(argv=None):
     """``record-advice`` for a real frozen campaign: off arm, or a pinned registration.
 
-    Same campaign anchoring and Runner as ``orchestration_run``. No key, send
-    or parse is ever read here, so only the off arm can run from this CLI.
+    Same campaign anchoring, Runner and frozen-adapter self-check as
+    ``orchestration_run``. No key, connection or credential is ever read here,
+    so only the off arm can run from this CLI.
     """
     import argparse
     import json
@@ -219,6 +220,8 @@ def main(argv=None):
             registration = file_ref(args.registration)
             require(registration["sha256"] == args.registration_sha256, "registration hash mismatch")
         runner = Runner(anchored_ref(args.campaign, args.campaign_sha256))
+        require(Path(__file__).resolve() == Path(runner.campaign["adapter"]["path"]) / "scripts/jev_advice_run.py",
+                "invoke the complete frozen adapter, not the mutable checkout")
         result = record_advice(runner.co(args.run), args.node, registration=registration)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
         return 0
