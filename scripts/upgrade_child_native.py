@@ -214,10 +214,11 @@ def child_report(session, call, *, claim_id, agent_id, transcript_path, fixtures
             path.append(key)
             key = linked[key][1].get("parentUuid")
         rooted.update(path)
-    # Live 2026-10-30 (u25 C1): a PreToolUse hook attachment is stamped from its
-    # own tool_use record plus the hook's duration, while its parentUuid can name
-    # a later-written sibling tool_use of the same response. Its floor is that own
-    # tool_use record; every other record still may not precede its parent.
+    # Live 2026-10-30 (u25 C1): a PreToolUse hook_success attachment is stamped
+    # from its own tool_use record plus the hook's duration, while its parentUuid
+    # can name a later-written sibling tool_use of the same response. Only that
+    # exact observed shape takes its own tool_use as floor; every other record,
+    # including any other attachment kind or hook event, keeps its parent floor.
     tool_use_stamps = {}
     for ref, record, stamp in linked.values():
         message = record.get("message") if record.get("type") == "assistant" else None
@@ -229,7 +230,9 @@ def child_report(session, call, *, claim_id, agent_id, transcript_path, fixtures
         parent_key = record.get("parentUuid")
         floor = call_time if ref == first_ref else linked[parent_key][2]
         attached = record.get("attachment") if record.get("type") == "attachment" else None
-        own = attached.get("toolUseID") if isinstance(attached, dict) else None
+        hook = (isinstance(attached, dict) and attached.get("type") == "hook_success"
+                and attached.get("hookEvent") == "PreToolUse")
+        own = attached.get("toolUseID") if hook else None
         if own in tool_use_stamps:
             floor = max(call_time, tool_use_stamps[own])
         require(call_time <= floor <= stamp <= time.time(), "ORIGINAL_CHILD_NATIVE_CHRONOLOGY_CHANGED")

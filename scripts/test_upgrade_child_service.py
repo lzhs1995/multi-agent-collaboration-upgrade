@@ -615,6 +615,13 @@ class NativeChildServiceTests(unittest.TestCase):
         shapes = dict(earlier_than_own_tool_use=(shape(hook_at=0.25), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
                       message_earlier_than_parent=(shape(bash_at=0.28), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
                       unknown_own_tool_use=(shape(own="toolu_other"), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      # R460: only a PreToolUse hook_success attachment takes its own tool_use floor.
+                      non_hook_success_attachment=(shape(attachment=dict(type="not_a_hook", hookEvent="PreToolUse",
+                          toolUseID="toolu_read")), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      stop_hook_attachment=(shape(attachment=dict(type="hook_success", hookEvent="Stop",
+                          toolUseID="toolu_read")), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      posttooluse_hook_attachment=(shape(attachment=dict(type="hook_success", hookEvent="PostToolUse",
+                          toolUseID="toolu_read")), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
                       future_attachment=(shape(hook_at=future), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
                       changed_identity=(shape(agentId="a0000000000000000"), "CHILD_NATIVE_IDENTITY_CHANGED"),
                       detached_parent=(shape(parentUuid=str(uuid.uuid4())), "PARENT_CHAIN_CHANGED"),
