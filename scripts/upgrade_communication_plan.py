@@ -47,14 +47,15 @@ RULES = (
 
 def registration_plan(registration):
     """Return the complete fixed denominator before native sessions are adopted."""
-    from upgrade_benchmark import compact_layout, layout
+    from upgrade_benchmark import pilot_group, registered_layout
 
-    expected, _ = layout(registration["root"], compact=compact_layout(registration))
+    expected, _ = registered_layout(registration)
     require(registration["groups"] == expected, "communication registration groups changed")
+    pilot = pilot_group(registration)
     identity = object_sha({"benchmark_id": registration["benchmark_id"], "root": registration["root"]})[:16]
     samples = []
     for group_id, group in expected.items():
-        if group_id == "pilot-B":
+        if group_id == pilot:
             continue
         for run_id in WARM_RUNS:
             for node_id, executor in NODES[group["workload_class"]]:

@@ -107,5 +107,86 @@ class JevRegistrationTests(unittest.TestCase):
             jb.validate_registration(self.mutate(ref, lambda v: v["plan"].update(sha256="0" * 64)))
 
 
+@unittest.skipUnless(PLAN.exists(), "frozen S2 plan not present")
+class S2ConsumerPathTests(unittest.TestCase):
+    """R517 NR1: shared consumers dispatch S2 by schema; v3 keeps pilot-B and A1=mac_native."""
+    setUp = JevRegistrationTests.setUp
+    reg = JevRegistrationTests.reg
+    mutate = JevRegistrationTests.mutate
+
+    def test_validate_registration_dispatches_s2_with_every_runtime_arm_b_omo(self):
+        value = v3.validate_registration(self.reg())
+        self.assertEqual(value["schema"], jb.SCHEMA)
+        self.assertEqual({g["arm"] for g in value["groups"].values()}, {"B"})
+        self.assertEqual({v3.ARM_STRATEGIES[g["arm"]] for g in value["groups"].values()}, {"omo"})
+        self.assertEqual(collections.Counter(g["advisory"] for g in value["groups"].values()),
+                         {"advisory-on": 4, "advisory-off": 3})
+        self.assertEqual(value["contract"], v3.CONTRACT)
+        self.assertEqual(value["response_observation"], dict(mode="disabled", sha256=None, bytes=None))
+        self.assertEqual(v3.pilot_group(value), "pilot-on")
+        self.assertEqual(v3.registered_layout(value), (value["groups"], value["pairs"]))
+
+    def test_changed_contract_policy_or_arm_is_refused(self):
+        edits = (lambda v: v["contract"].update(run_timeout_seconds=3600),
+                 lambda v: v["response_observation"].update(mode="consumed-response-v1"),
+                 lambda v: v["groups"]["fan_in-off"].update(arm="A1"),
+                 lambda v: v.pop("contract"))
+        for index, edit in enumerate(edits):
+            ref = self.reg(self.base / f"m{index}")
+            with self.subTest(index=index), self.assertRaises(ContractError):
+                v3.validate_registration(self.mutate(ref, edit))
+
+    def test_group_registration_and_campaign_take_s2_groups_as_omo(self):
+        ref = self.reg()
+        value = v3.validate_registration(ref)
+        group = value["groups"]["write_conflict-off"]
+        context = dict(path=group["context_path"])
+        self.assertEqual(v3.group_registration(ref, "write_conflict-off", context, "B"), group)
+        other = dict(path=value["groups"]["write_conflict-on"]["context_path"])
+        for args in (("write_conflict-off", context, "A1"), ("write_conflict-A1", context, "B"),
+                     ("write_conflict-off", other, "B")):
+            with self.subTest(args=args[0] + ":" + args[2]), self.assertRaises(ContractError):
+                v3.group_registration(ref, *args)
+        campaign = dict(registration=ref, session_group="write_conflict-off", experiment=context, arm="B",
+                        campaign_id=group["campaign_id"], workload_class="write_conflict",
+                        runs=[dict(run_id=r["run_id"], strategy="omo") for r in group["runs"]])
+        self.assertEqual(v3.validate_registered_campaign(campaign), group)
+        for key, edit in (("mac_native", dict(runs=[dict(r, strategy="mac_native") for r in campaign["runs"]])),
+                          ("missing_run", dict(runs=campaign["runs"][1:])),
+                          ("v3_campaign_id", dict(campaign_id="paired-write_conflict"))):
+            with self.subTest(key=key), self.assertRaises(ContractError):
+                v3.validate_registered_campaign(dict(campaign, **edit))
+
+    def test_permit_order_and_communication_plan_select_pilot_on_for_s2_only(self):
+        from orchestration_permit import steps
+        from upgrade_communication_plan import registration_plan
+        value = v3.validate_registration(self.reg())
+        order = steps(value)
+        self.assertEqual(len(order), 33)
+        self.assertEqual([s["group"] for s in order[:3]], ["pilot-on"] * 3)
+        self.assertLessEqual({s["group"] for s in order}, set(value["groups"]))
+        plan = registration_plan(value)
+        self.assertEqual(plan["total_samples"], 192)
+        self.assertNotIn("pilot-on", {s["group"] for s in plan["samples"]})
+        self.assertEqual({s["arm"] for s in plan["samples"]}, {"B"})
+
+    def test_v3_keeps_pilot_b_and_a1_mac_native(self):
+        self.assertEqual(v3.pilot_group(dict(schema=v3.REGISTRATION_V3)), "pilot-B")
+        self.assertEqual(v3.ARM_STRATEGIES, {"A1": "mac_native", "B": "omo"})
+        groups, _ = v3.layout(self.base / "v3")
+        self.assertEqual({g["arm"] for g in groups.values()}, {"A1", "B"})
+
+    def test_runtime_observation_checks_the_s2_policy(self):
+        from upgrade_startup_contract import RESPONSE_OBSERVER_PIN
+        value = v3.validate_registration(self.reg())
+        plain, observed = self.base / "startup.json", self.base / "startup2.json"
+        plain.write_text(json.dumps(dict(pins={})))
+        observed.write_text(json.dumps(dict(pins={RESPONSE_OBSERVER_PIN: dict(sha256="e" * 64, bytes=9)})))
+        result = v3.runtime_observation(value, "rt", dict(startup=file_ref(plain)))
+        self.assertEqual(result["policy"]["mode"], "disabled")
+        with self.assertRaises(ContractError):
+            v3.runtime_observation(value, "rt", dict(startup=file_ref(observed)))
+
+
 if __name__ == "__main__":
     unittest.main()

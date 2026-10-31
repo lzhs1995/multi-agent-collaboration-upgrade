@@ -12,13 +12,14 @@ from pathlib import Path
 
 from orchestration_common import (boot_id, count, file_ref, json_ref, parse_time,
                                   read_ref, require, utc_now)
-from upgrade_benchmark import validate_registered_campaign, validate_registration
+from upgrade_benchmark import pilot_group, validate_registered_campaign, validate_registration
 
 
 def steps(registration):
     result = []
-    for run in registration["groups"]["pilot-B"]["runs"]:
-        result.append(dict(group="pilot-B", **run))
+    pilot = pilot_group(registration)
+    for run in registration["groups"][pilot]["runs"]:
+        result.append(dict(group=pilot, **run))
     for pair in registration["pairs"]:
         for arm in pair["order"]:
             result.append(dict(**pair["members"][arm], phase=pair["phase"], pair_id=pair["pair_id"]))

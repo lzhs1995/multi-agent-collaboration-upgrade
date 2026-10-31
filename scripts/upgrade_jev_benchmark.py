@@ -1,12 +1,15 @@
-"""Separate JEV S2 paired registration (upgrade-jev-paired-registration-v1, R514).
+"""Separate JEV S2 paired registration (upgrade-jev-paired-registration-v2, R514/R517).
 
 The frozen S2 plan keeps the v3 alternation and slots but changes only the
 advisory switch: the A1 position becomes advisory-off, the B position
-advisory-on, and both arms run strategy omo. The pairs are derived from the
-tested v3 ``layout`` and must equal the pinned plan field by field. Original
-v3 registrations, roots, ids, denominators and failures are never relabeled or
-read as S2. Each pair's two arms take the same input, policies and models, and
-every class must have DP1 and DP2 opportunities before a formal pilot.
+advisory-on, and both arms run strategy omo. Every S2 group therefore uses
+runtime arm B; the advisory switch is recorded separately and never derived
+from the arm. The pairs are derived from the tested v3 ``layout`` and must
+equal the pinned plan field by field. Original v3 registrations, roots, ids,
+denominators and failures are never relabeled or read as S2. Each pair's two
+arms take the same input, policies and models, and every class must have DP1
+and DP2 opportunities before a formal pilot. The run cap and gates are the v3
+contract, which the plan's fixed factors and estimator repeat.
 """
 from __future__ import annotations
 
@@ -15,13 +18,15 @@ from pathlib import Path
 import upgrade_benchmark as v3
 from orchestration_common import ContractError, file_ref, json_ref, read_ref, strict_json, utc_now, write_json
 
-SCHEMA = "upgrade-jev-paired-registration-v1"
+SCHEMA = "upgrade-jev-paired-registration-v2"
 STRATEGY = "omo"
+RUNTIME_ARM = "B"
+PILOT = "pilot-on"
 ADVISORY = {"A1": "advisory-off", "B": "advisory-on"}
 FACTOR_KEYS = ("input_sha256", "policies", "codex_model", "claude_model")
 POLICY_KEYS = ("resource", "response_observer", "write_scope")
 FIELDS = {"schema", "benchmark_id", "root", "created_at", "plan", "compact", "groups", "pairs", "factors",
-          "opportunities"}
+          "opportunities", "contract", "response_observation"}
 
 
 def require(value, message):
@@ -39,12 +44,12 @@ def layout(root, plan_ref, *, compact=True):
     """Groups and pairs from the tested v3 layout, renamed to the S2 advisory arms and checked against the plan."""
     design = _plan(plan_ref)["design"]
     base_groups, base_pairs = v3.layout(root, compact=compact)
-    names = {name: (name.replace("-A1", "-off").replace("-B", "-on") if name != "pilot-B" else "pilot-on")
+    names = {name: (name.replace("-A1", "-off").replace("-B", "-on") if name != "pilot-B" else PILOT)
              for name in base_groups}
     groups = {}
     for name, group in base_groups.items():
         advisory = ADVISORY[group["arm"]]
-        groups[names[name]] = dict(group, advisory=advisory, strategy=STRATEGY, transport=None,
+        groups[names[name]] = dict(group, arm=RUNTIME_ARM, advisory=advisory, strategy=STRATEGY, transport=None,
                                    campaign_id="jev-" + group["campaign_id"],
                                    runs=[dict(run, pair_id=None if run["pair_id"] is None else "jev-" + run["pair_id"])
                                          for run in group["runs"]])
@@ -58,7 +63,7 @@ def layout(root, plan_ref, *, compact=True):
     require([project(p) for p in pairs] == [project(p) for p in design["pairs"]], "pairs differ from the frozen S2 plan")
     require(sum(p["phase"] == "warm" for p in pairs) == design["warm_pairs"]
             and sum(p["phase"] == "cold" for p in pairs) == design["cold_pairs"], "warm/cold counts differ from the plan")
-    pilot = groups["pilot-on"]
+    pilot = groups[PILOT]
     require(pilot["advisory"] == design["pilot"]["arm"] and len(pilot["runs"]) == design["pilot"]["runs"]
             and all(run["pair_id"] is None for run in pilot["runs"]), "pilot differs from the plan")
     return groups, pairs
@@ -87,13 +92,13 @@ def check_opportunities(opportunities):
                 "zero or missing DP1/DP2 opportunities: " + kind)
 
 
-def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=True):
+def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=True, response_observation=False):
     from upgrade_experiment import private_root
     from orchestration_planner import ID_RE
     root = private_root(root)
     require(isinstance(benchmark_id, str) and ID_RE.fullmatch(benchmark_id), "invalid benchmark ID")
     require(not root.exists(), "registration root exists; preserve the original registration")
-    require(type(compact) is bool, "compact flag must be boolean")
+    require(type(compact) is bool and type(response_observation) is bool, "registration flags must be boolean")
     plan_ref = file_ref(Path(plan_path))
     groups, pairs = layout(root, plan_ref, compact=compact)
     check_factors(pairs, factors)
@@ -106,7 +111,8 @@ def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=T
             for lane in ("claude_a", "claude_b"):
                 client_temp_base(paths, lane)
     value = dict(schema=SCHEMA, benchmark_id=benchmark_id, root=str(root), created_at=utc_now(), plan=plan_ref,
-                 compact=compact, groups=groups, pairs=pairs, factors=factors, opportunities=opportunities)
+                 compact=compact, groups=groups, pairs=pairs, factors=factors, opportunities=opportunities,
+                 contract=v3.CONTRACT, response_observation=v3.observation_policy(response_observation))
     root.mkdir(parents=True, mode=0o700)
     return write_json(root / "registration.json", value, exclusive=True)
 
@@ -117,8 +123,11 @@ def validate_registration(ref):
     require(set(value) == FIELDS, "registration fields changed")
     groups, pairs = layout(value["root"], value["plan"], compact=value["compact"])
     require(value["groups"] == groups and value["pairs"] == pairs, "groups or pairs differ from the frozen S2 layout")
-    require(all(g["strategy"] == STRATEGY and g["transport"] is None for g in value["groups"].values()),
+    require(all(g["strategy"] == STRATEGY == v3.ARM_STRATEGIES[g["arm"]] and g["transport"] is None
+                for g in value["groups"].values()),
             "both arms must be omo and no group may carry a transport before its per-run grant")
+    require(value["contract"] == v3.CONTRACT, "registered run cap or gates changed")
+    v3.validate_observation_policy(value["response_observation"])
     check_factors(value["pairs"], value["factors"])
     check_opportunities(value["opportunities"])
     return value

@@ -17,6 +17,7 @@ from orchestration_common import (ContractError, checked_path, contract_errors, 
 CLASSES = ("uneven_successor", "fan_in", "write_conflict")
 ARM_STRATEGIES = {"A1": "mac_native", "B": "omo"}
 REGISTRATION_V3 = "upgrade-paired-registration-v3"
+JEV_REGISTRATION = "upgrade-jev-paired-registration-v2"
 CONTRACT = dict(
     warm_pairs=12, cold_pairs=3, pilot_consecutive_passes=3,
     maximum_executing_claudes=2, run_timeout_seconds=1800,
@@ -63,6 +64,19 @@ def layout(root, *, compact=False):
     return groups, pairs
 
 
+def pilot_group(registration):
+    return "pilot-on" if registration["schema"] == JEV_REGISTRATION else "pilot-B"
+
+
+def registered_layout(registration):
+    """The validated registration's own layout: S2 from its pinned plan, v1-v3 unchanged."""
+    if registration["schema"] == JEV_REGISTRATION:
+        import upgrade_jev_benchmark
+        return upgrade_jev_benchmark.layout(registration["root"], registration["plan"],
+                                            compact=registration["compact"])
+    return layout(registration["root"], compact=compact_layout(registration))
+
+
 def compact_layout(value):
     return value["compact"] if value.get("schema") == REGISTRATION_V3 else value.get("schema") == "upgrade-paired-registration-v2"
 
@@ -86,7 +100,7 @@ def runtime_observation(registration, runtime_ref, runtime):
     local check adds no seven-group scan to a client's native-reader hot path.
     It proves pinned configuration only, never actual LOADED or model response.
     """
-    if registration["schema"] != REGISTRATION_V3:
+    if registration["schema"] not in (REGISTRATION_V3, JEV_REGISTRATION):
         return None
     from upgrade_startup_contract import RESPONSE_OBSERVER_PIN
     expected = validate_observation_policy(registration["response_observation"])
@@ -101,6 +115,13 @@ def runtime_observation(registration, runtime_ref, runtime):
                 startup=runtime["startup"], policy=actual)
 
 
+def observation_policy(response_observation):
+    if not response_observation:
+        return dict(mode="disabled", sha256=None, bytes=None)
+    pin = file_ref(Path(__file__).with_name("upgrade_claude_response_observer.cjs"))
+    return dict(mode="consumed-response-v1", sha256=pin["sha256"], bytes=pin["bytes"])
+
+
 def register(root, benchmark_id, *, compact=False, response_observation=False):
     from upgrade_experiment import private_root
     from orchestration_planner import ID_RE
@@ -108,10 +129,7 @@ def register(root, benchmark_id, *, compact=False, response_observation=False):
     require(isinstance(benchmark_id, str) and ID_RE.fullmatch(benchmark_id), "invalid benchmark ID")
     require(not root.exists(), "registration root exists; preserve the original registration")
     require(type(compact) is bool and type(response_observation) is bool, "registration flags must be boolean")
-    policy = dict(mode="disabled", sha256=None, bytes=None)
-    if response_observation:
-        pin = file_ref(Path(__file__).with_name("upgrade_claude_response_observer.cjs"))
-        policy = dict(mode="consumed-response-v1", sha256=pin["sha256"], bytes=pin["bytes"])
+    policy = observation_policy(response_observation)
     groups, pairs = layout(root, compact=compact)
     if compact:
         from upgrade_client_isolation import client_temp_base, control_socket
@@ -130,6 +148,9 @@ def register(root, benchmark_id, *, compact=False, response_observation=False):
 @contract_errors("paired registration")
 def validate_registration(ref):
     value = json_ref(ref, "paired registration")
+    if value.get("schema") == JEV_REGISTRATION:
+        import upgrade_jev_benchmark
+        return upgrade_jev_benchmark.validate_registration(ref)
     modern = value.get("schema") == REGISTRATION_V3
     require(set(value) == {"schema", "benchmark_id", "root", "created_at", "contract", "groups", "pairs"}
             | ({"compact", "response_observation"} if modern else set())
