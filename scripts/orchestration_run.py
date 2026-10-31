@@ -213,10 +213,6 @@ class Runner:
                         decision=dict(path=ref["path"], bytes=ref["bytes"], sha256=ref["sha256"]),
                         publisher=publisher, inputs=dict(campaign=self.ref, advice=advice))
 
-    def record_advice(self, run_id, key):
-        """Production worker advice for one unbound node; see Coordinator.record_advice."""
-        return self.co(run_id).record_advice(key)
-
     def bind_unbound(self, run_id, key, decision):
         """Bind one deliberately unbound frozen node before its claim.
 
@@ -455,10 +451,10 @@ def main(argv=None):
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--campaign-sha256", required=True)
     commands = parser.add_subparsers(dest="action", required=True)
-    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "publish-decision", "record-advice", "start-script", "start", "bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
+    actions = ("status", "wait-permit", "advance", "next-action", "drafts", "publish-drafts", "publish-continuation", "publish-decision", "start-script", "start", "bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate",
                "accept", "resume-accept", "block", "failure-candidate", "settle", "resume-settle", "recover",
                "repair-releases", "disarm", "finish", "verify", "verify-campaign")
-    node_actions = {"record-advice", "bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "publish-decision", "accept", "resume-accept",
+    node_actions = {"bind-unbound", "claim", "prepare", "dispatch", "reconcile", "callback", "candidate", "publish-continuation", "publish-decision", "accept", "resume-accept",
                     "block", "failure-candidate", "settle", "resume-settle", "disarm"}
     for action in actions:
         sub = commands.add_parser(action)

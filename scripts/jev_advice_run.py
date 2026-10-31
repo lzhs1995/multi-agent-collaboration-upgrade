@@ -74,3 +74,48 @@ def run_and_record(node_root, *, ledger_root, run_id: str, decision: str, state_
         raise ContractError("STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER")
     return dict(advice=answer["advice"], request=answer["request"], model_requests=answer["model_requests"],
                 journal=journal, ledger=summary)
+
+
+def require(value, message):
+    if not value:
+        raise ContractError(message)
+
+
+def record_advice(co, node_id: str) -> dict:
+    """Production off-arm worker advice for one deliberately unbound node, before its decision.
+
+    The caller of ``run_and_record`` on a real run. It lives here, outside the
+    frozen adapter closure (design Q9 keeps the worker out), and calls the
+    coordinator instead of being imported by it. A registered campaign forbids
+    third-party model calls (``third_party_api`` is False), so its arm is
+    advisory-off: no transport, no budget, zero requests, and only the
+    worker's exact journal is written; no advice body is published. It takes
+    the runner and state locks like publish-decision, requires a PENDING node
+    with no claim or decision, fixes the ledger directory per run and uses the
+    bind path's own ``lane_facts``. An existing journal refuses re-entry before
+    the worker runs again. An on arm needs its own explicit JEV registration.
+    """
+    import orchestration_binding
+    from orchestration_common import exclusive_lock
+    from orchestration_coordinator import State
+    require(node_id in co.nodes, "unknown frozen node")
+    require(orchestration_binding.unbound_plan(co.plan) and orchestration_binding.is_unbound(co.nodes[node_id]),
+            "only a deliberately unbound frozen node gets worker advice")
+    require(co.campaign.get("third_party_api") is False,
+            "this registration forbids third-party calls; an on arm needs its own JEV registration")
+    run_id = co.spec["run_id"]
+    with exclusive_lock(co.root / "nodes" / node_id / "runner.lock"), co.state_lock(new_work=True):
+        identity = co._gate(new_work=True)
+        states, data = co.state()
+        require(states[node_id] == State.PENDING, "worker advice precedes the claim")
+        require(not (co.root / "claims" / (node_id + ".json")).exists(), "original claim intent exists; observe only")
+        require(not (co.root / "decisions" / (node_id + ".json")).exists(),
+                "original published decision exists; observe only")
+        lanes = orchestration_binding.lane_facts(co, node_id, identity, states, data)
+        answer = run_and_record(co.root / "nodes" / node_id, ledger_root=co.root / LEDGER_DIRECTORY, run_id=run_id,
+                                decision=node_id, state_text="unbound node " + node_id, lanes=lanes, bound=False,
+                                arm="advisory-off", marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider="none",
+                                budget=None, model=None, transport=None)
+    require(answer["model_requests"] == 0 and answer["ledger"] is None, "the off arm made a request")
+    return dict(schema="jev-worker-advice-record-v1", run_id=run_id, node_id=node_id, arm="advisory-off",
+                worker_status=answer["advice"]["status"], model_requests=0, journal=answer["journal"], ledger=None)
