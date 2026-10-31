@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from jev_request_ledger import AUTH_STATUSES
 from orchestration_common import ContractError
 
 
@@ -33,8 +34,13 @@ def build_transport(send: Callable[[dict], dict] | None, *, model: str,
         response = send(dict(request, model=model))
         if not isinstance(response, dict):
             return response
-        # parse maps the provider's reply onto the worker's shape; the HTTP
-        # status is carried through so a 401/403 reaches the ledger's STOP.
+        status = response.get("http_status")
+        if isinstance(status, int) and not isinstance(status, bool) and status in AUTH_STATUSES:
+            # The sender's known 401/403 reaches the ledger's STOP before, and
+            # regardless of, any parsing of its error body.
+            return dict(answers=None, error="AUTH_REFUSED", usage=response.get("usage"), http_status=status)
+        # parse maps the provider's reply onto the worker's shape. A parse
+        # failure on any other reply propagates and is recorded as UNKNOWN.
         value = parse(response)
         if not isinstance(value, dict):
             return value

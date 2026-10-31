@@ -63,14 +63,39 @@ class TransportTests(unittest.TestCase):
         summary = ledger_summary(self.base / "ledger")
         self.assertEqual((summary["reserved_attempts"], summary["transport_raised_unknown"]), (1, 1))
 
-    def test_a_401_reply_reaches_the_ledger_stop(self):
-        call = self.ledgered(build_transport(lambda request: dict(REPLY, http_status=401),
+    def test_a_known_401_or_403_stops_before_any_parsing(self):
+        def missing(response):
+            return dict(answers=response["body"]["answers"])  # an error body has no answers
+
+        def not_a_dict(response):
+            return []
+
+        def raises(response):
+            raise ValueError("not an answer")
+        for status in (401, 403):
+            for name, parser in (("missing_answers", missing), ("not_a_dict", not_a_dict), ("raises", raises)):
+                with self.subTest(status=status, parser=name):
+                    self.base = Path(self._tmp.name).resolve() / ("%d-%s" % (status, name))
+                    sent = []
+                    error_body = dict(http_status=status, body=dict(error=dict(type="authentication_error")))
+                    call = self.ledgered(build_transport(lambda request: sent.append(request) or error_body,
+                                                         model="jev-1.14.0", parse=parser))
+                    self.assertEqual(call(dict(prompt="p"))["http_status"], status)
+                    with self.assertRaisesRegex(ContractError, "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"):
+                        self.ledgered(build_transport(lambda request: self.fail("dead key retried"),
+                                                      model="jev-1.14.0", parse=parse), decision="d2")(dict(prompt="p"))
+                    summary = ledger_summary(self.base / "ledger")
+                    self.assertEqual((len(sent), summary["stopped"], summary["results"]),
+                                     (1, True, {"AUTH_REFUSED": 1}))
+
+    def test_a_non_auth_parse_failure_stays_unknown_and_is_not_swallowed(self):
+        sent = []
+        call = self.ledgered(build_transport(lambda request: sent.append(request) or dict(http_status=200, body={}),
                                              model="jev-1.14.0", parse=parse))
-        call(dict(prompt="p"))
-        with self.assertRaisesRegex(ContractError, "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"):
-            self.ledgered(build_transport(lambda request: self.fail("dead key retried"),
-                                          model="jev-1.14.0", parse=parse), decision="d2")(dict(prompt="p"))
-        self.assertTrue(ledger_summary(self.base / "ledger")["stopped"])
+        with self.assertRaises(KeyError):
+            call(dict(prompt="p"))
+        summary = ledger_summary(self.base / "ledger")
+        self.assertEqual((len(sent), summary["transport_raised_unknown"], summary["stopped"]), (1, 1, False))
 
 
 if __name__ == "__main__":
