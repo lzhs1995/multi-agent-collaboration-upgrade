@@ -199,9 +199,22 @@ def control(runtime_ref, command):
         _, value = invocation(runtime_ref, runtime, spec, "experiment-inspect", persist=False)
         return dict(status="STOPPED_INPUT" if stopped else "OBSERVED", observation=value,
                     adoption=file_ref(adoption) if adoption.exists() else None, input_operations=0)
+    if command == "held-observe":
+        # Read only: the owner's permit-scoped release already wrote both files.
+        request_ref = file_ref(adoption.parent / "launch-request.json")
+        request = json_ref(request_ref)
+        require(held_launch(runtime) and launched and request.get("runtime") == runtime_ref
+                and request.get("startup") == runtime["startup"] and isinstance(request.get("held_release"), dict)
+                and (startup_dir / "release.json").exists(), "HELD_RELEASE_NOT_OBSERVED")
+        return dict(status="HELD_RELEASE_OBSERVED", launch_request=request_ref, input_operations=0)
     require(not stopped, "EXPERIMENT_STOP_REQUESTED")
-    if command == "launch":
+    if command in ("launch", "hold"):
         require(not launched, "ORIGINAL_LAUNCH_ALREADY_EXISTS: inspect it; no retry or replacement")
+        # A batch hold creates the held processes without the launch clock;
+        # only the later permit-scoped release writes launch-request.json.
+        record = "launch-request.json" if command == "launch" else "held-request.json"
+        require(command == "launch" or (held_launch(runtime)
+                and not os.path.lexists(adoption.parent / "launch-request.json")), "BATCH_HOLD_REQUIRES_PRE_EXEC_HOLD")
         from upgrade_startup_contract import child_budget_enabled
         from upgrade_child_budget_protocol import verify_child_hook_binary
         binding = json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json"))
@@ -210,12 +223,13 @@ def control(runtime_ref, command):
         # The private harness also writes its exclusive intent before cmux. This
         # external intent is an additional crash record, never a retry budget.
         external_publisher(spec)
-        write_json(adoption.parent / "launch-request.json", dict(runtime=runtime_ref,
+        write_json(adoption.parent / record, dict(runtime=runtime_ref,
             requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
             startup=runtime["startup"], **({"child_hook_capability": child_capability}
                                          if child_capability is not None else {})), exclusive=True)
         ref, value = invocation(runtime_ref, runtime, spec, "experiment-launch", spawn=True)
-        return dict(status="LAUNCH_RETURNED" if value["returncode"] == 0 else "LAUNCH_UNCONFIRMED",
+        prefix = "LAUNCH" if command == "launch" else "HELD_LAUNCH"
+        return dict(status=prefix + ("_RETURNED" if value["returncode"] == 0 else "_UNCONFIRMED"),
                     evidence=ref, observation=value, input_operations=0)
     require(command == "adopt", "UNKNOWN_CONTROL_COMMAND")
     external_publisher(spec)
@@ -244,6 +258,68 @@ def control(runtime_ref, command):
     proof_ref = write_json(adoption, proof, exclusive=True)
     adoption.chmod(0o444)
     return dict(status="ADOPTED", adoption=proof_ref, sessions=proof["sessions"], input_operations=0)
+
+
+def held_launch(runtime):
+    """The materialized binding, not a caller flag, decides a batch-held launch."""
+    from upgrade_startup_contract import pre_exec_hold_enabled
+    return pre_exec_hold_enabled(json_ref(file_ref(Path(runtime["controller"]["path"]) / "upgrade-binding.json")))
+
+
+def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha256):
+    """Owner release of one batch-held group under its own active permit.
+
+    launch-request.json is written here, immediately before the one private
+    release, so the driver's original 900-second startup clock starts when the
+    held clients may first exec. Never launches, retries or releases another
+    group, and never rewrites an earlier request.
+    """
+    import cmux_daemon_identity as identity
+    import upgrade_schedule as schedule
+    from orchestration_permit import read_permit
+    from upgrade_client_isolation import LANES
+    _, runtime = validate_live_runtime(runtime_ref)
+    spec = json_ref(runtime["startup"])
+    control_dir, startup_dir = Path(spec["adoption_path"]).parent, Path(runtime["state_root"]) / "startup"
+    require(held_launch(runtime), "PRE_EXEC_HOLD_NOT_BOUND")
+    require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    require((control_dir / "held-request.json").exists() and (startup_dir / "intent.json").exists(),
+            "BATCH_HELD_LAUNCH_REQUIRED")
+    for path in (control_dir / "launch-request.json", startup_dir / "release.json", Path(spec["adoption_path"])):
+        require(not os.path.lexists(path), "HELD_GROUP_ALREADY_RELEASED: " + path.name)
+    active = schedule.status(registration_ref).get("active")
+    require(active is not None and active.get("group") == group, "RELEASE_REQUIRES_THIS_GROUP_ACTIVE_PERMIT")
+    _, permit = read_permit(registration_ref, active["ordinal"], active=True)
+    require(permit["runtime"] == runtime_ref, "ACTIVE_PERMIT_RUNTIME_DIFFERS")
+    held = {}
+    for lane in LANES:
+        value = json_ref(file_ref(startup_dir / (lane + "-held.json")))
+        launched = json_ref(value["launched"])
+        require(value.get("native_exec") == 0 and launched.get("surface_uuid") == value.get("surface_uuid"),
+                "HELD_RECORD_CHANGED")
+        try:
+            live = identity.process(launched["pid"])
+        except Exception as exc:
+            raise ContractError("HELD_PROCESS_CHANGED: " + lane) from exc
+        require(list(live["birth"]) == list(launched["birth"]), "HELD_PROCESS_CHANGED: " + lane)
+        held[lane] = dict(pid=launched["pid"], birth=launched["birth"], surface_uuid=value["surface_uuid"])
+    receipt = file_ref(checked_path(receipt_path))
+    require(receipt["sha256"] == receipt_sha256, "EXCLUSION_RECEIPT_PIN_CHANGED")
+    external_publisher(spec)
+    request = write_json(control_dir / "launch-request.json", dict(runtime=runtime_ref,
+        requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), startup=runtime["startup"],
+        held_release=dict(permit=permit["step"], group=group, receipt=receipt, held=held)), exclusive=True)
+    ref = runtime["startup"]
+    argv = [str(SANDBOX), "-f", spec["pins"]["control_sandbox"]["path"], runtime["python"]["path"], "-I", "-B",
+            str(Path(runtime["controller"]["path"]) / "scripts/mac_upgrade_live_entry.py"), "experiment-release",
+            "--startup", ref["path"], "--startup-sha256", ref["sha256"],
+            "--receipt", receipt["path"], "--receipt-sha256", receipt["sha256"]]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=180, cwd=spec["work_root"],
+                            env=clean_child_environment({}), check=False)
+    released = (startup_dir / "release.json").exists()
+    return dict(status="RELEASED" if result.returncode == 0 and released else "RELEASE_UNCONFIRMED",
+                launch_request=request, argv=argv, returncode=result.returncode, stdout=result.stdout,
+                stderr=result.stderr, input_operations=0)
 
 
 def main(argv=None):

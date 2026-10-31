@@ -20,7 +20,7 @@ from orchestration_common import (ContractError, boot_id, exclusive_lock, file_r
 from orchestration_freeze_v3 import authorize, freeze_campaign
 from orchestration_permit import elapsed, read_permit, require_running
 from upgrade_benchmark import group_registration, runtime_observation, validate_registration
-from upgrade_live_control import control, publish_bootstrap
+from upgrade_live_control import control, held_launch, publish_bootstrap
 from upgrade_live_runtime import validate_adoption, validate_live_runtime
 from upgrade_failure_watch import CodexFailureWatch
 import upgrade_schedule as schedule
@@ -71,8 +71,10 @@ def configure(request_ref, *, overall_timeout_seconds=None, node_failure_drain_s
         require_drain_source(request["source"])
     verify_tree(request["corpus"])
     authorize(request["native_authorizations"])
+    modes = set()
     for group, runtime_ref in request["runtimes"].items():
         _, runtime = validate_live_runtime(runtime_ref)
+        modes.add(held_launch(runtime))
         group_registration(request["registration"], group, runtime["context"], runtime["arm"])
         runtime_observation(registration, runtime_ref, runtime)
         checked = control(runtime_ref, "check")
@@ -81,6 +83,7 @@ def configure(request_ref, *, overall_timeout_seconds=None, node_failure_drain_s
         spec = json_ref(runtime["startup"])
         require(not os.path.lexists(Path(spec["adoption_path"]).parent / "launch-request.json"),
                 "original launch request already exists; do not register a replacement driver")
+    require(len(modes) == 1, "all seven groups must share one launch mode (direct or batch-held)")
     require(schedule.status(request["registration"])["permits"] == 0, "configure before the first permit")
     root = Path(registration["root"]) / "driver"
     with exclusive_lock(root / "publisher.lock"):
@@ -366,9 +369,23 @@ class Driver:
         launch_action = self.root / "actions" / (group + "-launch")
         if not (launch_action / "intent.json").exists():
             require_running(self.registration_ref)
+            held = held_launch(runtime)
+            if held and not (os.path.lexists(Path(spec["adoption_path"]).parent / "launch-request.json")
+                             and os.path.lexists(Path(runtime["state_root"]) / "startup/release.json")):
+                # The batch-held clients wait for the owner's release under this
+                # exact permit. The driver never launches or releases them; the
+                # original run watchdog still bounds the wait.
+                intent_ref = file_ref(self.root / "actions" / f"{ordinal:04d}-issue" / "intent.json")
+                timing = self._clock(json_ref(intent_ref), "started_at")
+                if timing["seconds"] is None:
+                    return self.halt("Original held-release watchdog clock is unknown", "UNKNOWN", [intent_ref])
+                if timing["seconds"] > self.registration["contract"]["run_timeout_seconds"]:
+                    return self.halt("Held group was not released within 1800 seconds of its permit", "TIMEOUT", [intent_ref])
+                return dict(status="WAITING_HELD_RELEASE", step=step, elapsed_seconds=timing["seconds"], input_operations=0)
             verify_tree(self.config["source"])
             verify_tree(self.config["corpus"])
-            return self.once(group + "-launch", "launch", lambda: control(runtime_ref, "launch"))
+            command = "held-observe" if held else "launch"
+            return self.once(group + "-launch", command, lambda: control(runtime_ref, command))
         # A launch intent, with or without a returned result, is consumed forever.
         # Adoption only inspects the originally launched processes and journals.
         launch_path = Path(spec["adoption_path"]).parent / "launch-request.json"

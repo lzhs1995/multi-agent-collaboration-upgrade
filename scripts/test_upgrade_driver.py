@@ -41,7 +41,9 @@ class DriverTests(unittest.TestCase):
         scripts.mkdir()
         for name in ("orchestration_coordinator.py", "orchestration_advance.py"):
             (scripts / name).write_bytes(Path(driver.__file__).with_name(name).read_bytes())
-        mocks = [(driver, "validate_live_runtime", lambda ref: (None, json_ref(ref))),
+        self.held = False
+        mocks = [(driver, "held_launch", lambda runtime: self.held),
+                 (driver, "validate_live_runtime", lambda ref: (None, json_ref(ref))),
                  (driver, "validate_adoption", lambda *a, **kw: None),
                  (driver, "validate_campaign", json_ref),
                  (instructions, "validate_campaign", json_ref),
@@ -387,6 +389,8 @@ class DriverTests(unittest.TestCase):
         if command == "check":
             return dict(status="CONFIGURATION_VERIFIED", launched=False, stopped=False, adoption_published=False)
         self.actions.append((command, group))
+        if command == "held-observe":
+            return dict(status="HELD_RELEASE_OBSERVED")
         if command == "launch":
             permit = read_permit(self.case.ref, driver.schedule.status(self.case.ref)["permits"])[1]
             self.assertEqual(permit["runtime"], ref)
@@ -442,6 +446,68 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(self.driver.tick()["step"]["run_id"], "pilot-02")
         self.assertEqual(self.driver.tick()["status"], "WAITING_ORIGINAL_SUPERVISOR")
         self.assertEqual(self.actions, [(a, "pilot-B") for a in ("launch", "adopt", "freeze", "bootstrap")])
+
+    def owner_release(self, group):
+        # Synthetic stand-in for upgrade_live_control.release_held: the held
+        # spawn already exists; the owner's release writes both files.
+        import time
+        ref = self.case.runtimes[group]
+        runtime = json_ref(ref)
+        spec = json_ref(runtime["startup"])
+        write_json(Path(spec["adoption_path"]).parent / "launch-request.json", dict(runtime=ref,
+            startup=runtime["startup"], requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
+            held_release={"synthetic": True}), exclusive=True)
+        write_json(Path(runtime["state_root"]) / "startup/release.json", {"synthetic": True}, exclusive=True)
+
+    def held_spawn(self, group):
+        write_json(Path(json_ref(self.case.runtimes[group])["state_root"]) / "startup/intent.json",
+                   {"synthetic": True}, exclusive=True)
+
+    def test_configure_requires_one_launch_mode_for_all_seven_groups(self):
+        modes = iter([True] + [False] * 6)
+        with patch.object(driver, "held_launch", side_effect=lambda runtime: next(modes)), \
+                patch.object(driver, "write_json") as publish:
+            with self.assertRaisesRegex(ContractError, "one launch mode"):
+                driver.configure(self.request)
+            publish.assert_not_called()
+
+    def test_held_group_waits_for_owner_release_and_never_launches(self):
+        self.held = True
+        self.held_spawn("pilot-B")
+        self.assertEqual(self.driver.tick()["status"], "PERMIT_ISSUED")
+        for _ in range(2):
+            self.assertEqual(self.driver.tick()["status"], "WAITING_HELD_RELEASE")
+        self.assertFalse((self.driver.root / "actions/pilot-B-launch").exists())
+        self.owner_release("pilot-B")
+        self.assertEqual(self.driver.tick()["status"], "HELD_RELEASE_OBSERVED")
+        self.assertEqual(self.driver.tick()["status"], "ADOPTED")
+        self.assertEqual(self.driver.tick()["status"], "BOOTSTRAP_PUBLISHED")
+        self.assertEqual(self.actions, [(a, "pilot-B") for a in ("held-observe", "adopt", "freeze", "bootstrap")])
+        self.assertNotIn(("launch", "pilot-B"), self.actions)
+
+    def test_held_wait_with_only_launch_request_keeps_waiting(self):
+        self.held = True
+        self.held_spawn("pilot-B")
+        self.assertEqual(self.driver.tick()["status"], "PERMIT_ISSUED")
+        ref = self.case.runtimes["pilot-B"]
+        runtime = json_ref(ref)
+        spec = json_ref(runtime["startup"])
+        write_json(Path(spec["adoption_path"]).parent / "launch-request.json", dict(runtime=ref,
+            startup=runtime["startup"], requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
+            held_release={"synthetic": True}), exclusive=True)
+        self.assertEqual(self.driver.tick()["status"], "WAITING_HELD_RELEASE")
+        self.assertEqual(self.actions, [])
+
+    def test_unreleased_held_group_times_out_after_the_original_run_limit(self):
+        self.held = True
+        self.held_spawn("pilot-B")
+        self.assertEqual(self.driver.tick()["status"], "PERMIT_ISSUED")
+        with patch.object(self.driver, "_clock", return_value={"seconds": 1801}):
+            result = self.driver.tick()
+        self.assertEqual((result["status"], result["classification"]), ("HALTED", "TIMEOUT"))
+        self.assertEqual(self.actions, [])
+        with patch.object(self.driver, "_clock", return_value={"seconds": None}):
+            self.assertEqual(self.driver.tick()["status"], "HALTED")
 
     def test_crash_after_launch_does_not_launch_again(self):
         self.driver.tick()
