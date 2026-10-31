@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 
-from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref,
+from orchestration_common import (ContractError, checked_path, digest, file_ref, json_ref, parse_time,
                                   read_ref, read_regular, utc_now, write_json)
 from upgrade_client_isolation import LANES, SANDBOX, clean_child_environment
 from upgrade_startup_contract import (child_budget_enabled, pre_exec_hold_enabled,
@@ -150,17 +150,199 @@ def start_server(ref, spec, binding, env):
     require(status == "SOCKET_CREATED", "PRIVATE_SERVER_START_UNCONFIRMED: preserve original intent")
 
 
+def lane_command(ref, spec, lane):
+    """The exact pinned client command one lane's terminal runs."""
+    return shlex.join([str(SANDBOX), "-f", spec["pins"][lane + "_sandbox"]["path"],
+                       spec["pins"]["python"]["path"], "-I", "-B",
+                       str(Path(spec["controller"]) / "scripts/mac_harness.py"),
+                       "experiment-client", "--startup", ref["path"], "--startup-sha256", ref["sha256"],
+                       "--lane", lane])
+
+
 def layout_for(ref, spec):
-    panes = []
-    for lane in LANES:
-        command = [str(SANDBOX), "-f", spec["pins"][lane + "_sandbox"]["path"],
-                   spec["pins"]["python"]["path"], "-I", "-B",
-                   str(Path(spec["controller"]) / "scripts/mac_harness.py"),
-                   "experiment-client", "--startup", ref["path"], "--startup-sha256", ref["sha256"],
-                   "--lane", lane]
-        panes.append({"pane": {"surfaces": [{"type": "terminal", "command": shlex.join(command)}]}})
+    panes = [{"pane": {"surfaces": [{"type": "terminal", "command": lane_command(ref, spec, lane)}]}}
+             for lane in LANES]
     return {"direction": "horizontal", "split": 0.42, "children": [panes[0],
             {"direction": "vertical", "split": 0.5, "children": panes[1:]}]}
+
+
+def _excluded(config, key):
+    """Every id listed under ``key`` anywhere in the CCC configuration, upper-cased."""
+    found, stack = set(), [config]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            for name, item in value.items():
+                if name == key and isinstance(item, list):
+                    found |= {str(x).upper() for x in item}
+                else:
+                    stack.append(item)
+        elif isinstance(value, list):
+            stack.extend(value)
+    return found
+
+
+def adopt_precheck(*, workspace_uuid, evidence, tree, process, clients, ccc_config, protected, closeout_ref,
+                   expected, now, max_observation_age=120, created=None):
+    """Read-only: may this existing workspace receive one replacement tab per lane?
+
+    ``evidence`` freezes, per lane, the original pane, the terminal tab that
+    held the finished client, that client's pid/birth and an observed empty
+    draft. Everything must still match the live ``tree``; each original client
+    must have exited; the workspace and old tabs must already be CCC-excluded;
+    the current owner's closeout must exist. Live, foreign, changed or missing
+    proof refuses. Nothing is written and no cmux command runs here.
+
+    ``created`` names the tabs this adopt has already made, one per lane at
+    most; each is allowed only in its own lane's pane and is not yet expected
+    to be CCC-excluded. Any other new tab still refuses.
+    """
+    created = {lane: str(value).upper() for lane, value in (created or {}).items()}
+    require(set(created) <= set(LANES), "ADOPT_CREATED_LANE_UNKNOWN")
+    workspace = str(workspace_uuid).upper()
+    ws = tree.get(workspace)
+    require(ws is not None, "ADOPT_WORKSPACE_NOT_IN_CMUX_TREE")
+    panes = {str(p["id"]).upper(): {str(s["id"]).upper() for s in p["surfaces"]} for p in ws["panes"]}
+    lanes = evidence.get("lanes") if isinstance(evidence, dict) else None
+    require(isinstance(lanes, dict) and set(lanes) == set(LANES), "ADOPT_EVIDENCE_LANES_REQUIRED")
+    require(set(panes) == {str(lanes[lane]["pane_uuid"]).upper() for lane in LANES}, "ADOPT_PANE_SET_CHANGED")
+    every = set().union(*panes.values())
+    require(not every & {str(x).upper() for x in protected}, "PRODUCTION_SURFACE_REFUSED")
+    require(workspace in _excluded(ccc_config, "claude_excluded_workspace_ids"), "ADOPT_WORKSPACE_NOT_CCC_EXCLUDED")
+    require(every - set(created.values()) <= _excluded(ccc_config, "discovery_excluded_surface_ids"),
+            "ADOPT_SURFACE_NOT_CCC_EXCLUDED")
+    require(isinstance(closeout_ref, dict) and file_ref(checked_path(closeout_ref["path"])) == closeout_ref,
+            "ADOPT_OWNER_CLOSEOUT_MISSING")
+    # The closeout's content, not just its hash: the expected owner, task and
+    # session ids, this workspace and the exact three-lane surface/pid/birth set.
+    closeout = json.loads(read_regular(Path(closeout_ref["path"])))
+    keys = ("owner", "task", "session_ids")
+    require(isinstance(expected, dict) and all(expected.get(key) for key in keys)
+            and isinstance(closeout, dict) and closeout.get("status") == "CLOSED"
+            and all(closeout.get(key) == expected[key] for key in keys)
+            and str(closeout.get("workspace_uuid", "")).upper() == workspace
+            and closeout.get("lanes") == {lane: dict(surface_uuid=str(lanes[lane]["surface_uuid"]).upper(),
+                                                     pid=lanes[lane]["pid"], birth=list(lanes[lane]["birth"]))
+                                          for lane in LANES}, "ADOPT_CLOSEOUT_SEMANTICS_UNPROVEN")
+    seen = [str(item["id"]).upper() for value in tree.values() for p in value["panes"]
+            for item in [p] + list(p["surfaces"])]
+    require(len(seen) == len(set(seen)), "ADOPT_UUID_NOT_UNIQUE")
+    checked = {}
+    for lane in LANES:
+        row = lanes[lane]
+        pane, old = str(row["pane_uuid"]).upper(), str(row["surface_uuid"]).upper()
+        require(panes[pane] == {old} | ({created[lane]} if lane in created else set()),
+                "ADOPT_SURFACE_SET_CHANGED: " + lane)
+        tab = [s for p in ws["panes"] if str(p["id"]).upper() == pane for s in p["surfaces"]
+               if str(s["id"]).upper() == old][0]
+        require(tab.get("type") == "terminal", "ADOPT_OLD_TAB_NOT_TERMINAL: " + lane)
+        # A fresh, pinned observation: empty draft plus screen and transcript hashes.
+        seen_at = row.get("observed_at")
+        require(row.get("draft") == "" and isinstance(seen_at, str)
+                and 0 <= now - parse_time(seen_at).timestamp() <= max_observation_age
+                and all(isinstance(row.get(key), str) and len(row[key]) == 64
+                        for key in ("screen_sha256", "transcript_sha256")), "ADOPT_DRAFT_NOT_PROVEN_EMPTY: " + lane)
+        # Unknown (None) or any client on the old tab, including someone else's, refuses.
+        require(clients(old) == [], "ADOPT_OLD_TAB_CLIENT_UNPROVEN: " + lane)
+        alive = process(row["pid"])
+        require(alive is None or list(alive["birth"]) != list(row["birth"]), "ADOPT_LIVE_CLIENT_REFUSED: " + lane)
+        checked[lane] = dict(pane_uuid=pane, old_surface_uuid=old, pid=row["pid"], birth=list(row["birth"]),
+                             exited="PID_ABSENT" if alive is None else "PID_REUSED_BY_ANOTHER_BIRTH")
+    return dict(schema="upgrade-adopt-precheck-v1", workspace_uuid=workspace, lanes=checked, created=created,
+                closeout=closeout_ref, cmux_environment_for_new_surface="NOT_VERIFIED", input_operations=0)
+
+
+def adopt_argv(cmux, precheck, lane, command):
+    """One lane's new-surface call into its original pane.
+
+    cmux 0.65.2's default JSON names ref keys (surface_ref ...); the reply is
+    read by UUID, so the presentation option is pinned instead of trusting the
+    default. Whether new-surface honours it is NOT_VERIFIED until a real call.
+    """
+    return [str(cmux), "--json", "--id-format", "uuids", "new-surface", "--type", "terminal",
+            "--pane", precheck["lanes"][lane]["pane_uuid"], "--workspace", precheck["workspace_uuid"],
+            "--command", command, "--focus", "false"]
+
+
+def created_surface(precheck, lane, stdout, created):
+    """The one new tab a reply names, or a refusal; rc 0 alone proves nothing.
+
+    The reply keys are NOT_VERIFIED against a real ``new-surface``: an
+    unparsable reply stops with the host result kept, never a second attempt.
+    """
+    try:
+        reply = json.loads(stdout)
+        new = {key: str(uuid.UUID(str(reply[key]))).upper() for key in ("surface_id", "workspace_id", "pane_id")}
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ContractError("ADOPT_SURFACE_RESULT_UNPARSED: " + lane) from exc
+    require(new["workspace_id"] == precheck["workspace_uuid"]
+            and new["pane_id"] == precheck["lanes"][lane]["pane_uuid"]
+            and new["surface_id"] not in {row["old_surface_uuid"] for row in precheck["lanes"].values()}
+            and new["surface_id"] not in set(created.values()),
+            "ADOPT_SURFACE_OUTSIDE_ORIGINAL_SCOPE: " + lane)
+    return new["surface_id"]
+
+
+def adopt_lanes(ref, precheck, control, observe, run):
+    """One new tab per lane, in order, re-checking the original scope each time.
+
+    Before every attempt ``observe(created=...)`` must still equal the stored
+    precheck plus the tabs already made. A change outside that scope refuses
+    before any new creation and keeps what exists; nothing is retried,
+    replaced or closed.
+    """
+    created = {}
+    for lane in LANES:
+        try:
+            fresh = observe(created=dict(created))
+        except ContractError as exc:
+            fresh = str(exc)
+        if fresh != dict(precheck, created=created):
+            write_json(control / ("adopt-" + lane + "-scope-refused.json"), dict(
+                startup=ref, observed_at=utc_now(), status="REFUSED_BEFORE_CREATION", created=created,
+                observed=fresh, surface_creation_attempts=0, input_operations=0), exclusive=True)
+            raise ContractError("ADOPT_SCOPE_CHANGED_BEFORE: " + lane)
+        try:
+            result = run(lane)
+        except subprocess.TimeoutExpired as exc:
+            write_json(control / ("adopt-" + lane + "-timeout.json"), dict(startup=ref, lane=lane,
+                       observed_at=utc_now(), status="UNKNOWN", created=created,
+                       surface_creation_attempts=1, input_operations=0), exclusive=True)
+            raise ContractError("ADOPT_SURFACE_CREATION_UNKNOWN: no retry or replacement") from exc
+        write_json(control / ("adopt-" + lane + "-result.json"), dict(
+            schema="upgrade-adopt-result-v1", startup=ref, lane=lane, observed_at=utc_now(),
+            returncode=result.returncode, stdout=result.stdout, stderr=result.stderr, created=created,
+            surface_creation_attempts=1, input_operations=0), exclusive=True)
+        require(result.returncode == 0, "ADOPT_SURFACE_CREATION_UNCONFIRMED: inspect the original attempt")
+        created[lane] = created_surface(precheck, lane, result.stdout, created)
+    return created
+
+
+def adopt(ref, spec, binding, *, workspace_uuid, precheck, observe, spawn=False, spawn_authorized=False):
+    """Add exactly one replacement tab per lane inside the original panes.
+
+    ``observe(created=...)`` returns a fresh precheck from live state; it must
+    equal the stored one before the intent and, via ``adopt_lanes``, before
+    every lane. Pre-exec hold is mandatory, so the new tabs wait for their own
+    CAS exclusion receipt and release exactly like a fresh launch. One
+    new-surface per lane, never retried or replaced; no workspace or pane is
+    created and no old tab is closed here.
+    """
+    require(spawn and spawn_authorized, "SPAWN_REQUIRES_BOTH_FLAGS")
+    require(pre_exec_hold_enabled(binding), "ADOPT_REQUIRES_PRE_EXEC_HOLD")
+    binding_boundary(binding, binary_pin=spec["pins"]["codex"], fresh=True)
+    require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
+    fresh = observe(created={})
+    require(fresh == precheck and fresh["workspace_uuid"] == str(workspace_uuid).upper()
+            and precheck.get("created") == {}, "ADOPT_PRECHECK_STALE")
+    control = Path(binding["state_root"]) / "startup"
+    argv = {lane: adopt_argv(spec["pins"]["cmux"]["path"], precheck, lane, lane_command(ref, spec, lane))
+            for lane in LANES}
+    write_json(control / "intent.json", dict(schema="upgrade-startup-intent-v2", startup=ref, created_at=utc_now(),
+               argv=argv, adopt=precheck, spawn=True, spawn_authorized=True, input_operations=0), exclusive=True)
+    created = adopt_lanes(ref, precheck, control, observe, lambda lane: subprocess.run(
+        argv[lane], capture_output=True, text=True, timeout=45, check=False))
+    return dict(workspace_uuid=precheck["workspace_uuid"], lanes=list(LANES), created=created)
 
 
 def launch(ref, spec, binding, *, spawn=False, spawn_authorized=False):
