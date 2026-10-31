@@ -81,7 +81,7 @@ def require(value, message):
         raise ContractError(message)
 
 
-def record_advice(co, node_id: str) -> dict:
+def record_advice(co, node_id: str, *, registration=None, send=None, parse=None) -> dict:
     """Production off-arm worker advice for one deliberately unbound node, before its decision.
 
     The caller of ``run_and_record`` on a real run. It lives here, outside the
@@ -93,12 +93,22 @@ def record_advice(co, node_id: str) -> dict:
     the runner and state locks like publish-decision, requires a PENDING node
     with no claim or decision, fixes the ledger directory per run and uses the
     bind path's own ``lane_facts``. An existing journal refuses re-entry before
-    the worker runs again. An on arm needs its own explicit JEV registration.
+    the worker runs again. An on arm needs its own explicit JEV registration
+    (``jev_registration``); its arm comes from that pinned file, and its send
+    and parse are injected in process by the caller only. The CLI injects
+    neither, so an on registration there is refused before any request.
     """
+    import jev_registration
     import orchestration_binding
+    from jev_transport import build_transport
     from orchestration_common import exclusive_lock
     from orchestration_coordinator import State
     require(node_id in co.nodes, "unknown frozen node")
+    reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=node_id)
+    on = reg["arm"] == "advisory-on"
+    require(not on or (callable(send) and callable(parse)),
+            "an on registration needs an in-process send and parse; nothing is read from the environment")
+    require(on or (send is None and parse is None), "the off arm takes no transport")
     require(orchestration_binding.unbound_plan(co.plan) and orchestration_binding.is_unbound(co.nodes[node_id]),
             "only a deliberately unbound frozen node gets worker advice")
     require(co.campaign.get("third_party_api") is False,
@@ -114,8 +124,49 @@ def record_advice(co, node_id: str) -> dict:
         lanes = orchestration_binding.lane_facts(co, node_id, identity, states, data)
         answer = run_and_record(co.root / "nodes" / node_id, ledger_root=co.root / LEDGER_DIRECTORY, run_id=run_id,
                                 decision=node_id, state_text="unbound node " + node_id, lanes=lanes, bound=False,
-                                arm="advisory-off", marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider="none",
-                                budget=None, model=None, transport=None)
-    require(answer["model_requests"] == 0 and answer["ledger"] is None, "the off arm made a request")
-    return dict(schema="jev-worker-advice-record-v1", run_id=run_id, node_id=node_id, arm="advisory-off",
-                worker_status=answer["advice"]["status"], model_requests=0, journal=answer["journal"], ledger=None)
+                                arm=reg["arm"], marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider=reg["provider"],
+                                budget=reg["budget"], model=reg["model"],
+                                transport=build_transport(send, model=reg["model"], parse=parse) if on else None)
+    require(on or (answer["model_requests"] == 0 and answer["ledger"] is None), "the off arm made a request")
+    return dict(schema="jev-worker-advice-record-v1", run_id=run_id, node_id=node_id, arm=reg["arm"],
+                registration=reg["registration"], worker_status=answer["advice"]["status"],
+                model_requests=answer["model_requests"], journal=answer["journal"], ledger=answer["ledger"])
+
+
+def main(argv=None):
+    """``record-advice`` for a real frozen campaign: off arm, or a pinned registration.
+
+    Same campaign anchoring and Runner as ``orchestration_run``. No key, send
+    or parse is ever read here, so only the off arm can run from this CLI.
+    """
+    import argparse
+    import json
+    import sys
+    from orchestration_campaign import anchored_ref
+    from orchestration_run import Runner
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    for name in ("--campaign", "--campaign-sha256", "--run", "--node"):
+        parser.add_argument(name, required=True)
+    parser.add_argument("--registration")
+    parser.add_argument("--registration-sha256")
+    args = parser.parse_args(argv)
+    try:
+        require((args.registration is None) == (args.registration_sha256 is None),
+                "a registration needs its separately supplied SHA256")
+        registration = None
+        if args.registration is not None:
+            from orchestration_common import file_ref
+            registration = file_ref(args.registration)
+            require(registration["sha256"] == args.registration_sha256, "registration hash mismatch")
+        runner = Runner(anchored_ref(args.campaign, args.campaign_sha256))
+        result = record_advice(runner.co(args.run), args.node, registration=registration)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
+        return 0
+    except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
+        print(json.dumps(dict(status="REJECTED", error=str(exc), input_retry_authorized=False), ensure_ascii=False),
+              file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
