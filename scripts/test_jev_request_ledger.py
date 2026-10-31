@@ -26,7 +26,7 @@ OK = dict(answers=dict(work_kind="coding", work_kind_applies=0.9), http_status=2
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name) / "ledger"
+        self.root = Path(self._tmp.name).resolve() / "ledger"
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -90,7 +90,7 @@ class LedgerTests(unittest.TestCase):
     def test_n7_n8_auth_refusal_stops_before_any_new_intent(self):
         for status in (401, 403):
             with self.subTest(status=status):
-                self.root = Path(self._tmp.name) / ("ledger-%d" % status)
+                self.root = Path(self._tmp.name).resolve() / ("ledger-%d" % status)
                 call = self.wrap(lambda request: dict(http_status=status, error="auth"), budget=3)
                 call(dict(model="m"))
                 self.assertEqual(self.results()[0]["status"], "AUTH_REFUSED")
@@ -169,7 +169,7 @@ class LedgerTests(unittest.TestCase):
 
 
     def test_n18_returned_and_raised_403_are_counted_apart_and_both_stop(self):
-        self.root = Path(self._tmp.name) / "returned"
+        self.root = Path(self._tmp.name).resolve() / "returned"
         self.wrap(lambda request: dict(OK, http_status=403), budget=3)(dict(model="m"))
         returned = ledger_summary(self.root)
         self.assertEqual((returned["transport_returned"], returned["transport_raised_auth"],
@@ -177,7 +177,7 @@ class LedgerTests(unittest.TestCase):
 
         def refuse(request):
             raise Forbidden("forbidden")
-        self.root = Path(self._tmp.name) / "raised"
+        self.root = Path(self._tmp.name).resolve() / "raised"
         with self.assertRaises(Forbidden):
             self.wrap(refuse, budget=3)(dict(model="m"))
         raised = ledger_summary(self.root)
@@ -207,8 +207,8 @@ class LedgerTests(unittest.TestCase):
 class ProductionEntryTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.node = Path(self._tmp.name) / "nodes" / "unbound"
-        self.ledger = Path(self._tmp.name) / LEDGER_DIRECTORY
+        self.node = Path(self._tmp.name).resolve() / "nodes" / "unbound"
+        self.ledger = Path(self._tmp.name).resolve() / LEDGER_DIRECTORY
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -234,7 +234,7 @@ class ProductionEntryTests(unittest.TestCase):
         for index, changes in enumerate((dict(arm="advisory-on"), dict(budget=dict(max_model_requests=1)),
                                          dict(arm="advisory-on", budget=None))):
             with self.subTest(**{k: str(v) for k, v in changes.items()}):
-                self.node = Path(self._tmp.name) / "nodes" / ("n%d" % index)
+                self.node = Path(self._tmp.name).resolve() / "nodes" / ("n%d" % index)
                 answer = self.run_entry(transport=never, decision="n%d" % index, **changes)
                 self.assertEqual(answer["model_requests"], 0)
                 self.assertFalse(self.ledger.exists())
@@ -249,7 +249,7 @@ class ProductionEntryTests(unittest.TestCase):
     def test_two_nodes_share_one_run_budget(self):
         on = dict(arm="advisory-on", budget=dict(max_model_requests=1))
         self.run_entry(transport=lambda request: OK, **on)
-        self.node = Path(self._tmp.name) / "nodes" / "second"
+        self.node = Path(self._tmp.name).resolve() / "nodes" / "second"
         with self.assertRaisesRegex(ContractError, "MODEL_REQUEST_BUDGET_EXHAUSTED"):
             self.run_entry(transport=lambda request: self.fail("over budget"), decision="second", **on)
         self.assertEqual(ledger_summary(self.ledger)["reserved_attempts"], 1)
@@ -259,7 +259,7 @@ class ProductionEntryTests(unittest.TestCase):
         self.run_entry(transport=lambda request: OK, **on)
         with self.assertRaisesRegex(ContractError, "DECISION_ALREADY_RECORDED"):
             self.run_entry(transport=lambda request: self.fail("journal re-entry"), **on)
-        self.node = Path(self._tmp.name) / "nodes" / "again"  # no journal, same decision
+        self.node = Path(self._tmp.name).resolve() / "nodes" / "again"  # no journal, same decision
         with self.assertRaisesRegex(ContractError, "DECISION_ALREADY_ATTEMPTED"):
             self.run_entry(transport=lambda request: self.fail("intent re-entry"), **on)
         self.assertEqual(ledger_summary(self.ledger)["reserved_attempts"], 1)
@@ -277,13 +277,13 @@ class ProductionEntryTests(unittest.TestCase):
         on = dict(arm="advisory-on", budget=dict(max_model_requests=5))
         for index, transport in enumerate((lambda request: dict(OK, http_status=401), raise_403)):
             with self.subTest(index=index):
-                self.ledger = Path(self._tmp.name) / ("run-%d" % index) / LEDGER_DIRECTORY
-                self.node = Path(self._tmp.name) / ("first-%d" % index) / "a"
+                self.ledger = Path(self._tmp.name).resolve() / ("run-%d" % index) / LEDGER_DIRECTORY
+                self.node = Path(self._tmp.name).resolve() / ("first-%d" % index) / "a"
                 with self.assertRaisesRegex(ContractError, "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"):
                     self.run_entry(transport=transport, decision="a", **on)
                 never = lambda request: self.fail("dead key retried")
                 for node, decision in (("a", "a"), ("b", "other"), ("c", "a")):
-                    self.node = Path(self._tmp.name) / ("first-%d" % index) / node
+                    self.node = Path(self._tmp.name).resolve() / ("first-%d" % index) / node
                     with self.assertRaisesRegex(ContractError, "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"):
                         self.run_entry(transport=never, decision=decision, **on)
                 with self.assertRaisesRegex(ContractError, "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"):

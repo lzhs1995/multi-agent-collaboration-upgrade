@@ -24,7 +24,7 @@ def uid(n):
 class AdoptPrecheckTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        closeout = Path(self._tmp.name) / "closeout.json"
+        closeout = Path(self._tmp.name).resolve() / "closeout.json"
         self.expected = dict(owner="owner-fixture", task="task-fixture", session_ids=["s-1", "s-2", "s-3"])
         self.evidence = dict(lanes={lane: dict(pane_uuid=uid(10 + i), surface_uuid=uid(20 + i), pid=1000 + i,
                                                birth=[1793400000 + i, 0], draft="", observed_at=utc_now(),
@@ -95,7 +95,7 @@ class AdoptPrecheckTests(unittest.TestCase):
                     self.check(**changes)
 
     def closeout_with(self, **changes):
-        path = Path(self._tmp.name) / ("closeout-%d.json" % len(list(Path(self._tmp.name).glob("closeout-*"))))
+        path = Path(self._tmp.name).resolve() / ("closeout-%d.json" % len(list(Path(self._tmp.name).resolve().glob("closeout-*"))))
         path.write_text(json.dumps(dict(self.content, **changes)))
         return file_ref(path)
 
@@ -186,14 +186,14 @@ class AdoptPrecheckTests(unittest.TestCase):
                       "ADOPT_SURFACE_RESULT_UNPARSED", 1))
         for name, (run, observe, error, attempts) in cases.items():
             with self.subTest(name):
-                calls, control = [], Path(self._tmp.name) / ("control-" + name)
+                calls, control = [], Path(self._tmp.name).resolve() / ("control-" + name)
                 with self.assertRaisesRegex(ContractError, error):
                     adopt_lanes({}, precheck, control,
                                 observe or (lambda created: dict(precheck, created=created)),
                                 lambda lane: calls.append(lane) or run(lane))
                 self.assertEqual(len(calls), attempts)
         calls = []
-        created = adopt_lanes({}, precheck, Path(self._tmp.name) / "control-ok",
+        created = adopt_lanes({}, precheck, Path(self._tmp.name).resolve() / "control-ok",
                               lambda created: dict(precheck, created=created),
                               lambda lane: calls.append(lane) or ok(lane))
         self.assertEqual(created, {lane: uid(60 + i) for i, lane in enumerate(LANES)})
