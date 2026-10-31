@@ -901,6 +901,44 @@ class Coordinator:
                     fence=fence, not_before_epoch=parse_time(self.header["started_at"]).timestamp(),
                     worker_status=advice["status"], worker_journal=journal), body
 
+    def record_advice(self, node_id):
+        """Run the JEV worker for one deliberately unbound node before its decision.
+
+        The production caller of ``jev_advice_run.run_and_record``. This
+        registered campaign forbids third-party model calls (``third_party_api``
+        is False), so its arm is advisory-off: no transport, no budget, zero
+        requests, and only the worker's exact journal is written. No advice
+        body is published, so the off arm keeps an empty advice directory. The
+        ledger directory is fixed per run here, never chosen by a node, and the
+        lanes are the bind path's own ``lane_facts``. An existing journal or
+        intent refuses re-entry before the worker runs again.
+        """
+        from jev_advice_run import LEDGER_DIRECTORY, run_and_record
+        require(node_id in self.nodes, "unknown frozen node")
+        require(orchestration_binding.unbound_plan(self.plan) and is_unbound(self.nodes[node_id]),
+                "only a deliberately unbound frozen node gets worker advice")
+        require(self.campaign.get("third_party_api") is False,
+                "this registration forbids third-party calls; an on arm needs its own JEV registration")
+        run_id = self.spec["run_id"]
+        with exclusive_lock(self.root / "nodes" / node_id / "runner.lock"), self.state_lock(new_work=True):
+            identity = self._gate(new_work=True)
+            states, data = self.state()
+            require(states[node_id] == State.PENDING, "worker advice precedes the claim")
+            require(not (self.root / "claims" / (node_id + ".json")).exists(),
+                    "original claim intent exists; observe only")
+            require(not (self.root / "decisions" / (node_id + ".json")).exists(),
+                    "original published decision exists; observe only")
+            lanes = lane_facts(self, node_id, identity, states, data)
+            answer = run_and_record(self.root / "nodes" / node_id, ledger_root=self.root / LEDGER_DIRECTORY,
+                                    run_id=run_id, decision=node_id, state_text="unbound node " + node_id,
+                                    lanes=lanes, bound=False, arm="advisory-off",
+                                    marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider="none",
+                                    budget=None, model=None, transport=None)
+        require(answer["model_requests"] == 0 and answer["ledger"] is None, "the off arm made a request")
+        return dict(schema="orchestration-worker-advice-v1", run_id=run_id, node_id=node_id, arm="advisory-off",
+                    worker_status=answer["advice"]["status"], model_requests=0, journal=answer["journal"],
+                    ledger=None)
+
     def _worker_journal(self, node_id):
         """The worker's own self-authored journal entries, or None when absent."""
         path = self.root / "nodes" / node_id / "advice-worker-journal.json"
