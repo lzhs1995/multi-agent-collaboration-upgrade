@@ -18,8 +18,17 @@ stand-in connection and a placeholder string and make no request.
 from __future__ import annotations
 
 import json
+import re
 
 HOST, PATH, TIMEOUT_SECONDS = "api.typesafe.ai", "/v1/systemone", 12
+# Credential *shapes*, not substrings: S1's bare "sk-" test refused ordinary
+# words such as "task-routing" (R491). A key-like token must follow the prefix,
+# or a credential field must carry a value; the caller's own credential is also
+# refused verbatim. The credential travels only in the Authorization header.
+CREDENTIAL_SHAPE = re.compile(
+    r"Bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|(?<![A-Za-z0-9])(?:sk|apikey)[-_][A-Za-z0-9]{16,}"
+    r"|(?i:\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\b[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._-]{8,})")
 WORK = {
     "coding": "Implement new software behavior or change code, without an observed defect to diagnose.",
     "debugging": "Investigate or repair an observed software failure, error, crash or incorrect behavior.",
@@ -46,14 +55,14 @@ def connect(timeout=TIMEOUT_SECONDS):
     return http.client.HTTPSConnection(HOST, timeout=timeout, context=ssl.create_default_context())
 
 
-def wire_payload(request: dict) -> dict:
+def wire_payload(request: dict, credential: str | None = None) -> dict:
     """S1's ``payload``: only task and message leave the process, never a credential."""
     if (request["question"]["id"] != "work_kind" or set(request["question"]["options"]) != set(WORK)
             or request["companion"]["id"] != "work_kind_applies"):
         raise ValueError("the worker question no longer matches the S1 wire questions")
     state = dict(task=request["state"], message="")
     text = json.dumps(state, ensure_ascii=False)
-    if "apikey_" in text or "Bearer " in text or "sk-" in text:
+    if CREDENTIAL_SHAPE.search(text) or (credential and credential in text):
         raise ValueError("credential-like state is not allowed")
     return dict(model=request["model"], state=state, questions=QUESTIONS)
 
@@ -64,7 +73,7 @@ def bind(connection, credential: str, *, model: str):
         raise ValueError("a caller-held connection and credential are required")
 
     def send(request: dict) -> dict:
-        payload = wire_payload(dict(request, model=model))
+        payload = wire_payload(dict(request, model=model), credential)
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
         connection.request("POST", PATH, encoded, {"Authorization": "Bearer " + credential,
                                                    "Content-Type": "application/json"})

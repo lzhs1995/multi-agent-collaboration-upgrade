@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import jev_registration
 from jev_advice_run import main, record_advice
-from orchestration_common import ContractError, file_ref, tree_manifest
+from orchestration_common import ContractError, file_ref, json_ref, tree_manifest
 from test_orchestration_bind_unbound import BindFixtureMixin
 
 
@@ -120,6 +120,61 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
                           connection=OfflineConnection(), credential=PLACEHOLDER)
         self.assertFalse(self.journal().exists())
         self.assertFalse(jev_registration.record_path(self.co.root, "unbound").exists())
+
+    def fresh(self, question):
+        from orchestration_run import Runner
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        f2 = self.fixture(base=Path(other.name).resolve(), question=question)
+        co2 = f2.start()
+        return Runner(f2.ref, fixtures=True).co(co2.spec["run_id"]), co2
+
+    def test_an_ordinary_hyphenated_task_is_sent(self):
+        from jev_request_ledger import ledger_summary
+        co, co2 = self.fresh("Implement task-routing logic")
+        connection = OfflineConnection()
+        record_advice(co, "unbound", registration=self.reg(run=co2.spec["run_id"], co=co2), connection=connection,
+                      credential=PLACEHOLDER)
+        self.assertEqual(len(connection.calls), 1)
+        self.assertTrue((co2.root / "nodes/unbound/advice-worker-journal.json").exists())
+        self.assertEqual(ledger_summary(co2.root / "jev-request-ledger")["reserved_attempts"], 1)
+
+    def test_a_credential_shaped_task_is_refused_and_the_attempt_stays_unknown(self):
+        from jev_request_ledger import ledger_summary
+        co, co2 = self.fresh("use sk-" + "Z" * 24 + " to call it")
+        connection = OfflineConnection()
+        with self.assertRaisesRegex(ValueError, "credential-like state is not allowed"):
+            record_advice(co, "unbound", registration=self.reg(run=co2.spec["run_id"], co=co2),
+                          connection=connection, credential=PLACEHOLDER)
+        self.assertEqual(len(connection.calls), 0)
+        self.assertFalse((co2.root / "nodes/unbound/advice-worker-journal.json").exists())
+        summary = ledger_summary(co2.root / "jev-request-ledger")
+        self.assertEqual((summary["reserved_attempts"], summary["transport_raised_unknown"]), (1, 1))
+
+    def test_the_recorded_advice_is_read_published_bound_and_joined_by_the_consumer(self):
+        from orchestration_binding import binding_path
+        from orchestration_common import parse_time, utc_now
+        from upgrade_advice_chain import advice_chain
+        from upgrade_body_read import read_command
+        connection = OfflineConnection()
+        value = record_advice(self.r.co(self.run), "unbound", registration=self.reg(), connection=connection,
+                              credential=PLACEHOLDER)
+        advice = dict(notice=value["notice"], command=read_command(
+            self.f.campaign["python"]["path"], self.f.campaign["controller"]["path"], value["notice"]))
+        self.read(advice)
+        self.publish(self.fields(advice_sha256=value["advice_sha256"]))
+        self.bind_call()
+        binding = json_ref(self.bind(), "binding")
+        self.assertEqual((binding["advice"]["arm"], binding["advice"]["advice_sha256"]),
+                         ("advisory-on", value["advice_sha256"]))
+        self.assertEqual(binding["advice"]["read"]["kind"], "BODY_READ_OBSERVED")
+        chain = advice_chain(self.co, "unbound", {}, self.readers(), registration=None,
+                             not_after=parse_time(utc_now()).timestamp() + 600,
+                             binding_ref=file_ref(binding_path(self.co.root, "unbound")))
+        self.assertEqual((chain["arm"], chain["advice"]), ("advisory-on", value["advice_sha256"]))
+        self.assertTrue(chain["decision_publish_natively_joined"])
+        self.assertEqual(json_ref(chain["decision"], "decision")["advice_sha256"], value["advice_sha256"])
+        self.assertEqual(len(connection.calls), 1)
 
     def test_401_and_403_stop_after_exactly_one_attempt(self):
         from jev_request_ledger import ledger_summary
