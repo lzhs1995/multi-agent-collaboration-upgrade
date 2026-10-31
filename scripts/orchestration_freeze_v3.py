@@ -66,6 +66,29 @@ def corpus_plan(input_root, revision, workload_class):
     return validate_plan(plan)
 
 
+def registered_corpus_plan(input_root, revision, workload_class, registration):
+    """Keep the original corpus work; S2 defers only executor binding.
+
+    This declares decision points, not measured opportunities or API use.
+    Both advisory arms get the identical graph and binding policy. Existing
+    Codex merge/check nodes remain bound so final independent acceptance is
+    not delegated back to an author of a dependency. The native binding gate
+    still recomputes available, non-author lanes before every real claim.
+    """
+    from upgrade_jev_benchmark import SCHEMA as JEV_SCHEMA
+    from orchestration_planner import UNBOUND_EXECUTOR_POLICY
+
+    plan = corpus_plan(input_root, revision, workload_class)
+    if registration["schema"] != JEV_SCHEMA:
+        return plan
+    plan["plan_id"] = plan["plan_id"].replace("corpus-v3-", "corpus-jev-s2-", 1)
+    plan["unbound_executor_policy"] = UNBOUND_EXECUTOR_POLICY
+    for node in plan["nodes"]:
+        if node["executor"] != "codex":
+            node.update(executor=None, execution_kind=None, transport=None)
+    return validate_plan(plan)
+
+
 def latest_model(reader, fence):
     latest = None
     for ref, record in reader.records(0, reader.verify_pin(fence)):
@@ -125,7 +148,8 @@ def freeze_campaign(request_ref):
             "separate v3 freeze request required")
     context, runtime = validate_live_runtime(request["runtime"], context_ref=request["experiment"])
     group = group_registration(request["registration"], request["session_group"], request["experiment"], runtime["arm"])
-    runtime_observation(validate_registration(request["registration"]), request["runtime"], runtime)
+    registration = validate_registration(request["registration"])
+    runtime_observation(registration, request["runtime"], runtime)
     paths = arm_paths(context, runtime["arm"])
     root = paths["campaigns"] / group["campaign_id"]
     destination = paths["controllers"] / "adapters" / group["campaign_id"]
@@ -140,7 +164,7 @@ def freeze_campaign(request_ref):
     sessions = capture_adopted_sessions(request["runtime"], request["adoption"])
     records = authorize(request["native_authorizations"])
     inputs_source = corpus_refs(corpus)
-    plan = corpus_plan(root / "inputs", request["revision"], group["workload_class"])
+    plan = registered_corpus_plan(root / "inputs", request["revision"], group["workload_class"], registration)
     root.mkdir(parents=True, mode=0o700)
     write_json(root / "freeze-intent.json", dict(request=request_ref, started_at=utc_now(),
         source=source_tree, controller=runtime["controller"], input_sources=inputs_source, sessions=sessions,
