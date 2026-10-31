@@ -214,9 +214,24 @@ def child_report(session, call, *, claim_id, agent_id, transcript_path, fixtures
             path.append(key)
             key = linked[key][1].get("parentUuid")
         rooted.update(path)
+    # Live 2026-10-30 (u25 C1): a PreToolUse hook attachment is stamped from its
+    # own tool_use record plus the hook's duration, while its parentUuid can name
+    # a later-written sibling tool_use of the same response. Its floor is that own
+    # tool_use record; every other record still may not precede its parent.
+    tool_use_stamps = {}
+    for ref, record, stamp in linked.values():
+        message = record.get("message") if record.get("type") == "assistant" else None
+        blocks = message.get("content") if isinstance(message, dict) else None
+        for block in blocks if isinstance(blocks, list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+                tool_use_stamps.setdefault(block["id"], stamp)
     for key, (ref, record, stamp) in linked.items():
         parent_key = record.get("parentUuid")
         floor = call_time if ref == first_ref else linked[parent_key][2]
+        attached = record.get("attachment") if record.get("type") == "attachment" else None
+        own = attached.get("toolUseID") if isinstance(attached, dict) else None
+        if own in tool_use_stamps:
+            floor = max(call_time, tool_use_stamps[own])
         require(call_time <= floor <= stamp <= time.time(), "ORIGINAL_CHILD_NATIVE_CHRONOLOGY_CHANGED")
     candidates, last_message = [], None
     tool_calls, pending_tools = set(), set()

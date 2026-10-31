@@ -580,6 +580,58 @@ class NativeChildServiceTests(unittest.TestCase):
                     self.assertEqual(self.request("claude_a", post)["status"], "OBSERVED")
                     self.assertIn("report", budget_status(self.authority_ref)["claims"][claim_id])
 
+    def test_pretooluse_attachment_is_bounded_by_its_own_tool_use_not_a_later_sibling(self):
+        # Live 2026-10-30 (u25 C1): the Read hook_success attachment (05.458Z) names the
+        # later-written Bash tool_use (05.896Z) as parent; its own Read tool_use is 05.323Z.
+        payload = self.original_call("claude_a", "toolu_sibling")
+        claim_id = self.request("claude_a", payload)["claim_id"]
+        journal = self.journals["claude_a"]
+        call_time = datetime.fromisoformat(json.loads(journal.path.read_bytes().splitlines()[-1])["timestamp"])
+        response = self.native_child("claude_a", payload, claim_id, "Sibling-bound report.", root_at=call_time)
+        child_path = journal.path.parent / journal.session["session_id"] / "subagents" / ("agent-" + response["agentId"] + ".jsonl")
+        root, terminal = [json.loads(line) for line in child_path.read_bytes().splitlines()]
+        time.sleep(0.05)
+        span = datetime.now(timezone.utc) - call_time
+        at = lambda share: (call_time + span * share).isoformat()
+        base = dict(sessionId=root["sessionId"], agentId=root["agentId"], isSidechain=True)
+        read, bash, hook, res1, res2 = (str(uuid.uuid4()) for _ in range(5))
+
+        def tool_use(key, parent, stamp, tool_id):
+            return dict(base, type="assistant", uuid=key, parentUuid=parent, timestamp=stamp,
+                        message=dict(role="assistant", content=[dict(type="tool_use", id=tool_id, name="Read", input={})]))
+
+        def result(key, parent, stamp, tool_id):
+            return dict(base, type="user", uuid=key, parentUuid=parent, timestamp=stamp,
+                        message=dict(role="user", content=[dict(type="tool_result", tool_use_id=tool_id, content="ok")]))
+
+        def shape(read_at=0.30, bash_at=0.50, hook_at=0.40, own="toolu_read", **hook_changes):
+            attached = dict(base, type="attachment", uuid=hook, parentUuid=bash, timestamp=hook_at if isinstance(hook_at, str)
+                            else at(hook_at), attachment=dict(type="hook_success", hookEvent="PreToolUse", toolUseID=own, durationMs=131))
+            attached.update(hook_changes)
+            return [tool_use(read, root["uuid"], at(read_at), "toolu_read"), tool_use(bash, read, at(bash_at), "toolu_bash"),
+                    attached, result(res1, hook, at(0.60), "toolu_read"), result(res2, res1, at(0.70), "toolu_bash")]
+
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        shapes = dict(earlier_than_own_tool_use=(shape(hook_at=0.25), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      message_earlier_than_parent=(shape(bash_at=0.28), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      unknown_own_tool_use=(shape(own="toolu_other"), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      future_attachment=(shape(hook_at=future), "CHILD_NATIVE_CHRONOLOGY_CHANGED"),
+                      changed_identity=(shape(agentId="a0000000000000000"), "CHILD_NATIVE_IDENTITY_CHANGED"),
+                      detached_parent=(shape(parentUuid=str(uuid.uuid4())), "PARENT_CHAIN_CHANGED"),
+                      live_sibling_parent=(shape(), None))
+        for name, (middle, error) in shapes.items():
+            with self.subTest(shape=name):
+                final = dict(terminal, parentUuid=res2, timestamp=at(0.9))
+                child_path.write_bytes(b"".join(canonical(record) for record in [root, *middle, final]))
+                post = dict(payload, hook_event_name="PostToolUse", tool_response=response)
+                if error:
+                    with self.assertRaisesRegex(ContractError, error):
+                        self.request("claude_a", post)
+                    self.assertNotIn("report", budget_status(self.authority_ref)["claims"][claim_id])
+                else:
+                    self.assertEqual(self.request("claude_a", post)["status"], "OBSERVED")
+                    self.assertIn("report", budget_status(self.authority_ref)["claims"][claim_id])
+
     def test_parent_result_naming_another_child_or_body_releases_nothing(self):
         for shape in ("other_body", "other_agent"):
             with self.subTest(shape=shape):
