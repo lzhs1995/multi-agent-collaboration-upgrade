@@ -193,6 +193,59 @@ def record_advice(co, node_id: str, *, registration=None, connection=None, crede
                 notice=published["notice"] if published else None)
 
 
+INBOX_DIRECTORY = "jev-inbox"
+
+
+def record_inbox_order(co, node_id: str, event_id: str, messages: list, *, registration=None,
+                       connection=None, credential=None) -> dict:
+    """DP2: order one supervisor inbox event under the coordinator gate (R505 D1).
+
+    Same arm source, gate, run-wide ledger and registered transport bytes as
+    ``record_advice``; the node's one registration covers DP1 and DP2. The
+    order record is published exclusively per event, so a repeated event is
+    refused, and bodies judged in earlier events of this run are reused, never
+    asked again. Eligibility comes from the caller's code checks; each body is
+    re-verified against its sha256/bytes. The off arm makes 0 requests.
+    """
+    import json
+    import jev_inbox
+    import jev_registration
+    from jev_transport import build_transport
+    from orchestration_common import exclusive_lock
+    require(node_id in co.nodes, "unknown frozen node")
+    require(isinstance(event_id, str) and 0 < len(event_id) <= 80
+            and all(c.isascii() and (c.isalnum() or c in "_.-") for c in event_id), "inbox event id required")
+    reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=node_id)
+    on = reg["arm"] == "advisory-on"
+    require(not on or (connection is not None and isinstance(credential, str) and bool(credential)),
+            "an on registration needs an in-process send: a caller-held connection and credential; "
+            "nothing is read from the environment")
+    require(on or (connection is None and credential is None), "the off arm takes no transport")
+    send, parse = (load_transport(reg["transport_source"], connection, credential, model=reg["model"])
+                   if on else (None, None))
+    run_id, directory = co.spec["run_id"], co.root / INBOX_DIRECTORY
+    path = directory / (event_id + ".json")
+    with exclusive_lock(co.root / "nodes" / node_id / "runner.lock"), co.state_lock(new_work=True):
+        co._gate(new_work=True)
+        require(not (path.exists() or path.is_symlink()), "this inbox event is already ordered; observe only")
+        directory.mkdir(exist_ok=True)
+        judged = {}
+        for prior in sorted(directory.glob("*.json")):
+            for decision in json.loads(prior.read_text())["order"]["decisions"]:
+                judged.setdefault(decision["sha256"], dict(front=decision["front"]))
+        transport = build_transport(send, model=reg["model"], parse=parse) if on else None
+        transport_for = (lambda decision: ledgered_transport(
+            transport, ledger_root=co.root / LEDGER_DIRECTORY, run_id=run_id, arm=reg["arm"], decision=decision,
+            marker="JEV_INBOX_%s_%s" % (run_id, event_id), provider=reg["provider"], budget=reg["budget"])) if on else None
+        order = jev_inbox.order_inbox(messages, arm=reg["arm"], transport_for=transport_for,
+                                      model=reg["model"] if on else None, judged=judged)
+        value = dict(schema="jev-inbox-order-record-v1", run_id=run_id, node_id=node_id, event_id=event_id,
+                     arm=reg["arm"], registration=reg["registration"], order=order)
+        write_json(path, value, exclusive=True)
+    require(on or order["model_requests"] == 0, "the off arm made a request")
+    return value
+
+
 def main(argv=None):
     """``record-advice`` for a real frozen campaign: off arm, or a pinned registration.
 

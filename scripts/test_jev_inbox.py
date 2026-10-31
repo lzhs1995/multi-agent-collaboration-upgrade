@@ -138,5 +138,48 @@ class InboxProductionPathTests(unittest.TestCase):
         self.assertEqual(ledger_summary(root)["reserved_attempts"], 1)
 
 
+import test_jev_registration as registration_tests  # noqa: E402  module import keeps its tests out of this file
+from test_orchestration_bind_unbound import BindFixtureMixin  # noqa: E402
+
+
+class EchoInboxConnection(OfflineInboxConnection):
+    """Echoes the registered model so the S1 provenance check passes offline."""
+
+    def getresponse(self):
+        response = super().getresponse()
+        if response.status == 200:
+            value = json.loads(response._body)
+            value["model"] = self.sent[-1]["model"]
+            response._body = json.dumps(value)
+        return response
+
+
+class InboxEntryTests(BindFixtureMixin, unittest.TestCase):
+    """D1: record_inbox_order under the real coordinator gate, fixture campaign only."""
+    reg = registration_tests.RegistrationTests.reg
+
+    def test_off_arm_entry_keeps_order_makes_no_request_and_refuses_a_repeat_event(self):
+        from jev_advice_run import record_inbox_order
+        out = record_inbox_order(self.r.co(self.run), "unbound", "evt-1", [msg(0, "a"), msg(1, "b ACT")])
+        self.assertEqual((out["arm"], out["order"]["order"], out["order"]["model_requests"]),
+                         ("advisory-off", ["m0", "m1"], 0))
+        with self.assertRaises(Exception):
+            record_inbox_order(self.r.co(self.run), "unbound", "evt-1", [msg(0, "a")])
+
+    def test_on_arm_entry_orders_through_the_ledger_and_reuses_judged_bodies(self):
+        from jev_advice_run import LEDGER_DIRECTORY, record_inbox_order
+        reg = self.reg(budget=dict(max_model_requests=5))
+        conn = EchoInboxConnection()
+        first = record_inbox_order(self.r.co(self.run), "unbound", "evt-1", [msg(0, "fyi"), msg(1, "do it ACT")],
+                                   registration=reg, connection=conn, credential=PLACEHOLDER)
+        self.assertEqual((first["order"]["order"], len(conn.sent)), (["m1", "m0"], 2))
+        second = record_inbox_order(self.r.co(self.run), "unbound", "evt-2",
+                                    [msg(0, "do it ACT"), msg(1, "new ACT")],
+                                    registration=reg, connection=conn, credential=PLACEHOLDER)
+        self.assertEqual([d["status"] for d in second["order"]["decisions"]], ["REUSED", "SUGGEST"])
+        self.assertEqual(len(conn.sent), 3)
+        self.assertEqual(ledger_summary(self.co.root / LEDGER_DIRECTORY)["reserved_attempts"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
