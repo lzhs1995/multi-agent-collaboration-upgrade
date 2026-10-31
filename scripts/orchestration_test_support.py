@@ -106,7 +106,7 @@ class OfflineDisarmRuntime:
 
 
 class CampaignFixture:
-    def __init__(self, base, strategies=("omo",), *, version=2, arm="B", unbound=False):
+    def __init__(self, base, strategies=("omo",), *, version=2, arm="B", unbound=False, question="6 * 7"):
         base = Path(base).resolve()
         assert version in (2, 3)
         # The opt-in field is plan v2 only, so the unbound variant exists for a
@@ -186,7 +186,7 @@ class CampaignFixture:
             lease_root=str(private["paths"]["state"] / "orchestration-leases" if private else base / "leases"),
             plan=write_json(self.root / "plan.json", self.plan), sessions={k: c.session for k, c in self.clients.items()},
             runs=[dict(run_id=f"run-{i:02d}", strategy=s) for i, s in enumerate(strategies, 1)],
-            inputs=[write_json(self.root / "input.json", {"question": "6 * 7"})], authorization=authorization,
+            inputs=[write_json(self.root / "input.json", {"question": question})], authorization=authorization,
             controller=tree_manifest(controller), adapter=tree_manifest(adapter), python=file_ref(Path(sys.executable).resolve()),
             checker=file_ref(checker), checker_timeout_seconds=10, decision_provider="rules",
             metrics=copy.deepcopy(METRICS_V3 if version == 3 else METRICS),
@@ -262,12 +262,12 @@ class CampaignFixture:
         if record.exists():
             return file_ref(record)
         run_id, folder = co.spec["run_id"], co.root / "jev-fixture-registrations"
-        pins = {name: write_json(folder / (node_id + "-" + name + ".json"), dict(fixture=name, run_id=run_id))
-                for name in ("transport_source", "authorization")}
+        named = dict(run_id=run_id, node_id=node_id, arm="advisory-on", provider="fixture", model=model,
+                     budget=dict(max_model_requests=1))
+        pins = dict(transport_source=write_json(folder / (node_id + "-transport_source.json"), dict(fixture=True)),
+                    authorization=write_json(folder / (node_id + "-authorization.json"), dict(named, fixture=True)))
         registration = write_json(folder / (node_id + "-registration.json"), dict(
-            schema=jev_registration.SCHEMA, run_id=run_id, node_id=node_id, arm="advisory-on",
-            external_advice_exception=jev_registration.EXCEPTION, model=model, provider="fixture",
-            budget=dict(max_model_requests=1), **pins))
+            schema=jev_registration.SCHEMA, external_advice_exception=jev_registration.EXCEPTION, **named, **pins))
         return write_json(record, dict(schema=jev_registration.RECORD_SCHEMA, run_id=run_id, node_id=node_id,
                                        arm="advisory-on", registration=registration), exclusive=True)
 

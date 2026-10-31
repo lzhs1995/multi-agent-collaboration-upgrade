@@ -45,12 +45,18 @@ def load(ref, *, run_id: str, node_id: str) -> dict:
     _require(value.get("external_advice_exception") == EXCEPTION, "the external-advice exception must be explicit")
     for key in ("model", "provider"):
         _require(isinstance(value.get(key), str) and value[key], key + " required")
-    limit = (value.get("budget") or {}).get("max_model_requests") if isinstance(value.get("budget"), dict) else None
+    budget = value.get("budget")
+    limit = budget.get("max_model_requests") if isinstance(budget, dict) else None
     _require(isinstance(limit, int) and not isinstance(limit, bool) and limit > 0, "an on arm needs a positive budget")
-    for key in ("transport_source", "authorization"):
-        read_ref(value.get(key), "jev registration " + key)
+    read_ref(value.get("transport_source"), "jev registration transport_source")
+    # Narrow, not a permission system: the authorization file must name this
+    # exact run/node/arm/provider/model and the complete frozen budget. Whether
+    # a person granted it stays outside code and is never claimed here.
+    granted = json_ref(value.get("authorization"), "jev registration authorization")
+    _require(all(granted.get(k) == value[k] for k in ("run_id", "node_id", "arm", "provider", "model", "budget")),
+             "authorization does not name this run/node/arm/provider/model and complete budget")
     return dict(schema=SCHEMA, run_id=run_id, node_id=node_id, arm=arm, registration=ref, provider=value["provider"],
-                model=value["model"], budget=dict(max_model_requests=limit), transport_source=value["transport_source"],
+                model=value["model"], budget=dict(budget), transport_source=value["transport_source"],
                 authorization=value["authorization"])
 
 

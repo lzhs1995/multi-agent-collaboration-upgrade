@@ -13,19 +13,99 @@ from unittest.mock import patch
 import jev_registration
 from jev_advice_run import main, record_advice
 from orchestration_common import ContractError, file_ref, tree_manifest
-from test_orchestration_bind_unbound import BindFixtureMixin
+from test_orchestration_bind_unbound import BindFixtureMixin, suggesting_transport
+
+
+SENT = []
+
+
+def offline_send(request):
+    """Offline fixture transport registered as this file: records the request, no network."""
+    SENT.append(request)
+    return dict(http_status=200, payload=suggesting_transport(request))
+
+
+def offline_parse(response):
+    return response["payload"]
 
 
 class RegistrationTests(BindFixtureMixin, unittest.TestCase):
-    def reg(self, name="reg.json", **change):
-        value = dict(schema=jev_registration.SCHEMA, run_id=self.run, node_id="unbound", arm="advisory-on",
+    def reg(self, name="reg.json", *, run=None, co=None, **change):
+        co = co or self.co
+        value = dict(schema=jev_registration.SCHEMA, run_id=run or self.run, node_id="unbound", arm="advisory-on",
                      external_advice_exception=jev_registration.EXCEPTION, model="m", provider="p",
-                     budget=dict(max_model_requests=1), transport_source=file_ref(Path(__file__).resolve()),
-                     authorization=file_ref(Path(__file__).resolve()))
+                     budget=dict(max_model_requests=1, max_cost_usd=0.03),
+                     transport_source=file_ref(Path(__file__).resolve()))
         value.update(change)
-        path = self.co.root.parent / name
+        if "authorization" not in value:
+            grant = co.root.parent / ("auth-" + name)
+            grant.write_text(json.dumps({k: value[k] for k in ("run_id", "node_id", "arm", "provider", "model", "budget")}))
+            value["authorization"] = file_ref(grant)
+        path = co.root.parent / name
         path.write_text(json.dumps(value))
         return file_ref(path)
+
+    def test_one_offline_send_reaches_the_ledger_journal_and_original_publisher(self):
+        SENT.clear()
+        value = record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=offline_send,
+                              parse=offline_parse)
+        self.assertEqual((value["arm"], value["model_requests"], len(SENT)), ("advisory-on", 1, 1))
+        self.assertEqual(value["ledger"]["reserved_attempts"], 1)
+        journal = json.loads(self.journal().read_text())
+        self.assertEqual([entry["model_requests"] for entry in journal["entries"]], [1])
+        self.assertTrue((self.co.root / "nodes/unbound/advice" / (value["advice_sha256"] + ".txt")).exists())
+        self.assertEqual(jev_registration.registered_arm(self.co.root, self.run, "unbound")[0], "advisory-on")
+        record = json.loads(jev_registration.record_path(self.co.root, "unbound").read_text())
+        loaded = jev_registration.load(record["registration"], run_id=self.run, node_id="unbound")
+        self.assertEqual(loaded["budget"], dict(max_model_requests=1, max_cost_usd=0.03))
+
+    def test_two_tasks_with_the_same_node_and_lanes_send_states_that_hash_back(self):
+        import hashlib
+        import orchestration_binding
+        from orchestration_run import Runner
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        f2 = self.fixture(base=Path(other.name).resolve(), question="5 * 8")
+        co2 = f2.start()
+        seen, real = [], orchestration_binding.lane_facts
+
+        def spy(*args, **kwargs):
+            seen.append(real(*args, **kwargs))
+            return seen[-1]
+        SENT.clear()
+        with patch.object(orchestration_binding, "lane_facts", spy):
+            record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=offline_send,
+                          parse=offline_parse)
+            record_advice(Runner(f2.ref, fixtures=True).co(co2.spec["run_id"]), "unbound",
+                          registration=self.reg(run=co2.spec["run_id"], co=co2), send=offline_send, parse=offline_parse)
+        self.assertEqual(len(SENT), 2)
+        self.assertEqual(seen[0], seen[1])
+        self.assertNotEqual(SENT[0]["state"], SENT[1]["state"])
+        questions = []
+        for request in SENT:
+            state = json.loads(request["state"])
+            self.assertEqual(state["task"]["node_id"], "unbound")
+            for unit in state["inputs"]:
+                raw = unit["text"].encode("utf-8")
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), unit["pin"]["sha256"])
+                self.assertEqual(Path(unit["pin"]["path"]).read_bytes(), raw)
+                questions.append(json.loads(unit["text"])["question"])
+        self.assertEqual(questions, ["6 * 7", "5 * 8"])
+
+    def test_a_send_defined_elsewhere_is_refused_before_any_write(self):
+        with self.assertRaisesRegex(ContractError, "registered transport source"):
+            record_advice(self.r.co(self.run), "unbound", registration=self.reg(), send=json.dumps,
+                          parse=offline_parse)
+        self.assertFalse(self.journal().exists())
+        self.assertFalse(jev_registration.record_path(self.co.root, "unbound").exists())
+
+    def test_an_authorization_naming_another_budget_is_refused(self):
+        grant = self.co.root.parent / "auth-other.json"
+        grant.write_text(json.dumps(dict(run_id=self.run, node_id="unbound", arm="advisory-on", provider="p", model="m",
+                                         budget=dict(max_model_requests=80, max_cost_usd=0.03))))
+        with self.assertRaisesRegex(ContractError, "authorization does not name"):
+            jev_registration.load(self.reg("reg-other.json", authorization=file_ref(grant)), run_id=self.run,
+                                  node_id="unbound")
 
     def journal(self):
         return self.co.root / "nodes" / "unbound" / "advice-worker-journal.json"

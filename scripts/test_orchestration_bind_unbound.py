@@ -50,8 +50,9 @@ class BindFixtureMixin:
         self.r = Runner(self.f.ref, fixtures=True)
         self.stamps, self.issued, self.bind_refs, self.bind_call_ids = [], None, [], []
 
-    def fixture(self, *, extra_unbound=False, base=None):
-        f = CampaignFixture(base or self.temp.name, strategies=("omo",), version=3, arm="B", unbound=True)
+    def fixture(self, *, extra_unbound=False, base=None, question="6 * 7"):
+        f = CampaignFixture(base or self.temp.name, strategies=("omo",), version=3, arm="B", unbound=True,
+                            question=question)
         if extra_unbound:
             f.plan["nodes"].append(dict(f.plan["nodes"][-1], id="unbound-b", title="unbound-b",
                                         write_scope="unbound-b"))

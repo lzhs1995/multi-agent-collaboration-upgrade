@@ -81,6 +81,44 @@ def require(value, message):
         raise ContractError(message)
 
 
+def task_state(co, node_id: str) -> str:
+    """The original frozen task as the worker's state text, with its pins.
+
+    Each campaign input is read through its pin (``read_ref`` re-checks bytes
+    and sha256), so ``request.state`` carries the exact text beside the pin it
+    must hash back to. A non-UTF-8 input keeps its pin with ``text`` None.
+    """
+    import json
+    from orchestration_common import read_ref
+    from orchestration_evidence import task_identity
+    units = []
+    for ref in co.campaign["inputs"]:
+        raw = read_ref(ref, "original frozen input")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        units.append(dict(pin=dict(ref), text=text))
+    return json.dumps(dict(schema="jev-task-state-v1", task=task_identity(co.campaign, co.header, co.nodes[node_id]),
+                           node=co.nodes[node_id], state="PENDING_UNBOUND", inputs=units),
+                      ensure_ascii=False, sort_keys=True)
+
+
+def defined_in(function, source_ref) -> bool:
+    """Whether ``function``'s code was loaded from the registered transport file."""
+    import inspect
+    import sys
+    target = getattr(function, "__func__", function)
+    try:
+        path = inspect.getsourcefile(target)
+    except TypeError:
+        return False
+    module = sys.modules.get(getattr(target, "__module__", None) or "")
+    return (path is not None and Path(path).resolve() == Path(source_ref["path"]).resolve()
+            and module is not None and getattr(module, "__file__", None) is not None
+            and Path(module.__file__).resolve() == Path(source_ref["path"]).resolve())
+
+
 def record_advice(co, node_id: str, *, registration=None, send=None, parse=None) -> dict:
     """Production off-arm worker advice for one deliberately unbound node, before its decision.
 
@@ -108,6 +146,8 @@ def record_advice(co, node_id: str, *, registration=None, send=None, parse=None)
     on = reg["arm"] == "advisory-on"
     require(not on or (callable(send) and callable(parse)),
             "an on registration needs an in-process send and parse; nothing is read from the environment")
+    require(not on or (defined_in(send, reg["transport_source"]) and defined_in(parse, reg["transport_source"])),
+            "send and parse must be defined in the registered transport source")
     require(on or (send is None and parse is None), "the off arm takes no transport")
     require(orchestration_binding.unbound_plan(co.plan) and orchestration_binding.is_unbound(co.nodes[node_id]),
             "only a deliberately unbound frozen node gets worker advice")
@@ -131,7 +171,7 @@ def record_advice(co, node_id: str, *, registration=None, send=None, parse=None)
             write_json(record, dict(schema=jev_registration.RECORD_SCHEMA, run_id=run_id, node_id=node_id,
                                     arm=reg["arm"], registration=reg["registration"]), exclusive=True)
         answer = run_and_record(co.root / "nodes" / node_id, ledger_root=co.root / LEDGER_DIRECTORY, run_id=run_id,
-                                decision=node_id, state_text="unbound node " + node_id, lanes=lanes, bound=False,
+                                decision=node_id, state_text=task_state(co, node_id), lanes=lanes, bound=False,
                                 arm=reg["arm"], marker="JEV_ADVICE_%s_%s" % (run_id, node_id), provider=reg["provider"],
                                 budget=reg["budget"], model=reg["model"],
                                 transport=build_transport(send, model=reg["model"], parse=parse) if on else None)
