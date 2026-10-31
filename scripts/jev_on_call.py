@@ -46,6 +46,29 @@ QUESTIONS = {
         },
     },
 }
+# DP2 inbox questions, verbatim from ROOT's typed probe that returned HTTP 200
+# with valid answers (R499-JEV-KEY-PROBE-RESULT-v1.json, e93845bd...).
+MESSAGE = {
+    "result": "Reports a completed assigned deliverable or its findings, ready for recipient review.",
+    "request": "Asks the recipient for work, help or a concrete next action; no completed deliverable is the main content.",
+    "dependency_update": "Reports a changed prerequisite, service, input or environment relevant to future work.",
+}
+INBOX_QUESTIONS = {
+    "message_kind": {"type": "choice", "instructions": "What is the primary purpose of `message`?", "criteria": MESSAGE},
+    "message_actionable": {
+        "type": "noul",
+        "instructions": "Does `message` contain concrete new content the recipient can act on now?",
+        "criteria": {
+            "true": "A concrete request, completed finding or changed prerequisite gives the recipient something to do now.",
+            "false": "Only thanks, acknowledgment, repetition, a vague promise or progress with nothing for the recipient to do is given.",
+        },
+    },
+}
+# The worker question id selects the wire shape: DP1 sends the task, DP2 the message.
+WIRE = {
+    "work_kind": dict(companion="work_kind_applies", options=WORK, questions=QUESTIONS, field="task"),
+    "message_kind": dict(companion="message_actionable", options=MESSAGE, questions=INBOX_QUESTIONS, field="message"),
+}
 
 
 def connect(timeout=TIMEOUT_SECONDS):
@@ -56,15 +79,21 @@ def connect(timeout=TIMEOUT_SECONDS):
 
 
 def wire_payload(request: dict, credential: str | None = None) -> dict:
-    """S1's ``payload``: only task and message leave the process, never a credential."""
-    if (request["question"]["id"] != "work_kind" or set(request["question"]["options"]) != set(WORK)
-            or request["companion"]["id"] != "work_kind_applies"):
+    """S1's ``payload``: only task and message leave the process, never a credential.
+
+    DP1 sends the task with an empty message, as S1 did; DP2 sends one full
+    inbox message with an empty task and asks only the two inbox questions.
+    """
+    shape = WIRE.get(request["question"]["id"])
+    if (shape is None or set(request["question"]["options"]) != set(shape["options"])
+            or request["companion"]["id"] != shape["companion"]):
         raise ValueError("the worker question no longer matches the S1 wire questions")
-    state = dict(task=request["state"], message="")
+    state = dict(task="", message="")
+    state[shape["field"]] = request["state"]
     text = json.dumps(state, ensure_ascii=False)
     if CREDENTIAL_SHAPE.search(text) or (credential and credential in text):
         raise ValueError("credential-like state is not allowed")
-    return dict(model=request["model"], state=state, questions=QUESTIONS)
+    return dict(model=request["model"], state=state, questions=shape["questions"])
 
 
 def bind(connection, credential: str, *, model: str):
@@ -72,8 +101,11 @@ def bind(connection, credential: str, *, model: str):
     if connection is None or not isinstance(credential, str) or not credential:
         raise ValueError("a caller-held connection and credential are required")
 
+    asked = []  # question set of each request sent; parse checks the last one
+
     def send(request: dict) -> dict:
         payload = wire_payload(dict(request, model=model), credential)
+        asked.append(payload["questions"])
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
         connection.request("POST", PATH, encoded, {"Authorization": "Bearer " + credential,
                                                    "Content-Type": "application/json"})
@@ -84,16 +116,19 @@ def bind(connection, credential: str, *, model: str):
         """S1's ``validate_response`` for the two questions asked, then the worker's shape."""
         if response["http_status"] != 200:
             return dict(answers=None, error="HTTP_%d" % response["http_status"], usage=None)
+        questions = asked[-1] if asked else QUESTIONS
+        top, companion = questions  # the choice question, then its noul companion
+        options = questions[top]["criteria"]
         value = json.loads(response["body"])
         if not isinstance(value, dict) or value.get("model") != model:
             raise ValueError("missing or changed model provenance")
         answers = value.get("answers")
-        if not isinstance(answers, dict) or set(answers) != set(QUESTIONS):
+        if not isinstance(answers, dict) or set(answers) != set(questions):
             raise ValueError("question/answer keys do not match exactly")
-        kind, applies = answers["work_kind"], answers["work_kind_applies"]
+        kind, applies = answers[top], answers[companion]
         probabilities = kind.get("probabilities") if isinstance(kind, dict) else None
-        if (not isinstance(probabilities, dict) or set(probabilities) != set(WORK) or kind.get("type") != "choice"
-                or kind.get("choice") not in WORK
+        if (not isinstance(probabilities, dict) or set(probabilities) != set(options) or kind.get("type") != "choice"
+                or kind.get("choice") not in options
                 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in probabilities.values())
                 or abs(sum(probabilities.values()) - 1) > 0.05):
             raise ValueError("invalid choice or probability keys")
@@ -103,7 +138,6 @@ def bind(connection, credential: str, *, model: str):
         if not isinstance(usage, dict) or any(type(usage.get(k)) is not int or usage[k] < 0
                                               for k in ("input_tokens", "output_tokens")):
             raise ValueError("invalid token usage")
-        return dict(answers=dict(work_kind=kind["choice"], work_kind_applies=applies.get("noul")), error=None,
-                    usage=usage)
+        return dict(answers={top: kind["choice"], companion: applies.get("noul")}, error=None, usage=usage)
 
     return send, parse
