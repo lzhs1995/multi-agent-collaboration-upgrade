@@ -50,6 +50,33 @@ def surfaces(tree_text):
     return found
 
 
+def create_panes(argvs, run, write_intent, write_result, *, timeout=45):
+    """Write one exclusive intent, then make each lane's one creation call; never retry or replace.
+
+    ``run`` is the subprocess runner and ``write_intent``/``write_result`` the
+    exclusive writers, all injected so tests make no UI. A timeout records
+    UNKNOWN and stops; a non-zero return stops before the next lane.
+    """
+    if set(argvs) != set(LANES):
+        raise ValueError("one creation argv per lane required")
+    write_intent(dict(argv={lane: argvs[lane] for lane in LANES}, pane_creation_attempts=0))
+    results = {}
+    for lane in LANES:
+        try:
+            done = run(argvs[lane], timeout)
+        except TimeoutError:
+            write_result(dict(lanes=results, failed_lane=lane, status="UNKNOWN",
+                              pane_creation_attempts=len(results) + 1))
+            raise
+        results[lane] = dict(returncode=done.returncode, stdout=done.stdout, stderr=done.stderr)
+        if done.returncode != 0:
+            write_result(dict(lanes=results, failed_lane=lane, status="UNCONFIRMED",
+                              pane_creation_attempts=len(results)))
+            raise ValueError("PANE_CREATION_UNCONFIRMED: " + lane + "; inspect the original attempt")
+    write_result(dict(lanes=results, status="RETURNED", pane_creation_attempts=len(results)))
+    return results
+
+
 def require_disjoint(before, after, created):
     """Every old surface survives; the new surfaces are exactly the created set of one to three."""
     created = {_uuid(c, "created surface") for c in created}

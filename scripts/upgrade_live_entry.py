@@ -353,6 +353,8 @@ def launch(ref, spec, binding, *, spawn=False, spawn_authorized=False):
     from upgrade_child_budget_protocol import verify_child_hook_binary
     child_capability = (verify_child_hook_binary(spec["pins"]["claude"])
                         if child_budget_enabled(binding) else None)
+    if spec.get("existing_workspace_uuid") is not None:
+        return _launch_existing(ref, spec, control, spec["existing_workspace_uuid"], child_capability)
     layout = layout_for(ref, spec)
     command = [spec["pins"]["cmux"]["path"], "--json", "new-workspace", "--name", spec["workspace_name"],
                "--cwd", spec["work_root"], "--focus", "false", "--layout",
@@ -375,6 +377,43 @@ def launch(ref, spec, binding, *, spawn=False, spawn_authorized=False):
         write_json(control / "timeout.json", dict(startup=ref, observed_at=utc_now(),
             status="UNKNOWN", workspace_creation_attempts=1, input_operations=0), exclusive=True)
         raise ContractError("WORKSPACE_CREATION_UNKNOWN: no retry or replacement") from exc
+
+
+def _launch_existing(ref, spec, control, workspace, child_capability):
+    """R511 existing-workspace mode: one side pane per lane in the pinned workspace, never a new workspace.
+
+    The same per-lane held entry command as ``layout_for`` is given at pane
+    creation, so no input is typed; old surfaces stay in protected_surface_uuids.
+    """
+    import upgrade_existing_workspace as ew
+    cmux = spec["pins"]["cmux"]["path"]
+    argvs = {lane: ew.pane_argv(cmux, workspace, lane, lane_command(ref, spec, lane)) for lane in LANES}
+
+    def run(argv, timeout):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError from exc
+
+    def write_intent(value):
+        write_json(control / "intent.json", dict(
+            schema="upgrade-startup-intent-v2", startup=ref, created_at=utc_now(), spawn=True, spawn_authorized=True,
+            input_operations=0, existing_workspace_uuid=workspace, **value,
+            **({"child_hook_capability": child_capability} if child_capability is not None else {})), exclusive=True)
+
+    def write_result(value):
+        write_json(control / "result.json", dict(
+            schema="upgrade-startup-result-v2", startup=ref, observed_at=utc_now(),
+            returncode=0 if value["status"] == "RETURNED" else 1, existing_workspace_uuid=workspace,
+            workspace_creation_attempts=0, input_operations=0, **value), exclusive=True)
+
+    try:
+        lanes = ew.create_panes(argvs, run, write_intent, write_result)
+    except TimeoutError as exc:
+        raise ContractError("PANE_CREATION_UNKNOWN: no retry or replacement") from exc
+    except ValueError as exc:
+        raise ContractError(str(exc)) from exc
+    return dict(returncode=0, lanes=lanes, existing_workspace_uuid=workspace, input_operations=0)
 
 
 def start_client(ref, spec, binding, lane):

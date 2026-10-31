@@ -133,9 +133,14 @@ def inspect(startup_ref, spec, binding, *, stage=None):
     control = Path(binding["state_root"]) / "startup"
     intent_ref, result_ref = file_ref(control / "intent.json"), file_ref(control / "result.json")
     intent, result = json_ref(intent_ref), json_ref(result_ref)
+    # R511 existing-workspace mode: one pane per lane in the pinned workspace, no workspace creation.
+    existing = spec.get("existing_workspace_uuid") is not None
     require(intent["startup"] == result["startup"] == startup_ref
             and intent.get("spawn") is True and intent.get("spawn_authorized") is True
-            and result["returncode"] == 0 and result["workspace_creation_attempts"] == 1,
+            and result["returncode"] == 0
+            and ((result["workspace_creation_attempts"] == 0 and result.get("pane_creation_attempts") == len(LANES)
+                  and result.get("existing_workspace_uuid") == intent.get("existing_workspace_uuid")
+                  == spec["existing_workspace_uuid"]) if existing else result["workspace_creation_attempts"] == 1),
             "ORIGINAL_LAUNCH_UNCONFIRMED")
     bridge = ReadOnlyCmux(spec["pins"]["cmux"]["path"])
     launches, launch_refs = {}, {}
@@ -178,6 +183,7 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             # A restored client lives in the stage's frozen workspace, not the original create response.
             require(workspace == str(uuid.UUID(launch["workspace_uuid"]))
                     == (stage["recovery"]["workspace_uuid"] if recovery_ref is not None
+                        else str(uuid.UUID(spec["existing_workspace_uuid"])) if existing
                         else launch_workspace(result["stdout"], bridge)), "LAUNCH_WORKSPACE_CHANGED")
             provider = "codex" if lane == "codex" else "claude"
             require(native._provider(client) == provider

@@ -79,7 +79,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
                      continuity_registration=False, child_budget=False, startup_continuity=False,
-                     station_launchers=None, pre_exec_hold=False):
+                     station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -417,6 +417,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         startup["socket_boundary"] = socket_boundary
     if goal_contract is not None:
         startup.update(goal_contract)
+    if existing_workspace_uuid is not None:
+        # R511: allocate side panes in this existing workspace; launch never creates one.
+        startup["existing_workspace_uuid"] = str(uuid.UUID(existing_workspace_uuid))
     startup_ref = write_json(paths["config"] / "startup-v2.json", startup, exclusive=True)
     Path(startup_ref["path"]).chmod(0o444)
     validate_startup(startup_ref, controller=controller)

@@ -292,6 +292,11 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
     if goal_mode:
         fields |= GOAL_FIELDS
+    if "existing_workspace_uuid" in spec:
+        # R511: side panes in one pinned existing workspace instead of a new one.
+        existing = spec["existing_workspace_uuid"]
+        require(isinstance(existing, str) and existing == str(uuid.UUID(existing)), "STARTUP_EXISTING_WORKSPACE_INVALID")
+        fields |= {"existing_workspace_uuid"}
     require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA),
             "STARTUP_FIELDS_CHANGED")
     source = checked_path(spec["controller"])

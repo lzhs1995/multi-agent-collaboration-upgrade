@@ -50,5 +50,95 @@ class ExistingWorkspaceTests(unittest.TestCase):
                 ew.require_disjoint(before, after, created)
 
 
+class Done:
+    def __init__(self, returncode, stdout=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+
+
+class CreatePanesTests(unittest.TestCase):
+    def setUp(self):
+        self.argvs = {lane: ew.pane_argv("cmux", WS, lane, "held " + lane) for lane in ew.LANES}
+        self.intents, self.results, self.calls = [], [], []
+
+    def run_with(self, codes, timeout_lane=None):
+        def run(argv, timeout):
+            lane = ew.LANES[len(self.calls)]
+            self.calls.append(argv)
+            if lane == timeout_lane:
+                raise TimeoutError
+            return Done(codes[lane], '{"surface_id":"x"}')
+        return ew.create_panes(self.argvs, run, self.intents.append, self.results.append)
+
+    def test_intent_first_then_one_call_per_lane_in_order(self):
+        out = self.run_with(dict(codex=0, claude_a=0, claude_b=0))
+        self.assertEqual((len(self.intents), len(self.calls), set(out)), (1, 3, set(ew.LANES)))
+        self.assertEqual(self.calls, [self.argvs[lane] for lane in ew.LANES])
+        self.assertEqual((self.results[-1]["status"], self.results[-1]["pane_creation_attempts"]), ("RETURNED", 3))
+
+    def test_a_failed_lane_stops_before_the_next_and_is_recorded(self):
+        with self.assertRaises(ValueError):
+            self.run_with(dict(codex=0, claude_a=1, claude_b=0))
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual((self.results[-1]["failed_lane"], self.results[-1]["status"]), ("claude_a", "UNCONFIRMED"))
+
+    def test_a_timeout_is_unknown_and_never_retried(self):
+        with self.assertRaises(TimeoutError):
+            self.run_with(dict(codex=0, claude_a=0, claude_b=0), timeout_lane="codex")
+        self.assertEqual((len(self.calls), self.results[-1]["status"]), (1, "UNKNOWN"))
+
+    def test_missing_lane_argv_is_refused_before_any_write(self):
+        with self.assertRaises(ValueError):
+            ew.create_panes({"codex": ["x"]}, lambda a, t: Done(0), self.intents.append, self.results.append)
+        self.assertEqual((self.intents, self.results), ([], []))
+
+
+class LaunchExistingTests(unittest.TestCase):
+    """upgrade_live_entry._launch_existing wiring with a patched runner; no cmux call, no UI."""
+
+    def test_three_new_pane_calls_in_the_pinned_workspace_with_intent_and_result(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import upgrade_live_entry as entry
+        control = Path(os.path.realpath(tempfile.mkdtemp(prefix="r511-launch-existing-")))
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return Done(0, "{}")
+        spec = {"pins": {"cmux": {"path": "/opt/homebrew/bin/cmux"}}}
+        with patch.object(entry, "lane_command", side_effect=lambda ref, spec, lane: "held " + lane), \
+                patch.object(entry.subprocess, "run", side_effect=fake_run):
+            out = entry._launch_existing({"path": "startup"}, spec, control, WS.lower(), None)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all("new-workspace" not in a and a[a.index("--workspace") + 1] == WS for a in calls))
+        self.assertEqual([a[a.index("--command") + 1] for a in calls], ["held " + lane for lane in ew.LANES])
+        intent = json.loads((control / "intent.json").read_text())
+        result = json.loads((control / "result.json").read_text())
+        self.assertEqual((intent["existing_workspace_uuid"], intent["input_operations"]), (WS.lower(), 0))
+        self.assertEqual((result["returncode"], result["workspace_creation_attempts"], result["pane_creation_attempts"]),
+                         (0, 0, 3))
+        self.assertEqual(out["returncode"], 0)
+
+    def test_a_failed_pane_raises_and_leaves_the_unconfirmed_result(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import upgrade_live_entry as entry
+        from orchestration_common import ContractError
+        control = Path(os.path.realpath(tempfile.mkdtemp(prefix="r511-launch-existing-")))
+        codes = iter([0, 2, 0])
+        with patch.object(entry, "lane_command", side_effect=lambda ref, spec, lane: "held " + lane), \
+                patch.object(entry.subprocess, "run", side_effect=lambda argv, **k: Done(next(codes))):
+            with self.assertRaises(ContractError):
+                entry._launch_existing({"path": "startup"}, {"pins": {"cmux": {"path": "cmux"}}}, control, WS.lower(), None)
+        result = json.loads((control / "result.json").read_text())
+        self.assertEqual((result["status"], result["failed_lane"], result["returncode"]), ("UNCONFIRMED", "claude_a", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
