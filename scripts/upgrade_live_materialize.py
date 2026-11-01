@@ -464,6 +464,8 @@ def main(argv=None):
                         help="pin opt-in whole-task Agent PreToolUse hook; starts no allocator or child")
     parser.add_argument("--register-startup-continuity", action="store_true",
                         help="pin separate original startup-failure contract; requires private continuity, starts no client")
+    parser.add_argument("--semantic-sender", action="store_true",
+                        help="S2 only: pin the neutral claude_a sender-duties clause in the lane policy; sends nothing")
     args = parser.parse_args(argv)
     try:
         from orchestration_campaign import anchored_ref
@@ -477,7 +479,8 @@ def main(argv=None):
                                response_observation=args.observe_claude_responses,
                                continuity_registration=args.register_private_continuity,
                                child_budget=args.register_native_child_budget,
-                               startup_continuity=args.register_startup_continuity)
+                               startup_continuity=args.register_startup_continuity,
+                               semantic_sender=args.semantic_sender)
         print(json.dumps(dict(status="MATERIALIZED_NOT_LAUNCHED", runtime=ref, input_operations=0),
                          ensure_ascii=False, indent=2))
         return 0
