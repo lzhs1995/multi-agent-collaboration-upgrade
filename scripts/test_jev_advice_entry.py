@@ -27,6 +27,24 @@ class CredentialFdTests(unittest.TestCase):
                 run.read_credential(self.pipe_with(data))
 
 
+class SenderDutiesTests(unittest.TestCase):
+    """R545 P1: the frozen duties list each run's pinned send commands in registered order."""
+
+    def test_commands_grouped_by_run_in_order_and_boundary_fixed(self):
+        from unittest.mock import patch
+        import upgrade_semantic_inputs as sem
+        slots = [dict(run_id="pilot-01", command="c1"), dict(run_id="pilot-01", command="c2"),
+                 dict(run_id="pilot-02", command="c3")]
+        campaign = dict(runs=[dict(run_id="pilot-01"), dict(run_id="pilot-02"), dict(run_id="pilot-03")])
+        with patch.object(sem, "campaign_slots", return_value=slots):
+            duties = sem.sender_duties(campaign)
+        self.assertEqual(duties["runs"], {"pilot-01": ["c1", "c2"], "pilot-02": ["c3"], "pilot-03": []})
+        self.assertEqual((duties["sender"], duties["receiver"], duties["boundary"]),
+                         ("claude_a", "codex", sem.BOUNDARY))
+        self.assertFalse(duties["ordinary_communication_denominator_changed"])
+        self.assertEqual(sem.SENDER_DUTIES_PATH, "semantic/sender-duties.json")
+
+
 class RegisteredConnectionTests(unittest.TestCase):
     def source(self, body):
         root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevconn-")))
