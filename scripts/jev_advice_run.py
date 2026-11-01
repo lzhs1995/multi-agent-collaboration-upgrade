@@ -118,6 +118,36 @@ def load_transport(source_ref, connection, credential, *, model):
     return namespace["bind"](connection, credential, model=model)
 
 
+def read_credential(fd: int) -> str:
+    """Read the on-arm key once from an inherited pipe/FIFO fd, then close it (R545 P2).
+
+    The key arrives only in process: never argv, environment, file or log.
+    """
+    import os
+    chunks = []
+    try:
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    value = b"".join(chunks).decode("ascii").strip()
+    require(value and not any(c.isspace() for c in value), "the inherited credential fd held no single key")
+    return value
+
+
+def registered_connection(source_ref):
+    """The one caller-held connection, built by the same pinned transport bytes that ``bind`` runs."""
+    from orchestration_common import read_ref
+    raw = read_ref(source_ref, "registered transport source")
+    namespace = dict(__name__="jev_registered_transport", __file__=source_ref["path"])
+    exec(compile(raw, source_ref["path"], "exec"), namespace)
+    require(callable(namespace.get("connect")), "the registered transport source has no connect")
+    return namespace["connect"]()
+
+
 def record_advice(co, node_id: str, *, registration=None, connection=None, credential=None) -> dict:
     """Production off-arm worker advice for one deliberately unbound node, before its decision.
 
@@ -289,6 +319,9 @@ def main(argv=None):
         parser.add_argument(name, required=True)
     parser.add_argument("--registration")
     parser.add_argument("--registration-sha256")
+    parser.add_argument("--credential-fd", type=int,
+                        help="on arm only: inherited pipe/FIFO fd holding the key (never argv/env/file)")
+    parser.add_argument("--inbox-event", help="record the registered DP2 inbox order for this event id")
     args = parser.parse_args(argv)
     try:
         require((args.registration is None) == (args.registration_sha256 is None),
@@ -301,7 +334,19 @@ def main(argv=None):
         runner = Runner(anchored_ref(args.campaign, args.campaign_sha256))
         require(Path(__file__).resolve() == Path(runner.campaign["adapter"]["path"]) / "scripts/jev_advice_run.py",
                 "invoke the complete frozen adapter, not the mutable checkout")
-        result = record_advice(runner.co(args.run), args.node, registration=registration)
+        co = runner.co(args.run)
+        connection = credential = None
+        if args.credential_fd is not None:
+            import jev_registration
+            reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=args.node)
+            require(reg["arm"] == "advisory-on", "the off arm reads no credential and opens no transport")
+            credential = read_credential(args.credential_fd)
+            connection = registered_connection(reg["transport_source"])
+        result = (record_inbox_order(co, args.node, args.inbox_event, None, registration=registration,
+                                     connection=connection, credential=credential)
+                  if args.inbox_event is not None else
+                  record_advice(co, args.node, registration=registration,
+                                connection=connection, credential=credential))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
         return 0
     except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
