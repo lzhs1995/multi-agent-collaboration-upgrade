@@ -23,12 +23,46 @@ def _uuid(value, label):
         raise ValueError(label + " must be a UUID") from exc
 
 
-def pane_argv(cmux, workspace_uuid, lane, command):
+def normalize_split_targets(workspace_uuid, targets):
+    """Pin an explicit original surface for each lane; shared layout targets are allowed."""
+    if workspace_uuid is None:
+        raise ValueError("split targets require an existing workspace")
+    _uuid(workspace_uuid, "workspace")
+    if not isinstance(targets, dict) or set(targets) != set(LANES):
+        raise ValueError("one split target per lane required")
+    return {lane: _uuid(targets[lane], "split target").lower() for lane in LANES}
+
+
+def verify_split_targets(tree, workspace_uuid, targets):
+    """Resolve the pinned UUIDs in the live workspace before any creation intent."""
+    targets = normalize_split_targets(workspace_uuid, targets)
+    workspace = _uuid(workspace_uuid, "workspace")
+    workspaces = [ws for window in tree["windows"] for ws in window["workspaces"]]
+    selected = [ws for ws in workspaces if _uuid(ws["id"], "workspace") == workspace]
+    if len(selected) != 1:
+        raise ValueError("split workspace is not unique")
+    for target in set(targets.values()):
+        rows = [(ws, surface) for ws in workspaces for pane in ws["panes"]
+                for surface in pane["surfaces"] if _uuid(surface["id"], "surface").lower() == target]
+        if (len(rows) != 1 or _uuid(rows[0][0]["id"], "workspace") != workspace
+                or rows[0][1].get("type") != "terminal"):
+            raise ValueError("split target is not a unique terminal in the pinned workspace")
+    return targets
+
+
+def pane_argv(cmux, workspace_uuid, lane, command, *, surface_uuid=None):
     """One lane's creation-time held entry command in a new side pane of the pinned workspace."""
     if lane not in LANES:
         raise ValueError("unknown lane")
     if not isinstance(command, str) or not command.strip():
         raise ValueError("held entry command required")
+    if surface_uuid is not None:
+        # The default new-pane target follows focus and can be too small even
+        # when a different original pane has enough room. Pin the actual target.
+        return [str(cmux), "--json", "--id-format", "uuids", "new-split", DIRECTION[lane],
+                "--workspace", _uuid(workspace_uuid, "workspace"),
+                "--surface", _uuid(surface_uuid, "split target"),
+                "--command", command, "--focus", "false"]
     return [str(cmux), "--json", "--id-format", "uuids", "new-pane", "--type", "terminal",
             "--direction", DIRECTION[lane], "--workspace", _uuid(workspace_uuid, "workspace"),
             "--command", command, "--focus", "false"]

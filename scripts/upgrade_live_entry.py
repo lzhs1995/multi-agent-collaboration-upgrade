@@ -387,7 +387,17 @@ def _launch_existing(ref, spec, control, workspace, child_capability):
     """
     import upgrade_existing_workspace as ew
     cmux = spec["pins"]["cmux"]["path"]
-    argvs = {lane: ew.pane_argv(cmux, workspace, lane, lane_command(ref, spec, lane)) for lane in LANES}
+    targets = spec.get("existing_split_targets")
+    if targets is not None:
+        try:
+            # Read-only UUID resolution; no focus, title or newest-tab selection.
+            snapshot = subprocess.run([cmux, "tree", "--all", "--json", "--id-format", "both"],
+                capture_output=True, text=True, timeout=10, check=True)
+            ew.verify_split_targets(json.loads(snapshot.stdout), workspace, targets)
+        except (ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            raise ContractError("EXISTING_SPLIT_TARGET_UNVERIFIED: " + str(exc)) from exc
+    argvs = {lane: ew.pane_argv(cmux, workspace, lane, lane_command(ref, spec, lane),
+                             surface_uuid=targets[lane] if targets is not None else None) for lane in LANES}
 
     def run(argv, timeout):
         try:

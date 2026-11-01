@@ -62,6 +62,35 @@ class MaterializedStartupTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_explicit_split_targets_roundtrip_in_the_actual_private_startup(self):
+        workspace = "35bed1fd-1e0b-452d-8dc0-9ffd67387cb0"
+        targets = {"codex": "583F053A-F82A-4573-8332-A7DA39DD0643",
+                   "claude_a": "583F053A-F82A-4573-8332-A7DA39DD0643",
+                   "claude_b": "E4A7BCCA-9642-4797-B2FE-5A798E5B3110"}
+        context = init_experiment(self.root / "s", "split-targets", self.source_controller)
+        runtime = json_ref(materialize_live(context, "B", binaries=self.binaries,
+            provider_configuration=({}, {}), existing_workspace_uuid=workspace,
+            existing_split_targets=targets, protected_surface_uuids=set(targets.values())))
+        spec, _ = validate_startup(runtime["startup"])
+        self.assertEqual(spec["existing_split_targets"], {lane: target.lower() for lane, target in targets.items()})
+        self.assertEqual(spec["existing_workspace_uuid"], workspace)
+        controller = Path(spec["controller"]) / "scripts"
+        self.assertIn("ew.verify_split_targets", (controller / "mac_upgrade_live_entry.py").read_text())
+        self.assertIn("def normalize_split_targets", (controller / "mac_upgrade_existing_workspace.py").read_text())
+        self.assertFalse(Path(spec["adoption_path"]).exists())
+        self.assertFalse((Path(runtime["state_root"]) / "startup/intent.json").exists())
+
+    def test_unbound_split_targets_refuse_before_materialization(self):
+        context = init_experiment(self.root / "i", "split-invalid", self.source_controller)
+        targets = {lane: "583F053A-F82A-4573-8332-A7DA39DD0643" for lane in LANES}
+        for options in ({"existing_split_targets": targets},
+                        {"existing_workspace_uuid": "35bed1fd-1e0b-452d-8dc0-9ffd67387cb0",
+                         "existing_split_targets": targets}):
+            with self.subTest(options=options), self.assertRaises((ContractError, ValueError)):
+                materialize_live(context, "B", binaries=self.binaries,
+                                 provider_configuration=({}, {}), **options)
+        self.assertFalse(arm_paths(validate_context(context), "B")["controllers"].exists())
+
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_actual_controller_default_footer_and_tip_input_boundaries(self):
         controller = Path(self.spec["controller"]) / "scripts"

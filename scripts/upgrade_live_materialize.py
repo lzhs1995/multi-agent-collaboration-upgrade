@@ -80,7 +80,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      goal_startup=None, lane_instructions=None, response_observation=False,
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
-                     semantic_sender=False):
+                     semantic_sender=False, existing_split_targets=None):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -91,6 +91,12 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
             "STARTUP_FAILURE_REQUIRES_PRIVATE_CONTINUITY")
+    if existing_split_targets is not None:
+        from upgrade_existing_workspace import normalize_split_targets
+        existing_split_targets = normalize_split_targets(existing_workspace_uuid, existing_split_targets)
+        protected_surface_uuids = tuple(protected_surface_uuids)
+        require(set(existing_split_targets.values()) <= {str(uuid.UUID(x)) for x in protected_surface_uuids},
+                "SPLIT_TARGET_MUST_BE_AN_ORIGINAL_PROTECTED_SURFACE")
     context = validate_context(context_ref)
     require(arm in ("A1", "B"), "A0 is a retained historical control, not a new live lane")
     paths = arm_paths(context, arm)
@@ -430,6 +436,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     if existing_workspace_uuid is not None:
         # R511: allocate side panes in this existing workspace; launch never creates one.
         startup["existing_workspace_uuid"] = str(uuid.UUID(existing_workspace_uuid))
+    if existing_split_targets is not None:
+        startup["existing_split_targets"] = existing_split_targets
     startup_ref = write_json(paths["config"] / "startup-v2.json", startup, exclusive=True)
     Path(startup_ref["path"]).chmod(0o444)
     validate_startup(startup_ref, controller=controller)
