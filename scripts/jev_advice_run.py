@@ -244,6 +244,38 @@ def advice_read_command(campaign, notice) -> str:
 
 
 INBOX_DIRECTORY = "jev-inbox"
+DISPOSITION_SCHEMA = "s2-semantic-disposition-v1"
+DISPOSITIONS = ("adopt", "defer", "refuse")
+
+
+def record_disposition(co, request_id: str, disposition: str, reason: str, work=()) -> dict:
+    """R540 dp2_qualification[7]/R561: one explicit supervisor disposition per semantic message.
+
+    Recorded once by the original native supervisor after the message's
+    complete read; closeout joins this file to that call's native record and
+    output. It judges nothing and creates no task: ``work`` may only name
+    existing frozen nodes whose work the message changed.
+    """
+    import json
+    from orchestration_common import file_ref
+    run_id = co.spec["run_id"]
+    require("semantic_input" in co.campaign, "dispositions exist only for registered S2 semantic inputs")
+    inbox = co.root / INBOX_DIRECTORY / ("semantic-" + run_id + ".json")
+    require(inbox.is_file() and not inbox.is_symlink(), "the run's DP2 inbox order is not recorded")
+    requests = {r["request_id"]: r for r in json.loads(inbox.read_text()).get("read_requests", [])}
+    require(request_id in requests, "unknown semantic message for this run")
+    require(disposition in DISPOSITIONS, "disposition must be adopt, defer or refuse")
+    require(isinstance(reason, str) and bool(reason.strip()) and len(reason) <= 2000 and "\0" not in reason,
+            "a real bounded reason is required")
+    work = list(work or ())
+    require(all(node in co.nodes for node in work) and len(set(work)) == len(work),
+            "work may only name distinct existing frozen nodes")
+    path = co.root / INBOX_DIRECTORY / "dispositions" / (request_id + ".json")
+    path.parent.mkdir(exist_ok=True)
+    write_json(path, dict(schema=DISPOSITION_SCHEMA, run_id=run_id, request_id=request_id,
+                          inner_body_sha256=requests[request_id]["inner_body_sha256"], inbox_order=file_ref(inbox),
+                          disposition=disposition, reason=reason, work=work), exclusive=True)
+    return file_ref(path)
 
 
 def record_inbox_order(co, node_id: str, event_id: str, messages: list | None, *, registration=None,
@@ -449,9 +481,20 @@ def main(argv=None):
     parser.add_argument("--inbox-event", help="record the registered DP2 inbox order for this event id")
     parser.add_argument("--serve-socket", help="on arm: hold the key and connection as this run's worker here")
     parser.add_argument("--worker-socket", help="send this DP1/DP2 request to the run's worker; no key here")
+    parser.add_argument("--semantic-disposition", metavar="REQUEST_ID",
+                        help="record the supervisor's adopt/defer/refuse for one completely read S2 message")
+    parser.add_argument("--disposition", choices=DISPOSITIONS)
+    parser.add_argument("--reason")
+    parser.add_argument("--work", action="append", default=[], help="an existing frozen node this message changed")
     args = parser.parse_args(argv)
     try:
         require(not (args.serve_socket and args.worker_socket), "serve or ask, not both")
+        disposing = args.semantic_disposition is not None
+        require(disposing == (args.disposition is not None) == (args.reason is not None)
+                and (disposing or not args.work), "a disposition needs its message, choice and reason together")
+        require(not disposing or not (args.registration or args.credential_fd is not None or args.inbox_event
+                                      or args.serve_socket or args.worker_socket),
+                "a disposition carries no registration, key, inbox event or worker")
         if args.worker_socket is not None:
             require(args.registration is not None and args.credential_fd is None,
                     "a worker request names its pinned registration and carries no key")
@@ -472,6 +515,10 @@ def main(argv=None):
         require(Path(__file__).resolve() == Path(runner.campaign["adapter"]["path"]) / "scripts/jev_advice_run.py",
                 "invoke the complete frozen adapter, not the mutable checkout")
         co = runner.co(args.run)
+        if disposing:
+            print(json.dumps(record_disposition(co, args.semantic_disposition, args.disposition, args.reason, args.work),
+                             ensure_ascii=False, sort_keys=True))
+            return 0
         if args.serve_socket is not None:
             import jev_registration
             require(registration is not None and args.credential_fd is not None,

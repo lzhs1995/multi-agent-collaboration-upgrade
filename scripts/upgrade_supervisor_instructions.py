@@ -17,14 +17,12 @@ def jev_steps(campaign, campaign_ref):
     from orchestration_common import file_ref, json_ref
     from orchestration_planner import validate_plan
     from upgrade_benchmark import validate_registration
-    from upgrade_semantic_inputs import ADVICE_INDEX_PATH
+    from upgrade_semantic_inputs import ADVICE_INDEX_PATH, advice_argv
     nodes = unbound_nodes(validate_plan(json_ref(campaign["plan"], "frozen plan")))
     require(nodes, "an S2 campaign needs deliberately unbound nodes")
     names = ", ".join(nodes)
     group = validate_registration(campaign["registration"])["groups"][campaign["session_group"]]
-    prefix = shlex.join(["rtk", "proxy", campaign["python"]["path"], "-B",
-        str(Path(campaign["adapter"]["path"]) / "scripts/jev_advice_run.py"),
-        "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"]])
+    prefix = shlex.join(advice_argv(campaign, campaign_ref))
     on_args, source = "", "This is the off arm: pass no registration, socket or key."
     use = "Then publish-decision with --advice-sha256 null and --action supervisor_review, then bind-unbound."
     if group["advisory"] == "advisory-on":
@@ -47,9 +45,12 @@ call the prefix with --run RUN --node NODE{on_args} and read its complete JSON r
 {use} The advice informs, never replaces, your own decision.
 DP2: once all three registered semantic-input notices of a run are in this session, and before you
 open any of their bodies, call the prefix once with --run RUN --node {nodes[0]} --inbox-event semantic-RUN{on_args}.
-Then run each returned read_requests command once, in the returned order, read each complete body
-and act on it in your normal work. Never read a semantic body another way, reorder these reads or
-relabel eligibility. REJECTED, STOPPED or an uncertain return is final: never repeat the call.
+Then run each returned read_requests command once, in the returned order, and read each complete body.
+Right after reading a body, and before any work it changes, call the prefix once with --run RUN
+--node {nodes[0]} --semantic-disposition REQUEST_ID --disposition adopt|defer|refuse --reason TEXT, adding
+--work NODE for each existing node whose work it changes. The reason states your real choice, also when
+no new output is appropriate; create no new task. Then act on it in your normal work. Never read a
+semantic body another way, reorder these reads or relabel eligibility. REJECTED, STOPPED or an uncertain return is final: never repeat the call.
 STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER stops further advice calls in this run; report it."""
 
 

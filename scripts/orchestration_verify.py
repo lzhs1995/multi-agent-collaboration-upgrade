@@ -173,6 +173,11 @@ def derive_run(co, native_end, *, closeout_clock=None):
         result["metrics"]["automated_communication_inputs"] = communication
     if provenance is not None:
         result["metrics"]["input_provenance"] = provenance
+    if "semantic_input" in co.campaign:
+        # S2 only: every other campaign's closeout keeps its exact original shape.
+        from upgrade_semantic_inputs import semantic_closeout
+        result["metrics"]["semantic_inputs"] = semantic_closeout(co, data, readers, native_end,
+                                                                 not_after=measurement_end["at"])
     return result
 
 

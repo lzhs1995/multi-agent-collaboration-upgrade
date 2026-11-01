@@ -290,6 +290,159 @@ def observe_body_exposure(campaign, header, record, native_end, readers, *, not_
         semantic_action="NOT_PROVEN_BY_BODY_EXPOSURE", business_accepted=False)
 
 
+def advice_argv(campaign, campaign_ref):
+    """The supervisor's fixed jev_advice_run prefix; the generated instructions and closeout share it."""
+    return ["rtk", "proxy", campaign["python"]["path"], "-B",
+            str(Path(campaign["adapter"]["path"]) / "scripts/jev_advice_run.py"),
+            "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"]]
+
+
+def _exec_cmd(name, arguments):
+    """The cmd of one direct exec_command invocation, parsed exactly as valid_command parses it."""
+    from upgrade_body_read_evidence import strict_json
+    try:
+        if name in ("exec", "functions.exec"):
+            match = re.fullmatch(r"\s*text\(\s*await tools\.exec_command\((\{.*\})\)\s*\);?\s*", arguments, re.S)
+            arguments = strict_json(match[1]) if match else None
+        elif isinstance(arguments, str):
+            arguments = strict_json(arguments)
+    except (ValueError, TypeError):
+        return None
+    return arguments.get("cmd") if isinstance(arguments, dict) and isinstance(arguments.get("cmd"), str) else None
+
+
+def _disposition_pair(records, argv, pin, *, not_before, not_after):
+    """The one original recorder call/result pair for this exact argv and printed pin (R562).
+
+    Same admission as the body read: a direct exec tool call (``valid_command``),
+    one call and one result per call_id with matching record kinds, valid stamps
+    inside the window, the result after the call, and a terminal exit-0 stdout
+    (``codex_stdout``) that is exactly the recorder's printed pin. Echoes, other
+    tools, failed or yielded results and reordered records never match.
+    """
+    from upgrade_body_read_evidence import RTK_NOTICE, calls_and_results, codex_stdout, stamp, strict_json, valid_command
+    calls, results = {}, {}
+    for ref, record in records:
+        when = stamp(record)
+        timely = when is not None and not_before <= when <= not_after
+        payload = record.get("payload")
+        kind = payload.get("type") if isinstance(payload, dict) else None
+        found, outputs = calls_and_results(record, "codex")
+        for call_id, name, arguments in found:
+            cmd = _exec_cmd(name, arguments)
+            try:
+                valid = cmd is not None and shlex.split(cmd) == argv and valid_command(name, arguments, cmd)
+            except (ValueError, TypeError):
+                valid = False
+            calls.setdefault(call_id, []).append((ref, when, valid and timely, kind))
+        for call_id, value, _ in outputs:
+            stdout = codex_stdout(value)
+            if isinstance(stdout, str) and stdout.startswith(RTK_NOTICE):
+                stdout = stdout[len(RTK_NOTICE):]
+            try:
+                valid = isinstance(stdout, str) and strict_json(stdout) == pin
+            except (ValueError, TypeError):
+                valid = False
+            results.setdefault(call_id, []).append((ref, when, valid and timely, kind))
+    pairs = []
+    for call_id, found in calls.items():
+        done = results.get(call_id, [])
+        if not (isinstance(call_id, str) and call_id and len(found) == 1 and len(done) == 1):
+            continue
+        (call, at, ok, kind), (result, done_at, result_ok, result_kind) = found[0], done[0]
+        if (ok and result_ok and result_kind == {"function_call": "function_call_output",
+                                                 "custom_tool_call": "custom_tool_call_output"}.get(kind)
+                and result["offset"] >= call["offset"] + call["length"] and done_at >= at):
+            pairs.append(dict(call_id=call_id, call_record=call, result_record=result))
+    return pairs[0] if len(pairs) == 1 else None
+
+
+def semantic_closeout(co, data, readers, native_end, *, not_after):
+    """R540 dp2_qualification[7] at run closeout (R559/R561), per registered message of this run.
+
+    Joins its complete native read (``observe_body_exposure``, unchanged), the
+    supervisor's explicit disposition to that recorder call's own native record
+    and output, and each named existing node's original acceptance, all in the
+    same Codex transcript and in that order. Nothing here judges meaning; every
+    missing link stays visible and leaves the message UNQUALIFIED in the
+    fixed denominator.
+    """
+    from orchestration_campaign import control_script, native_control
+    from orchestration_evidence import marker_for
+    run_id, reader = co.spec["run_id"], readers["codex"]
+    expected = [s for s in campaign_slots(co.campaign) if s["run_id"] == run_id]
+    inbox = co.root / "jev-inbox" / ("semantic-" + run_id + ".json")
+    exposure, status = None, "NOT_RECORDED"
+    if inbox.is_file() and not inbox.is_symlink():
+        try:
+            exposure = observe_body_exposure(co.campaign, co.header, json.loads(inbox.read_text()), native_end,
+                                             readers, not_after=not_after)
+            status = "OBSERVED"
+        except (ContractError, ValueError, KeyError, TypeError, OSError) as exc:
+            status = "OBSERVATION_FAILED: " + str(exc)[:200]
+    from orchestration_binding import unbound_nodes
+    from orchestration_common import parse_time
+    dp2_node = unbound_nodes(co.plan)[0]
+    not_before, not_after_epoch = parse_time(co.header["started_at"]).timestamp(), parse_time(not_after).timestamp()
+    start, end = reader.verify_pin(co.header["native_start"]["codex"]), reader.verify_pin(native_end["codex"])
+    records = list(reader.records(start, end))
+    reads = {r["request_id"]: r["proof"] for r in (exposure or {}).get("body_reads", [])}
+    messages = []
+    for sample in expected:
+        rid, gaps = sample["request_id"], []
+        item = dict(request_id=rid, inner_body_sha256=sample["body_sha256"], read=reads.get(rid),
+                    disposition=None, disposition_call=None, work=[])
+        if item["read"] is None:
+            gaps.append("complete native read missing")
+        path = co.root / "jev-inbox" / "dispositions" / (rid + ".json")
+        value = json.loads(path.read_text()) if path.is_file() and not path.is_symlink() else None
+        if value is None:
+            gaps.append("disposition missing")
+        else:
+            ref = file_ref(path)
+            item["disposition"] = dict(ref, disposition=value.get("disposition"), reason=value.get("reason"),
+                                       work=value.get("work"))
+            if value.get("run_id") != run_id or value.get("inner_body_sha256") != sample["body_sha256"]:
+                gaps.append("disposition names another run or body")
+            argv = advice_argv(co.campaign, co.campaign_ref) + [
+                "--run", run_id, "--node", dp2_node, "--semantic-disposition", rid,
+                "--disposition", str(value.get("disposition")), "--reason", str(value.get("reason"))]
+            for node in value.get("work") or []:
+                argv += ["--work", str(node)]
+            pair = _disposition_pair(records, argv, ref, not_before=not_before, not_after=not_after_epoch)
+            if pair is None:
+                gaps.append("one native disposition call with its own output required")
+            else:
+                item["disposition_call"] = pair
+                read = item["read"]
+                if read is not None and pair["call_record"]["offset"] < read["result_record"]["offset"] + read["result_record"]["length"]:
+                    gaps.append("disposition precedes the complete read")
+        for node in (value or {}).get("work") or []:
+            info, joined = data.get(node) if isinstance(data.get(node), dict) else {}, None
+            if "accepted_evidence" in info:
+                accepted = json_ref(info["accepted_evidence"])
+                script = control_script(co.campaign, co.campaign_ref, "accept", run_id, node_id=node,
+                                        marker=marker_for(info, accepted))
+                try:
+                    native_control(reader, accepted["acceptance_native"], script)
+                    joined = accepted["acceptance_native"]
+                except ContractError:
+                    joined = None
+            result = (item["disposition_call"] or {}).get("result_record")
+            if joined is None or result is None or joined["offset"] < result["offset"] + result["length"]:
+                gaps.append("work %s has no original same-Codex acceptance after the disposition" % node)
+            item["work"].append(dict(node_id=node, acceptance_native=joined))
+        item.update(gaps=gaps, qualified=not gaps)
+        messages.append(item)
+    return dict(schema="s2-semantic-closeout-v1", run_id=run_id, exposure_status=status, exposure=exposure,
+                inbox_order=file_ref(inbox) if inbox.is_file() else None, messages=messages,
+                denominator=len(expected), qualified=sum(m["qualified"] for m in messages),
+                unqualified=[m["request_id"] for m in messages if not m["qualified"]],
+                read_order=dict(observed=(exposure or {}).get("native_exposure_order"),
+                                matches_advice=(exposure or {}).get("exposure_matches_advice")),
+                semantic_correctness="NOT_JUDGED")
+
+
 def main(argv=None):
     from orchestration_campaign import anchored_ref, validate_campaign
     parser = argparse.ArgumentParser(description=__doc__)
