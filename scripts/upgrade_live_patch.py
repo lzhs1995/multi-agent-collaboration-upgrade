@@ -38,6 +38,60 @@ def private_imports(text):
     return edit_nodes(text, edits)
 
 
+MAC084_LISTING = """    listing = _process_observation(["/bin/ps", "-ww", "-t", row['tty'], "-o", "pid=,uid=,tty=,comm="])
+    matches, shells = [], []
+    seen = set()
+    for line in listing.stdout.splitlines():
+        observation_budget.check()
+        fields = line.strip().split(None, 3)
+        if (len(fields) != 4 or re.fullmatch(r'[1-9][0-9]*', fields[0], re.ASCII) is None
+                or re.fullmatch(r'[0-9]+', fields[1], re.ASCII) is None
+                or fields[2] != row['tty']
+                or fields[0] in seen):
+            raise NativeDeliveryError("NATIVE_PROCESS_INVENTORY_INVALID")
+        seen.add(fields[0])
+        if int(fields[1]) != os.getuid():
+            continue
+"""
+MAC084_FILTER = """        if (name not in ("codex", "claude", "claude.exe", "node", *identity.OFFICIAL_CODEX_NAMES)
+                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):"""
+
+
+def _native_delivery_084(text):
+    """MAC 0.4.84 lists one TTY with uid/tty columns and reads ttys via _process_tty (R550 F2).
+
+    Same private kernel inventory and terminal reads as the older shapes: the
+    lane sandbox denies exec of setuid /bin/ps, so no ps call may remain.
+    """
+    text = replace_once(text, MAC084_LISTING, """    candidate = private_roots.candidate_process_matcher()
+    diagnostic_candidate = lambda value: candidate(value) or Path(value).name in ('sh', 'bash', 'zsh', 'fish')
+    matches, shells = [], []
+    seen = set()
+    # Kernel discovery is already scoped to this exact TTY and this UID.
+    for fields in private_process.inventory_for_tty(diagnostic_candidate, row['tty']):
+        observation_budget.check()
+        if fields[0] in seen:
+            raise NativeDeliveryError("NATIVE_PROCESS_INVENTORY_INVALID")
+        seen.add(fields[0])
+""")
+    text = replace_once(text, "        name = Path(fields[3]).name.lstrip('-')\n",
+                        "        name = Path(fields[1]).name.lstrip('-')\n")
+    text = replace_once(text, "tty = _process_tty(shell['pid'])", "tty = private_process.terminal(shell)")
+    if text.count("tty = _process_tty(p['pid'])") != 2:
+        raise ValueError("expected 0.4.84 native terminal reads changed")
+    text = text.replace("tty = _process_tty(p['pid'])", "tty = private_process.terminal(p)")
+    text = replace_once(text,
+        "def _process_tty(pid):\n"
+        "    with observation_budget.limit(PROCESS_OBSERVATION_SECONDS):\n"
+        "        return _process_observation(['/bin/ps', '-p', str(pid), '-o', 'tty=']).stdout.strip()\n",
+        "def _process_tty(pid):\n"
+        "    # Every caller reads its terminal from the kernel; never exec ps.\n"
+        "    raise NativeDeliveryError('NATIVE_PROCESS_TTY_PS_READ_REMOVED')\n")
+    if "/bin/ps" in text or text.count("_process_tty(") != 1:
+        raise ValueError("0.4.84 native delivery still reaches ps")
+    return text
+
+
 def native_readers(name, text):
     if name == "cmux_codex_rpc.py":
         return replace_once(text,
@@ -68,6 +122,9 @@ def native_readers(name, text):
         text = replace_once(text, "import cmux_foreground_thread as foreground",
                             "import cmux_foreground_thread as foreground\nimport upgrade_native_roots as private_roots\n"
                             "import upgrade_process_inventory as private_process")
+        mac084 = text.count(MAC084_LISTING) == 1
+        if mac084:
+            text = _native_delivery_084(text)
         inventory_prefix = (
             '    listing = subprocess.run(["/bin/ps", "-U", str(os.getuid()), "-o", "pid=,comm="],\n'
             '                             capture_output=True, text=True, timeout=3, check=True)\n'
@@ -93,16 +150,19 @@ def native_readers(name, text):
                 "    diagnostic_candidate = lambda value: candidate(value) or Path(value).name in ('sh', 'bash', 'zsh', 'fish')\n"
                 '    matches, shells = [], []\n'
                 '    for fields in private_process.inventory_for_tty(diagnostic_candidate, row["tty"]):')
-        text = replace_once(text,
-            inventory_prefix, inventory_replacement)
-        text = _terminal_reads(text, shell_diagnostics=shell_diagnostics)
+        if not mac084:
+            text = replace_once(text,
+                inventory_prefix, inventory_replacement)
+            text = _terminal_reads(text, shell_diagnostics=shell_diagnostics)
         provider = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_provider")
         text = edit_nodes(text, [(provider, "def _provider(p):\n    return private_roots.executable_provider(p)")])
         modern_filter = (
             '        name = Path(fields[1]).name\n'
             '        if (name not in ("codex", "claude", "claude.exe", "node")\n'
             '                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):')
-        if shell_diagnostics:
+        if mac084:
+            text = replace_once(text, MAC084_FILTER, '        if not candidate(fields[1]):')
+        elif shell_diagnostics:
             text = replace_once(text,
                 '        if (name not in ("codex", "claude", "claude.exe", "node")\n'
                 '                and _CLAUDE_NATIVE_VERSION.fullmatch(name) is None):',

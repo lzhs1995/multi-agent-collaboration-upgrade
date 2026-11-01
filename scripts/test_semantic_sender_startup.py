@@ -45,5 +45,31 @@ class SemanticSenderArtifactTests(unittest.TestCase):
         self.assertNotIn("S2 semantic input", self.policy(False, "CLAUDE.md"))
 
 
+MAC084 = Path("/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/"
+    "collaboration-maintenance-context-5994-20261011-v1/successor28-from6105-20261012-v1/"
+    "continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/"
+    "surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source")
+
+
+@unittest.skipUnless(MAC084.exists() and WRAPPERS.exists(), "pinned MAC .84 source or cmux wrappers missing")
+class Mac084MaterializeTests(unittest.TestCase):
+    """R550 F2/R551: the complete P5 .84 source materializes once with the S2 sender clause."""
+
+    def test_complete_084_source_materializes_without_ps_and_with_the_clause(self):
+        with tempfile.TemporaryDirectory(prefix="", dir="/tmp") as tmp:
+            root = Path(tmp).resolve()
+            binaries = {k: Path("/usr/bin/true") for k in ("codex", "claude", "cmux", "rtk", "node")}
+            binaries.update({p + "_wrapper": WRAPPERS / ("cmux-" + p + "-wrapper") for p in ("codex", "claude")})
+            context = init_experiment(root / "m", "semantic-084", MAC084)
+            runtime = json_ref(materialize_live(context, "B", binaries=binaries, provider_configuration=({}, {}),
+                                                semantic_sender=True))
+            delivery = Path(runtime["controller"]["path"]) / "scripts/cmux_native_delivery.py"
+            self.assertNotIn("/bin/ps", delivery.read_text())
+            self.assertIn("private_process.inventory_for_tty", delivery.read_text())
+            pins = json_ref(runtime["startup"])["pins"]
+            for name in ("AGENTS.md", "CLAUDE.md"):
+                self.assertIn(CLAUSE, read_ref(pins["work_" + name], "frozen work policy").decode())
+
+
 if __name__ == "__main__":
     unittest.main()
