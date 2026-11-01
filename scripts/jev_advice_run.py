@@ -177,6 +177,11 @@ def record_advice(co, node_id: str, *, registration=None, connection=None, crede
     require(node_id in co.nodes, "unknown frozen node")
     reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=node_id)
     on = reg["arm"] == "advisory-on"
+    if "semantic_input" in co.campaign:
+        from upgrade_benchmark import validate_registration
+        paired = validate_registration(co.campaign["registration"])
+        require(reg["arm"] == paired["groups"][co.campaign["session_group"]]["advisory"],
+                "DP1 advice arm differs from the original paired group")
     require(not on or (connection is not None and isinstance(credential, str) and bool(credential)),
             "an on registration needs an in-process send: a caller-held connection and credential; "
             "nothing is read from the environment")

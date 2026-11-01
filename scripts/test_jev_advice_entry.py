@@ -212,6 +212,35 @@ class SocketServeTests(unittest.TestCase):
         self.assertFalse((self.root / "w.sock").exists())
 
 
+class DP1PairedArmTests(unittest.TestCase):
+    """R548 P2: DP1 advice in an S2 campaign uses exactly its paired group's advisory arm."""
+
+    def setUp(self):
+        from types import SimpleNamespace
+        self.co = SimpleNamespace(root=Path("/nonexistent-dp1-fixture"), spec={"run_id": "warm-01"},
+                                  nodes={"inventory": {}},
+                                  campaign=dict(semantic_input={"offline_fixture": True},
+                                                registration={"offline_fixture": True}, session_group="fixture"))
+
+    def advise(self, group_arm, reg_arm):
+        from unittest.mock import patch
+        with patch("jev_registration.load", return_value=dict(arm=reg_arm)), \
+                patch("upgrade_benchmark.validate_registration",
+                      return_value={"groups": {"fixture": {"advisory": group_arm}}}), \
+                patch.object(run, "load_transport", side_effect=AssertionError("transport loaded")):
+            return run.record_advice(self.co, "inventory")
+
+    def test_other_arm_is_refused_before_any_transport(self):
+        for group_arm, reg_arm in (("advisory-off", "advisory-on"), ("advisory-on", "advisory-off")):
+            with self.subTest(group=group_arm), self.assertRaisesRegex(ContractError, "DP1 advice arm differs"):
+                self.advise(group_arm, reg_arm)
+
+    def test_matching_arm_passes_the_check(self):
+        # Past the arm check the fixture has no frozen plan; that later failure is expected.
+        with self.assertRaises(AttributeError):
+            self.advise("advisory-off", "advisory-off")
+
+
 class RegisteredConnectionTests(unittest.TestCase):
     def source(self, body):
         root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevconn-")))
