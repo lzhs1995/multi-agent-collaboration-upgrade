@@ -477,6 +477,14 @@ def observe_sample(observer, sample, info):
     if not campaign:
         row['reasons'] = ['CAMPAIGN_NOT_YET_PRESENT; absence is not proof of non-invocation']
         return row
+    try:
+        from upgrade_communication_plan import resolve_sample
+        sample = resolve_sample(campaign, sample)
+        row = default_row(sample, 'NO_ORIGINAL_INTENT_EVIDENCE')
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
+        row['attempt'] = 'UNKNOWN'
+        row['reasons'] = ['CLAIMED_PEER_UNRESOLVED: ' + type(exc).__name__ + ': ' + str(exc)[:240]]
+        return row
     sessions = campaign['sessions']
     sender, receiver = sessions[sample['sender']], sessions[sample['receiver']]
     identity = canonical_identity(dict(workspace_uuid=receiver['workspace_uuid'], caller_surface_uuid=sender['surface_uuid'],
@@ -645,7 +653,7 @@ def collect(candidate_path, *, observer=None):
     registration, registration_pin = json_ref(candidate['registration'])
     root = Path(candidate['root'])
     need(root.is_absolute() and root.resolve() == root, 'PRIVATE_ROOT_MUST_BE_CANONICAL')
-    need(plan['schema'] == 'upgrade-communication-plan-v1'
+    need(plan['schema'] in ('upgrade-communication-plan-v1', 'upgrade-communication-plan-v2')
          and plan['total_samples'] == 192 and len(plan['samples']) == 192
          and len({s['request_id'] for s in plan['samples']}) == 192, 'FIXED_192_DENOMINATOR_REQUIRED')
     from upgrade_communication_plan import registration_plan
@@ -682,6 +690,10 @@ def collect(candidate_path, *, observer=None):
             'No live process reauthentication, full-controller tree rehash, active/idle inference or efficiency calculation is performed.',
             'Snapshot reads are individually stable, not an atomic campaign snapshot. No journal locks, cursor writes, reconcile calls or input occur.',
         ], samples=rows)
+    if plan['schema'] == 'upgrade-communication-plan-v2':
+        result['by_advisory'] = {arm: dict(total=sum(r['advisory'] == arm for r in rows),
+            native_reception=dict(collections.Counter(r['native_reception'] for r in rows if r['advisory'] == arm)))
+            for arm in ('advisory-off', 'advisory-on')}
     return result
 
 
@@ -716,7 +728,9 @@ def main():
     path = out / 'observation.json'
     path.write_text(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + '\n')
     report = ('# Communication observation v2\n\n'
-        + 'All 192 planned samples are retained; A1=96, B=96. This is file-only observation, not business or transport acceptance.\n\n'
+        + ('All 192 planned samples are retained; advisory-off=96, advisory-on=96 (both runtime B). '
+           if 'by_advisory' in result else 'All 192 planned samples are retained; A1=96, B=96. ')
+        + 'This is file-only observation, not business or transport acceptance.\n\n'
         + '```json\n' + json.dumps(counts, indent=2) + '\n```\n\n'
         + '\n'.join('- ' + line for line in result['limitations']) + '\n')
     (out / 'README.md').write_text(report)

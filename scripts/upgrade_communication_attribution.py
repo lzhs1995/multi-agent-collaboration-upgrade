@@ -17,7 +17,7 @@ from orchestration_native import native_text
 from upgrade_body_read_evidence import calls_and_results, stamp, valid_command
 from upgrade_communication_observer import (Uncertain, canonical, canonical_identity, expected_intent,
     json_file, need, original_dispatch_binding, original_event, original_journal, raw_file, sha)
-from upgrade_communication_plan import WARM_RUNS, campaign_plan
+from upgrade_communication_plan import WARM_RUNS, campaign_plan, resolve_sample
 
 ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError,
           OverflowError, RecursionError, Uncertain)
@@ -130,6 +130,7 @@ def attribute_inputs(campaign, header, native_end, readers, *, not_after):
         state = state_root(campaign)
         for sample in samples:
             try:
+                sample = resolve_sample(campaign, sample)
                 items.append(_original(sample, campaign, state, readers, starts, ends, first, last))
             except ERRORS as exc:
                 result["unresolved"].append(dict(request_id=sample["request_id"], reason=type(exc).__name__))
