@@ -79,11 +79,13 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      provider_configuration=None, credential_files=None, native_policy=NATIVE_POLICY,
                      goal_startup=None, lane_instructions=None, response_observation=False,
                      continuity_registration=False, child_budget=False, startup_continuity=False,
-                     station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None):
+                     station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
+                     semantic_sender=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
@@ -324,6 +326,14 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                    "This first opt-in protocol supports non-fork foreground children only; no background launch or handback note. "
                    "The original parent must read the full pinned body and consume the exact SHA. "
                    "Missing service or uncertain proof means preserve the slot and continue original bounded work.\n")
+    if semantic_sender:
+        # R545 P1: S2 only. The commands carry the campaign pin, so they stay in
+        # the campaign's frozen sender-duties file; this clause only names it.
+        policy += ("\nS2 semantic input: only the original claude_a lane, after this run's original native START "
+                   "and before any task claim, reads semantic/sender-duties.json in the campaign named by that "
+                   "START binding, verifies it, and runs that run's listed commands once each in the listed order. "
+                   "Collect each original process, including exit 75. Never paste, resend, add Enter, reorder, "
+                   "or replace a missing send. Other lanes never run these commands.\n")
     for name in ("AGENTS.md", "CLAUDE.md"):
         pins["work_" + name] = immutable_bytes(work / name, policy.encode())
     # This is an explicit startup choice for the newly authorized, OS-sandboxed
