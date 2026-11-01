@@ -8,7 +8,7 @@ from pathlib import Path
 from orchestration_common import ContractError, file_ref, json_ref, parse_time, read_ref, require
 from orchestration_native import NativeReader
 from orchestration_permit import elapsed, steps
-from upgrade_benchmark import (CLASSES, REGISTRATION_V3, runtime_observation, validate_registration)
+from upgrade_benchmark import (CLASSES, JEV_REGISTRATION, REGISTRATION_V3, runtime_observation, validate_registration)
 
 CODEX_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")
 CLAUDE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
@@ -179,7 +179,7 @@ def observation_checks(registration, registration_ref, rows):
     from orchestration_permit import read_permit, schedule_path
     from upgrade_live_runtime import validate_live_runtime
     require(registration_ref is not None and validate_registration(registration_ref) == registration,
-            "v3 comparison requires the pinned original registration")
+            "current comparison requires the pinned original registration")
     groups, checks = {}, {}
     for row in rows:
         key = (row["group"], row["run_id"])
@@ -220,7 +220,8 @@ def compare(registration, rows, *, registration_ref=None):
     expected = {(s["group"], s["run_id"]) for s in steps(registration)}
     if not set(known) <= expected:
         raise ContractError("unregistered measurement")
-    modern = registration.get("schema") == REGISTRATION_V3
+    s2 = registration.get("schema") == JEV_REGISTRATION
+    modern = registration.get("schema") in (REGISTRATION_V3, JEV_REGISTRATION)
     checks = observation_checks(registration, registration_ref, rows) if modern else {}
     def verified(row):
         if not modern:
@@ -242,7 +243,11 @@ def compare(registration, rows, *, registration_ref=None):
     pairs = []
     for pair in registration["pairs"]:
         members = {a: indexed[(m["group"], m["run_id"])] for a, m in pair["members"].items()}
-        a, b = members["A1"], members["B"]
+        if s2:
+            require(set(members) == {"advisory-off", "advisory-on"}, "S2 comparison members changed")
+            a, b = members["advisory-off"], members["advisory-on"]
+        else:
+            a, b = members["A1"], members["B"]
         comparable = all(r["status"] == "PASS" and r["contract_pass"] is True and r["within_cap"] is True
                          and verified(r)
                          and finite_number(r["elapsed_seconds"], positive=True) for r in members.values())
@@ -258,6 +263,13 @@ def compare(registration, rows, *, registration_ref=None):
                           order=pair["order"], members=members, comparable=comparable,
                           intervention_contract_pass=intervention_ok,
                           improvement_percent=improvement, cost_increase_percent=cost_increase))
+        if s2:
+            # Known zero prices are observations, not missing bills. Retain the
+            # original v3 percentage convention and disclose a zero-base increase.
+            pairs[-1]["cost_observed"] = cost_verified and finite_number(ca) and finite_number(cb)
+            if pairs[-1]["cost_observed"] and ca == cb == 0:
+                pairs[-1]["cost_increase_percent"] = 0.0
+            pairs[-1]["zero_base_cost_increase"] = pairs[-1]["cost_observed"] and ca == 0 and cb > 0
     warm = [p for p in pairs if p["phase"] == "warm"]
     available = [p["improvement_percent"] for p in warm if p["comparable"]]
     medians = {kind: statistics.median([p["improvement_percent"] for p in warm if p["workload_class"] == kind])
@@ -268,7 +280,12 @@ def compare(registration, rows, *, registration_ref=None):
     regressions = [k for k, v in medians.items() if v is not None and v < -registration["contract"]["maximum_class_regression_percent"]]
     eligible = (all_verified and interventions_ok and all(p["comparable"] for p in pairs) and full_median is not None
                 and full_median >= registration["contract"]["minimum_improvement_percent"] and not regressions)
-    return dict(schema="upgrade-paired-report-v2" if modern else "upgrade-paired-report-v1",
+    if s2:
+        # Frozen S2 explicitly refuses an unknown total cost, even when its
+        # timing-only estimate is favorable. Native JEV joins remain separate.
+        eligible = eligible and all(p["cost_observed"] for p in pairs)
+    result = dict(schema="upgrade-jev-paired-report-v1" if s2 else
+                         "upgrade-paired-report-v2" if modern else "upgrade-paired-report-v1",
                 benchmark_id=registration["benchmark_id"],
                 qualification_scope=("observer_configuration_verified" if all_verified else "observer_configuration_unverified")
                     if modern else "legacy_unverified",
@@ -288,7 +305,8 @@ def compare(registration, rows, *, registration_ref=None):
                 available_pairs=len(available), exploratory_available_pair_median=statistics.median(available) if available else None,
                 classes_exceeding_regression_limit=regressions,
                 timing_criterion_met=eligible,
-                cost_status="UNKNOWN" if any(p["cost_increase_percent"] is None for p in pairs) else "MEASURED",
+                cost_status=("MEASURED" if all(p["cost_observed"] for p in pairs) else "UNKNOWN") if s2 else
+                            "UNKNOWN" if any(p["cost_increase_percent"] is None for p in pairs) else "MEASURED",
                 cost_increase_over_10_percent=[p["pair_id"] for p in pairs if p["cost_increase_percent"] is not None
                                               and p["cost_increase_percent"] > registration["contract"]["disclose_cost_increase_percent"]],
                 conclusion="TIMING_CRITERION_MET" if eligible else "CRITERION_NOT_MET" if all_verified else "INSUFFICIENT_EVIDENCE",
@@ -298,3 +316,11 @@ def compare(registration, rows, *, registration_ref=None):
                              "Missing, failed, timed-out and UNKNOWN slots remain in the registered denominator.",
                              "Native usage covers pinned accounting intervals; unobserved bills and incomplete boundaries remain unknown.",
                              "No production adoption is performed by this report."])
+    if s2:
+        result.update(comparison="JEV_ADVISORY_ON_OFF_ONLY", native_authenticated_by_this_report=False,
+                      jev_consumer_authentication="NOT_ESTABLISHED_BY_THIS_REPORT",
+                      zero_base_cost_increases=[p["pair_id"] for p in pairs if p["zero_base_cost_increase"]])
+        result["limitations"][1] = ("Both S2 arms remain runtime B/OMO and must have zero human interventions; "
+                                   "only the advisory switch varies.")
+        result["limitations"].append("Numeric qualification does not authenticate DP1/DP2 advice consumption or JEV request attribution.")
+    return result
