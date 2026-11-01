@@ -30,7 +30,7 @@ from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
 
-SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py",
+SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgrade_existing_workspace.py",
            "upgrade_native_roots.py", "upgrade_client_isolation.py", "upgrade_live_entry.py",
            "upgrade_live_integrity.py", "upgrade_client_probe.py", "upgrade_startup_contract.py",
            "upgrade_hook_observer.py", "upgrade_input_gate.py", "upgrade_live_inspect.py", "upgrade_bootstrap.py",

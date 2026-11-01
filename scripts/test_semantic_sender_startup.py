@@ -65,6 +65,8 @@ class Mac084MaterializeTests(unittest.TestCase):
                                                 semantic_sender=True))
             delivery = Path(runtime["controller"]["path"]) / "scripts/cmux_native_delivery.py"
             self.assertNotIn("/bin/ps", delivery.read_text())
+            # R586: the existing-workspace held launch imports this module inside the private controller.
+            self.assertTrue((Path(runtime["controller"]["path"]) / "scripts/mac_upgrade_existing_workspace.py").is_file())
             self.assertIn("private_process.inventory_for_tty", delivery.read_text())
             pins = json_ref(runtime["startup"])["pins"]
             for name in ("AGENTS.md", "CLAUDE.md"):
