@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from orchestration_common import ContractError, file_ref, write_json
+from orchestration_common import ContractError, file_ref, utc_now, write_json
 from upgrade_client_isolation import LANES
 import upgrade_live_control as control_mod
 
@@ -27,7 +27,7 @@ class BatchHoldTests(unittest.TestCase):
                             controller=dict(path=str(base / "controller")), python=dict(path="/pinned/python"))
         self.ref = write_json(base / "runtime.json", self.runtime)
         self.receipt = write_json(base / "receipt.json", {"synthetic": True})
-        self.held, self.active, self.calls = True, dict(group="pilot-B", ordinal=1), []
+        self.held, self.active, self.calls, self.schedule = True, dict(group="pilot-B", ordinal=1), [], {}
         for name, effect in (("validate_live_runtime", lambda ref: (None, self.runtime)),
                              ("held_launch", lambda runtime: self.held),
                              ("external_publisher", lambda spec: None)):
@@ -56,8 +56,9 @@ class BatchHoldTests(unittest.TestCase):
             write_json(self.base / "state/startup/release.json", {"synthetic": True})
             return type("R", (), dict(returncode=0, stdout="{}", stderr=""))()
         permit = dict(runtime=self.ref, step=dict(group="pilot-B", ordinal=1))
-        with patch("upgrade_schedule.status", return_value=dict(active=self.active)), \
+        with patch("upgrade_schedule.status", return_value=dict(self.schedule, active=self.active)), \
                 patch("orchestration_permit.read_permit", return_value=(None, permit)), \
+                patch("orchestration_permit.validate_registration", return_value=dict(root=str(self.base))), \
                 patch("cmux_daemon_identity.process", return_value=dict(birth=list(live_birth))), \
                 patch.object(control_mod.subprocess, "run", side_effect=run):
             return control_mod.release_held(self.ref, {"registration": True}, group,
@@ -113,6 +114,32 @@ class BatchHoldTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "PRE_EXEC_HOLD_NOT_BOUND"):
             self.release()
         self.assertEqual(self.calls, [])
+
+    def test_release_refuses_a_halted_schedule_that_retains_the_active_permit(self):
+        # Held records, receipt, group and permit stay valid; only the schedule halt differs.
+        cases = dict(status_reports_halt=(dict(status="HALTED", halt={"synthetic": True}), False,
+                                          "RELEASE_REFUSED_SCHEDULE_HALTED"),
+                     halt_file_behind_active_status=(dict(status="ACTIVE", halt=None), True, "schedule halted"))
+        for case, (schedule, on_disk, error) in cases.items():
+            with self.subTest(case=case):
+                self.setUp()
+                self.held_spawn()
+                self.schedule = schedule
+                if on_disk:
+                    (self.base / "schedule/permits").mkdir(parents=True)
+                    permit = write_json(self.base / "schedule/permits/0001.json", dict(step=self.active, runtime=self.ref))
+                    write_json(self.base / "schedule/halt.json", dict(schema="upgrade-schedule-halt-v1",
+                        registration={"registration": True}, requested_at=utc_now(), classification="TIMEOUT",
+                        reason="held release watchdog expired", active_permit=permit, evidence=[]))
+                with self.assertRaisesRegex(ContractError, error):
+                    self.release()
+                self.assertFalse((self.base / "live-control/launch-request.json").exists())
+                self.assertEqual(self.calls, [])
+        self.setUp()
+        self.held_spawn()
+        self.schedule = dict(status="ACTIVE", halt=None)
+        self.assertEqual(self.release()["status"], "RELEASED")
+        self.assertEqual(len(self.calls), 1)
 
     def test_held_observe_requires_the_owner_release_record(self):
         self.held_spawn()

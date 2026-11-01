@@ -276,7 +276,7 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
     """
     import cmux_daemon_identity as identity
     import upgrade_schedule as schedule
-    from orchestration_permit import read_permit
+    from orchestration_permit import read_permit, require_running
     from upgrade_client_isolation import LANES
     _, runtime = validate_live_runtime(runtime_ref)
     spec = json_ref(runtime["startup"])
@@ -287,7 +287,10 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
             "BATCH_HELD_LAUNCH_REQUIRED")
     for path in (control_dir / "launch-request.json", startup_dir / "release.json", Path(spec["adoption_path"])):
         require(not os.path.lexists(path), "HELD_GROUP_ALREADY_RELEASED: " + path.name)
-    active = schedule.status(registration_ref).get("active")
+    state = schedule.status(registration_ref)
+    # A halt keeps the active permit for closeout only; it is never release authority.
+    require(state.get("status") != "HALTED" and state.get("halt") is None, "RELEASE_REFUSED_SCHEDULE_HALTED")
+    active = state.get("active")
     require(active is not None and active.get("group") == group, "RELEASE_REQUIRES_THIS_GROUP_ACTIVE_PERMIT")
     _, permit = read_permit(registration_ref, active["ordinal"], active=True)
     require(permit["runtime"] == runtime_ref, "ACTIVE_PERMIT_RUNTIME_DIFFERS")
@@ -305,6 +308,7 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
         held[lane] = dict(pid=launched["pid"], birth=launched["birth"], surface_uuid=value["surface_uuid"])
     receipt = file_ref(checked_path(receipt_path))
     require(receipt["sha256"] == receipt_sha256, "EXCLUSION_RECEIPT_PIN_CHANGED")
+    require_running(registration_ref)
     external_publisher(spec)
     request = write_json(control_dir / "launch-request.json", dict(runtime=runtime_ref,
         requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), startup=runtime["startup"],
