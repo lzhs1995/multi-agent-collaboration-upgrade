@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import upgrade_jev_benchmark as jb
 from orchestration_common import ContractError, file_ref, object_sha, tree_manifest
+import test_s2_offline_plan_fixture as offline_plan
 from test_upgrade_jev_benchmark import PLAN, factors
 
 
@@ -34,7 +35,9 @@ class SemanticRegistrationTests(unittest.TestCase):
         self.path.write_text(json.dumps(self.bundle, ensure_ascii=False))
         self.ref = file_ref(self.path)
         self.root = self.base / "registration"
-        _, self.pairs = jb.layout(self.root, file_ref(PLAN), compact=False)
+        # Frozen plan when present, else the OFFLINE synthetic fixture, so these controls run on CI too.
+        self.plan = offline_plan.plan_ref(self.base, prefer=PLAN)
+        _, self.pairs = jb.layout(self.root, self.plan, compact=False)
 
     def factor(self):
         return object_sha(dict(schema="s2-semantic-input-factor-v1",
@@ -52,7 +55,7 @@ class SemanticRegistrationTests(unittest.TestCase):
             for kind in ("uneven_successor", "fan_in", "write_conflict")},
             compact=False, semantic_input=self.ref)
         kwargs.update(change)
-        return jb.register(self.root, "s2-semantic-offline-control", PLAN, **kwargs)
+        return jb.register(self.root, "s2-semantic-offline-control", self.plan["path"], **kwargs)
 
     def test_new_input_registration_is_supported_and_derived(self):
         ref = self.register()
