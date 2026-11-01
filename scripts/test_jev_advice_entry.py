@@ -79,15 +79,31 @@ class WorkerHandleTests(unittest.TestCase):
         return dict(op=op, run="pilot-01", node="inventory", registration=self.reg["path"],
                     registration_sha256=self.reg["sha256"], **extra)
 
-    def run_handle(self, requests, results):
-        from unittest.mock import patch
-        state, replies = {}, []
-        fake = lambda kind: (lambda co, node, *a, **k: self.calls.append((kind, k["connection"], k["credential"]))
-                             or results.pop(0))
-        with patch.object(run, "record_advice", fake("advice")), patch.object(run, "record_inbox_order", fake("inbox")):
+    def run_handle(self, requests, results, state=None):
+        state, replies = {} if state is None else state, []
+        with self.patched(results):
             for request in requests:
-                replies.append(run.handle(lambda r: "co:" + r, request, connection="conn-1", credential="key-1", state=state))
+                replies.append(run.handle(lambda r: "co:" + r, request, connection="conn-1", credential="key-1",
+                                          state=state))
         return replies
+
+    def patched(self, results):
+        """Fake record functions: return the next result, or raise it as the real ones raise STOP."""
+        from contextlib import ExitStack
+        from unittest.mock import patch
+
+        def fake(kind):
+            def record(co, node, *a, **k):
+                self.calls.append((kind, k["connection"], k["credential"]))
+                result = results.pop(0)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            return record
+        stack = ExitStack()
+        stack.enter_context(patch.object(run, "record_advice", fake("advice")))
+        stack.enter_context(patch.object(run, "record_inbox_order", fake("inbox")))
+        return stack
 
     def test_dp1_and_dp2_reuse_the_same_connection_and_credential(self):
         replies = self.run_handle([self.request("advice"), self.request("inbox", event="e1")],
@@ -95,11 +111,31 @@ class WorkerHandleTests(unittest.TestCase):
         self.assertEqual([r["status"] for r in replies], ["RECORDED", "RECORDED"])
         self.assertEqual(self.calls, [("advice", "conn-1", "key-1"), ("inbox", "conn-1", "key-1")])
 
-    def test_auth_refusal_latches_stop_without_another_call(self):
-        replies = self.run_handle([self.request("advice"), self.request("inbox", event="e1")],
-                                  [dict(status="RECORDED", error="AUTH_REFUSED", stopped=True)])
-        self.assertEqual(replies[1]["status"], "STOPPED")
+    def test_raised_ledger_stop_latches_without_another_call(self):
+        state = {}
+        with self.assertRaisesRegex(ContractError, run.STOP_REASON):
+            self.run_handle([self.request("advice")], [ContractError(run.STOP_REASON)], state=state)
+        replies = self.run_handle([self.request("inbox", event="e1")], [], state=state)
+        self.assertEqual((replies[0]["status"], replies[0]["model_requests"]), ("STOPPED", 0))
         self.assertEqual(len(self.calls), 1)
+
+    def test_other_refusals_do_not_latch(self):
+        state = {}
+        with self.assertRaises(ContractError):
+            self.run_handle([self.request("advice")], [ContractError("DECISION_ALREADY_RECORDED")], state=state)
+        self.assertEqual(self.run_handle([self.request("advice")], [dict(status="RECORDED")], state=state),
+                         [dict(status="RECORDED")])
+
+    def test_other_campaign_run_or_transport_is_refused_before_any_call(self):
+        from unittest.mock import patch
+        for key, value in (("campaign_sha256", "f" * 64), ("run", "pilot-02")):
+            with self.subTest(key=key), self.assertRaisesRegex(ContractError, "another campaign or run"):
+                self.run_handle([self.request("advice", campaign_sha256="a" * 64) | {key: value}],
+                                [], state=dict(campaign_sha256="a" * 64, run="pilot-01"))
+        with patch("jev_registration.load", return_value=dict(transport_source=dict(sha256="b" * 64))), \
+                self.assertRaisesRegex(ContractError, "another transport"):
+            self.run_handle([self.request("advice")], [], state=dict(transport_source=dict(sha256="c" * 64)))
+        self.assertEqual(self.calls, [])
 
     def test_registration_hash_mismatch_or_unknown_op_is_refused_before_any_call(self):
         bad = dict(self.request("advice"), registration_sha256="0" * 64)
@@ -107,6 +143,73 @@ class WorkerHandleTests(unittest.TestCase):
             with self.subTest(op=request["op"]), self.assertRaises(ContractError):
                 self.run_handle([request], [])
         self.assertEqual(self.calls, [])
+
+
+class SocketServeTests(unittest.TestCase):
+    """R548 P2: the run's worker on a private AF_UNIX socket; requests carry no key."""
+
+    def setUp(self):
+        self.root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jw-", dir="/tmp")))
+        self.addCleanup(lambda: [p.unlink() for p in self.root.iterdir()] and None or self.root.rmdir())
+        reg = self.root / "reg.json"
+        reg.write_text("{}")
+        self.reg = file_ref(reg)
+
+    def request(self, op="advice", **extra):
+        return dict(op=op, campaign_sha256="a" * 64, run="pilot-01", node="inventory",
+                    registration=self.reg["path"], registration_sha256=self.reg["sha256"], **extra)
+
+    def test_roundtrip_stop_latch_releases_the_connection_and_close_ends_the_worker(self):
+        import gc
+        import threading
+        import weakref
+        from unittest.mock import patch
+
+        class Connection:
+            pass
+        seen, results, refs, served = [], [dict(status="RECORDED"), ContractError(run.STOP_REASON)], [], []
+
+        def record(co, node, *a, **k):
+            seen.append((co, k["credential"]))
+            result = results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        def make():
+            connection = Connection()
+            refs.append(weakref.ref(connection))
+            return connection
+        path = self.root / "w.sock"
+        listener = run.bind_private_socket(path)
+        self.addCleanup(listener.close)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        worker = threading.Thread(target=lambda: served.append(run.serve(
+            listener, lambda r: "co:" + r, connection=make(), credential="key-1",
+            bound=dict(campaign_sha256="a" * 64, run="pilot-01"))))
+        with patch.object(run, "record_advice", record), patch.object(run, "record_inbox_order", record):
+            worker.start()
+            replies = [run.ask(path, self.request()), run.ask(path, self.request("inbox", event="e1")),
+                       run.ask(path, self.request("inbox", event="e2"))]
+            gc.collect()
+            released = refs[0]() is None
+            replies.append(run.ask(path, dict(op="close")))
+            worker.join(10)
+        self.assertEqual([r["status"] for r in replies], ["RECORDED", "REJECTED", "STOPPED", "CLOSED"])
+        self.assertEqual(replies[1]["error"], run.STOP_REASON)
+        self.assertEqual(seen, [("co:pilot-01", "key-1")] * 2)
+        self.assertTrue(released)
+        self.assertEqual(served, [4])
+
+    def test_bind_refuses_an_existing_path_or_a_shared_directory(self):
+        (self.root / "taken").write_text("")
+        with self.assertRaisesRegex(ContractError, "already exists"):
+            run.bind_private_socket(self.root / "taken")
+        os.chmod(self.root, 0o755)
+        self.addCleanup(os.chmod, self.root, 0o700)
+        with self.assertRaisesRegex(ContractError, "private directory"):
+            run.bind_private_socket(self.root / "w.sock")
+        self.assertFalse((self.root / "w.sock").exists())
 
 
 class RegisteredConnectionTests(unittest.TestCase):

@@ -22,6 +22,7 @@ from orchestration_common import ContractError, write_json
 
 JOURNAL_SCHEMA = "jev-advice-worker-journal-v1"
 LEDGER_DIRECTORY = "jev-request-ledger"
+STOP_REASON = "STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER"
 
 
 def _positive_budget(budget) -> bool:
@@ -309,50 +310,113 @@ def handle(co_for, request: dict, *, connection, credential, state: dict) -> dic
     """One on-arm request against the run's single held connection and credential (R545/R548 P2).
 
     ``co_for(run_id)`` returns the run's coordinator. Each request names a
-    separately pinned per-node registration. After a stopped or refused
-    result the worker answers every later request with STOPPED.
+    separately pinned per-node registration; when the worker holds a
+    transport, that registration must name the same pinned transport source.
+    The record functions raise the ledger's STOP on a 401/403; that latches,
+    and every later request is answered STOPPED with no call.
     """
     from orchestration_common import file_ref
     if state.get("stopped"):
         return dict(status="STOPPED", reason=state["stopped"], model_requests=0)
     require(isinstance(request, dict) and request.get("op") in ("advice", "inbox"), "unknown worker request")
+    for key in ("campaign_sha256", "run"):
+        require(state.get(key) is None or request.get(key) == state[key], "this worker serves another campaign or run")
     registration = file_ref(request["registration"])
     require(registration["sha256"] == request["registration_sha256"], "registration hash mismatch")
+    if state.get("transport_source") is not None:
+        import jev_registration
+        reg = jev_registration.load(registration, run_id=request["run"], node_id=request["node"])
+        require(reg["transport_source"] == state["transport_source"],
+                "this registration names another transport than the one this worker holds")
     co = co_for(request["run"])
-    if request["op"] == "advice":
-        result = record_advice(co, request["node"], registration=registration,
-                               connection=connection, credential=credential)
-    else:
-        result = record_inbox_order(co, request["node"], request["event"], None, registration=registration,
-                                    connection=connection, credential=credential)
-    if result.get("stopped") or result.get("error") == "AUTH_REFUSED":
-        state["stopped"] = result.get("error") or "STOPPED"
-    return result
+    try:
+        if request["op"] == "advice":
+            return record_advice(co, request["node"], registration=registration,
+                                 connection=connection, credential=credential)
+        return record_inbox_order(co, request["node"], request["event"], None, registration=registration,
+                                  connection=connection, credential=credential)
+    except ContractError as exc:
+        if str(exc) == STOP_REASON:
+            state["stopped"] = STOP_REASON
+        raise
 
 
-def serve(listener, co_for, *, connection, credential, max_requests=None) -> int:
-    """Answer one JSON request per accepted socket connection until EOF/stop."""
+def serve(listener, co_for, *, connection, credential, bound=None, max_requests=None) -> int:
+    """Answer one JSON request per accepted socket connection until ``close``.
+
+    ``bound`` pins the served campaign hash, run and transport source. The
+    connection and credential references are dropped as soon as a STOP
+    latches; later requests are answered STOPPED without them.
+    """
     import json
-    state, served = {}, 0
+    state, served = dict(bound or {}), 0
+    held = dict(connection=connection, credential=credential)
+    del connection, credential
     while max_requests is None or served < max_requests:
         peer, _ = listener.accept()
+        closing = False
         with peer, peer.makefile("rwb") as stream:
             try:
-                reply = handle(co_for, json.loads(stream.readline()), connection=connection,
-                               credential=credential, state=state)
+                request = json.loads(stream.readline())
+                closing = isinstance(request, dict) and request.get("op") == "close"
+                reply = dict(status="CLOSED", served=served) if closing else handle(co_for, request, state=state, **held)
             except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
                 reply = dict(status="REJECTED", error=str(exc), input_retry_authorized=False)
+            if state.get("stopped"):
+                held.update(connection=None, credential=None)
             stream.write(json.dumps(reply, ensure_ascii=False, sort_keys=True, allow_nan=False).encode() + b"\n")
         served += 1
+        if closing:
+            break
     return served
+
+
+def bind_private_socket(path):
+    """A fresh AF_UNIX listener in a directory only this user can enter."""
+    import os
+    import socket
+    import stat
+    path = Path(path)
+    require(path.is_absolute() and len(os.fsencode(str(path))) <= 103, "the socket path must be absolute and short")
+    require(not (path.exists() or path.is_symlink()), "the socket path already exists; observe only")
+    parent = os.lstat(path.parent)
+    require(stat.S_ISDIR(parent.st_mode) and parent.st_uid == os.getuid() and not parent.st_mode & 0o077,
+            "the socket directory must be a private directory of this user")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old = os.umask(0o177)
+    try:
+        listener.bind(str(path))
+    except OSError:
+        listener.close()
+        raise
+    finally:
+        os.umask(old)
+    listener.listen(1)
+    return listener
+
+
+def ask(path, request: dict) -> dict:
+    """Send one request line to the run's worker and return its reply line."""
+    import json
+    import socket
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(path))
+        with client.makefile("rwb") as stream:
+            stream.write(json.dumps(request, ensure_ascii=False, sort_keys=True, allow_nan=False).encode() + b"\n")
+            stream.flush()
+            line = stream.readline()
+    require(line.endswith(b"\n"), "the worker closed without a complete reply")
+    return json.loads(line)
 
 
 def main(argv=None):
     """``record-advice`` for a real frozen campaign: off arm, or a pinned registration.
 
     Same campaign anchoring, Runner and frozen-adapter self-check as
-    ``orchestration_run``. No key, connection or credential is ever read here,
-    so only the off arm can run from this CLI.
+    ``orchestration_run``. The off arm reads no key. An on arm reads its key
+    once from ``--credential-fd``: directly for one call, or with
+    ``--serve-socket`` as the run's one worker, which the supervisor's
+    ``--worker-socket`` calls then reach without any key.
     """
     import argparse
     import json
@@ -367,8 +431,20 @@ def main(argv=None):
     parser.add_argument("--credential-fd", type=int,
                         help="on arm only: inherited pipe/FIFO fd holding the key (never argv/env/file)")
     parser.add_argument("--inbox-event", help="record the registered DP2 inbox order for this event id")
+    parser.add_argument("--serve-socket", help="on arm: hold the key and connection as this run's worker here")
+    parser.add_argument("--worker-socket", help="send this DP1/DP2 request to the run's worker; no key here")
     args = parser.parse_args(argv)
     try:
+        require(not (args.serve_socket and args.worker_socket), "serve or ask, not both")
+        if args.worker_socket is not None:
+            require(args.registration is not None and args.credential_fd is None,
+                    "a worker request names its pinned registration and carries no key")
+            request = dict(op="inbox" if args.inbox_event is not None else "advice", campaign_sha256=args.campaign_sha256,
+                           run=args.run, node=args.node, registration=args.registration,
+                           registration_sha256=args.registration_sha256, event=args.inbox_event)
+            reply = ask(args.worker_socket, request)
+            print(json.dumps(reply, ensure_ascii=False, sort_keys=True, allow_nan=False))
+            return 2 if reply.get("status") in ("REJECTED", "STOPPED") else 0
         require((args.registration is None) == (args.registration_sha256 is None),
                 "a registration needs its separately supplied SHA256")
         registration = None
@@ -380,6 +456,25 @@ def main(argv=None):
         require(Path(__file__).resolve() == Path(runner.campaign["adapter"]["path"]) / "scripts/jev_advice_run.py",
                 "invoke the complete frozen adapter, not the mutable checkout")
         co = runner.co(args.run)
+        if args.serve_socket is not None:
+            import jev_registration
+            require(registration is not None and args.credential_fd is not None,
+                    "the run's worker needs its pinned on registration and an inherited key fd")
+            reg = jev_registration.load(registration, run_id=co.spec["run_id"], node_id=args.node)
+            require(reg["arm"] == "advisory-on", "the off arm reads no credential and opens no transport")
+            # Bind first: a refused path leaves the key unread in its pipe.
+            listener = bind_private_socket(args.serve_socket)
+            try:
+                # Keyword arguments evaluate in order: pinned bytes are checked before the key is read.
+                served = serve(listener, lambda run_id: co, connection=registered_connection(reg["transport_source"]),
+                               credential=read_credential(args.credential_fd),
+                               bound=dict(campaign_sha256=args.campaign_sha256, run=co.spec["run_id"],
+                                          transport_source=reg["transport_source"]))
+            finally:
+                listener.close()
+                Path(args.serve_socket).unlink(missing_ok=True)
+            print(json.dumps(dict(status="CLOSED", served=served), sort_keys=True))
+            return 0
         connection = credential = None
         if args.credential_fd is not None:
             import jev_registration
