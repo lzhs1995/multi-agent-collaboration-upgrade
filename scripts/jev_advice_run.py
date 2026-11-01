@@ -305,6 +305,48 @@ def record_inbox_order(co, node_id: str, event_id: str, messages: list | None, *
     return value
 
 
+def handle(co_for, request: dict, *, connection, credential, state: dict) -> dict:
+    """One on-arm request against the run's single held connection and credential (R545/R548 P2).
+
+    ``co_for(run_id)`` returns the run's coordinator. Each request names a
+    separately pinned per-node registration. After a stopped or refused
+    result the worker answers every later request with STOPPED.
+    """
+    from orchestration_common import file_ref
+    if state.get("stopped"):
+        return dict(status="STOPPED", reason=state["stopped"], model_requests=0)
+    require(isinstance(request, dict) and request.get("op") in ("advice", "inbox"), "unknown worker request")
+    registration = file_ref(request["registration"])
+    require(registration["sha256"] == request["registration_sha256"], "registration hash mismatch")
+    co = co_for(request["run"])
+    if request["op"] == "advice":
+        result = record_advice(co, request["node"], registration=registration,
+                               connection=connection, credential=credential)
+    else:
+        result = record_inbox_order(co, request["node"], request["event"], None, registration=registration,
+                                    connection=connection, credential=credential)
+    if result.get("stopped") or result.get("error") == "AUTH_REFUSED":
+        state["stopped"] = result.get("error") or "STOPPED"
+    return result
+
+
+def serve(listener, co_for, *, connection, credential, max_requests=None) -> int:
+    """Answer one JSON request per accepted socket connection until EOF/stop."""
+    import json
+    state, served = {}, 0
+    while max_requests is None or served < max_requests:
+        peer, _ = listener.accept()
+        with peer, peer.makefile("rwb") as stream:
+            try:
+                reply = handle(co_for, json.loads(stream.readline()), connection=connection,
+                               credential=credential, state=state)
+            except (ContractError, OSError, ValueError, KeyError, TypeError) as exc:
+                reply = dict(status="REJECTED", error=str(exc), input_retry_authorized=False)
+            stream.write(json.dumps(reply, ensure_ascii=False, sort_keys=True, allow_nan=False).encode() + b"\n")
+        served += 1
+    return served
+
+
 def main(argv=None):
     """``record-advice`` for a real frozen campaign: off arm, or a pinned registration.
 

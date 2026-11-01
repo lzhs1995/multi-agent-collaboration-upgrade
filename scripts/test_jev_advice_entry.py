@@ -64,6 +64,51 @@ class SemanticSenderStartupTests(unittest.TestCase):
                 materialize_live({}, "B", binaries={}, semantic_sender=value)
 
 
+class WorkerHandleTests(unittest.TestCase):
+    """R548 P2: one held connection/credential serves DP1 and DP2; a stop latches."""
+
+    def setUp(self):
+        root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevwork-")))
+        self.addCleanup(lambda: [p.unlink() for p in root.iterdir()] and None or root.rmdir())
+        reg = root / "reg.json"
+        reg.write_text("{}")
+        self.reg = file_ref(reg)
+        self.calls = []
+
+    def request(self, op, **extra):
+        return dict(op=op, run="pilot-01", node="inventory", registration=self.reg["path"],
+                    registration_sha256=self.reg["sha256"], **extra)
+
+    def run_handle(self, requests, results):
+        from unittest.mock import patch
+        state, replies = {}, []
+        fake = lambda kind: (lambda co, node, *a, **k: self.calls.append((kind, k["connection"], k["credential"]))
+                             or results.pop(0))
+        with patch.object(run, "record_advice", fake("advice")), patch.object(run, "record_inbox_order", fake("inbox")):
+            for request in requests:
+                replies.append(run.handle(lambda r: "co:" + r, request, connection="conn-1", credential="key-1", state=state))
+        return replies
+
+    def test_dp1_and_dp2_reuse_the_same_connection_and_credential(self):
+        replies = self.run_handle([self.request("advice"), self.request("inbox", event="e1")],
+                                  [dict(status="RECORDED"), dict(status="RECORDED")])
+        self.assertEqual([r["status"] for r in replies], ["RECORDED", "RECORDED"])
+        self.assertEqual(self.calls, [("advice", "conn-1", "key-1"), ("inbox", "conn-1", "key-1")])
+
+    def test_auth_refusal_latches_stop_without_another_call(self):
+        replies = self.run_handle([self.request("advice"), self.request("inbox", event="e1")],
+                                  [dict(status="RECORDED", error="AUTH_REFUSED", stopped=True)])
+        self.assertEqual(replies[1]["status"], "STOPPED")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_registration_hash_mismatch_or_unknown_op_is_refused_before_any_call(self):
+        bad = dict(self.request("advice"), registration_sha256="0" * 64)
+        for request in (bad, self.request("other")):
+            with self.subTest(op=request["op"]), self.assertRaises(ContractError):
+                self.run_handle([request], [])
+        self.assertEqual(self.calls, [])
+
+
 class RegisteredConnectionTests(unittest.TestCase):
     def source(self, body):
         root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevconn-")))
