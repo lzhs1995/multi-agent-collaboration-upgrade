@@ -23,6 +23,7 @@ SCOPE = "NEW_S2_ONLY_NEVER_REWRITE_OR_RELABEL_ORIGINAL_V3"
 BOUNDARY = "after_native_run_start_before_business"
 CLASSES = ("uneven_successor", "fan_in", "write_conflict")
 BODY_PATH = "semantic/INPUT.json"
+SENDER_DUTIES_PATH = "semantic/sender-duties.json"
 ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}\Z")
 
 

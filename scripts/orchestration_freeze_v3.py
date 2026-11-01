@@ -206,7 +206,12 @@ def freeze_campaign(request_ref):
         # A fresh external native inventory is verified again by every real run.
         capture_adopted_sessions(request["runtime"], request["adoption"])
         ref = write_json(root / "campaign.json", campaign, exclusive=True)
-        validate_campaign(ref)
+        validated = validate_campaign(ref)
+        if "semantic_input" in registration:
+            # R545 P1: the pinned send commands need this campaign's own pin, so
+            # they are frozen beside it, never into earlier startup instructions.
+            from upgrade_semantic_inputs import SENDER_DUTIES_PATH, sender_duties
+            write_json(root / SENDER_DUTIES_PATH, sender_duties(validated), exclusive=True)
         write_json(root / "freeze-complete.json", dict(campaign=ref, completed_at=utc_now(),
             input_operations=0, business_executions=0, classification="FROZEN_NOT_MEASURED"), exclusive=True)
         return dict(status="FROZEN_NOT_MEASURED", campaign=ref, input_operations=0)
