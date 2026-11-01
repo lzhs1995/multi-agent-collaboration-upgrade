@@ -65,7 +65,7 @@ def render(original, *, expected_sha256, python, adapter):
     route = (
         "\n# Sending has exactly one route; never fall back to raw cmux or screen guesses.\n"
         'case "${1:-}" in\n'
-        "  ask|send|broadcast|reconcile)\n"
+        "  self|ask|send|broadcast|reconcile)\n"
         # 保留虚拟环境入口；resolve() 会越过符号链接，丢失该环境的依赖。
         "    exec " + shlex.quote(str(Path(python))) + " -I -B "
         + shlex.quote(str(Path(adapter).resolve())) + ' "$@"\n'
