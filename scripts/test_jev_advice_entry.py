@@ -167,32 +167,39 @@ class SocketServeTests(unittest.TestCase):
 
         class Connection:
             pass
+
+        class Credential:
+            """Weakref-capable stand-in; the observer keeps its text, never the object."""
+            def __init__(self, value):
+                self.value = value
         seen, results, refs, served = [], [dict(status="RECORDED"), ContractError(run.STOP_REASON)], [], []
 
         def record(co, node, *a, **k):
-            seen.append((co, k["credential"]))
+            seen.append((co, k["credential"].value))
             result = results.pop(0)
             if isinstance(result, Exception):
                 raise result
             return result
 
-        def make():
-            connection = Connection()
-            refs.append(weakref.ref(connection))
-            return connection
+        def owner():
+            """The worker's only owner of both objects, exactly as the production main builds it."""
+            held = {"connection": Connection(), "credential": Credential("key-1")}
+            refs.extend(weakref.ref(held[k]) for k in ("connection", "credential"))
+            return held
         path = self.root / "w.sock"
         listener = run.bind_private_socket(path)
         self.addCleanup(listener.close)
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         worker = threading.Thread(target=lambda: served.append(run.serve(
-            listener, lambda r: "co:" + r, connection=make(), credential="key-1",
+            listener, lambda r: "co:" + r, held=owner(),
             bound=dict(campaign_sha256="a" * 64, run="pilot-01"))))
         with patch.object(run, "record_advice", record), patch.object(run, "record_inbox_order", record):
             worker.start()
             replies = [run.ask(path, self.request()), run.ask(path, self.request("inbox", event="e1")),
                        run.ask(path, self.request("inbox", event="e2"))]
             gc.collect()
-            released = refs[0]() is None
+            # Both the connection and the credential must be gone after STOP and before close.
+            released = len(refs) == 2 and all(ref() is None for ref in refs)
             replies.append(run.ask(path, dict(op="close")))
             worker.join(10)
         self.assertEqual([r["status"] for r in replies], ["RECORDED", "REJECTED", "STOPPED", "CLOSED"])

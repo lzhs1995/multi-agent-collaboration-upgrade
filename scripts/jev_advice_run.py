@@ -389,17 +389,21 @@ def handle(co_for, request: dict, *, connection, credential, state: dict) -> dic
         raise
 
 
-def serve(listener, co_for, *, connection, credential, bound=None, max_requests=None) -> int:
+def serve(listener, co_for, *, held, bound=None, max_requests=None) -> int:
     """Answer one JSON request per accepted socket connection until ``close``.
 
-    ``bound`` pins the served campaign hash, run and transport source. The
-    connection and credential references are dropped as soon as a STOP
-    latches; later requests are answered STOPPED without them.
+    ``bound`` pins the served campaign hash, run and transport source.
+    ``held`` is the caller's only owner of the connection and credential, a
+    mutable dict with exactly those two keys; serve empties both values in place
+    as soon as a STOP latches, so no caller frame keeps them alive until return.
+    Passing them as keyword temporaries kept both alive on CPython 3.10, which
+    clears a call's argument stack only after the callee returns. Later
+    requests are answered STOPPED without them.
     """
     import json
+    require(isinstance(held, dict) and set(held) == {"connection", "credential"},
+            "serve takes one mutable owner of the connection and credential")
     state, served = dict(bound or {}), 0
-    held = dict(connection=connection, credential=credential)
-    del connection, credential
     while max_requests is None or served < max_requests:
         peer, _ = listener.accept()
         closing = False
@@ -528,9 +532,11 @@ def main(argv=None):
             # Bind first: a refused path leaves the key unread in its pipe.
             listener = bind_private_socket(args.serve_socket)
             try:
-                # Keyword arguments evaluate in order: pinned bytes are checked before the key is read.
-                served = serve(listener, lambda run_id: co, connection=registered_connection(reg["transport_source"]),
-                               credential=read_credential(args.credential_fd),
+                # A dict display evaluates in order: pinned bytes are checked before the key is read.
+                # This dict is the only owner; serve empties it on STOP (no keyword temporaries here).
+                held = {"connection": registered_connection(reg["transport_source"]),
+                        "credential": read_credential(args.credential_fd)}
+                served = serve(listener, lambda run_id: co, held=held,
                                bound=dict(campaign_sha256=args.campaign_sha256, run=co.spec["run_id"],
                                           transport_source=reg["transport_source"]))
             finally:
