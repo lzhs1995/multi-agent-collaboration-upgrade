@@ -114,15 +114,12 @@ def _scan(items, readers, starts, ends):
             item["call_id_counts"] = counts
 
 
-def attribute_inputs(campaign, header, native_end, readers, *, not_after):
+def attribute_samples(campaign, header, native_end, readers, *, samples, not_after,
+                      schema="upgrade-communication-attribution-v1"):
     """Return deterministic evidence; any unverifiable input remains unknown."""
-    result = dict(schema="upgrade-communication-attribution-v1", inputs=[], unresolved=[])
-    run_id = header["run"]["run_id"]
-    if run_id not in WARM_RUNS:
-        return result
+    result = dict(schema=schema, inputs=[], unresolved=[])
     items = []
     try:
-        samples = [s for s in campaign_plan(campaign) if s["run_id"] == run_id]
         need(len({s["request_id"] for s in samples}) == len(samples), "DUPLICATE_REGISTERED_REQUEST")
         starts = {lane: reader.verify_pin(header["native_start"][lane]) for lane, reader in readers.items()}
         ends = {lane: reader.verify_pin(native_end[lane]) for lane, reader in readers.items()}
@@ -176,3 +173,15 @@ def attribute_inputs(campaign, header, native_end, readers, *, not_after):
     result["inputs"].sort(key=lambda item: item["request_id"])
     result["unresolved"].sort(key=lambda item: item["request_id"] or "")
     return result
+
+
+def attribute_inputs(campaign, header, native_end, readers, *, not_after):
+    """Historical warm ordinary slots only, preserving the original denominator."""
+    if header["run"]["run_id"] not in WARM_RUNS:
+        return dict(schema="upgrade-communication-attribution-v1", inputs=[], unresolved=[])
+    try:
+        samples = [s for s in campaign_plan(campaign) if s["run_id"] == header["run"]["run_id"]]
+    except ERRORS as exc:
+        return dict(schema="upgrade-communication-attribution-v1", inputs=[],
+                    unresolved=[dict(request_id=None, reason=type(exc).__name__)])
+    return attribute_samples(campaign, header, native_end, readers, samples=samples, not_after=not_after)

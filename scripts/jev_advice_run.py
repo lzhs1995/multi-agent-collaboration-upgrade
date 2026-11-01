@@ -196,7 +196,7 @@ def record_advice(co, node_id: str, *, registration=None, connection=None, crede
 INBOX_DIRECTORY = "jev-inbox"
 
 
-def record_inbox_order(co, node_id: str, event_id: str, messages: list, *, registration=None,
+def record_inbox_order(co, node_id: str, event_id: str, messages: list | None, *, registration=None,
                        connection=None, credential=None) -> dict:
     """DP2: order one supervisor inbox event under the coordinator gate (R505 D1).
 
@@ -227,7 +227,25 @@ def record_inbox_order(co, node_id: str, event_id: str, messages: list, *, regis
     path = directory / (event_id + ".json")
     with exclusive_lock(co.root / "nodes" / node_id / "runner.lock"), co.state_lock(new_work=True):
         co._gate(new_work=True)
+        if on and ledger_summary(co.root / LEDGER_DIRECTORY)["stopped"]:
+            raise ContractError("STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER")
         require(not (path.exists() or path.is_symlink()), "this inbox event is already ordered; observe only")
+        batch = None
+        if "semantic_input" in co.campaign:
+            from orchestration_native import NativeReader
+            from orchestration_common import utc_now
+            from upgrade_benchmark import validate_registration
+            from upgrade_semantic_inputs import native_batch
+            paired = validate_registration(co.campaign["registration"])
+            require(reg["arm"] == paired["groups"][co.campaign["session_group"]]["advisory"],
+                    "DP2 transport arm differs from the original paired group")
+            require(messages is None, "registered S2 eligibility is derived from native sources, not caller labels")
+            readers = {lane: NativeReader(session, fixtures=co.fixtures)
+                       for lane, session in co.campaign["sessions"].items()}
+            native_end = {lane: reader.snapshot() for lane, reader in readers.items()}
+            batch = native_batch(co.campaign, co.header, native_end, readers, not_after=utc_now())
+            require(batch["ready"], "semantic inputs remain pending or UNKNOWN; no JEV request")
+            messages = batch["messages"]
         directory.mkdir(exist_ok=True)
         judged = {}
         for prior in sorted(directory.glob("*.json")):
@@ -241,7 +259,15 @@ def record_inbox_order(co, node_id: str, event_id: str, messages: list, *, regis
                                       model=reg["model"] if on else None, judged=judged)
         value = dict(schema="jev-inbox-order-record-v1", run_id=run_id, node_id=node_id, event_id=event_id,
                      arm=reg["arm"], registration=reg["registration"], order=order)
+        if batch is not None:
+            from upgrade_semantic_inputs import read_requests
+            value.update(semantic_inputs=batch["attribution"], native_end=native_end,
+                         semantic_input=co.campaign["semantic_input"],
+                         read_requests=read_requests(co.campaign, batch, order["order"]),
+                         evidence_class="offline_fixture" if co.fixtures else "native_s2")
         write_json(path, value, exclusive=True)
+        if on and ledger_summary(co.root / LEDGER_DIRECTORY)["stopped"]:
+            raise ContractError("STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER")
     require(on or order["model_requests"] == 0, "the off arm made a request")
     return value
 

@@ -184,6 +184,12 @@ def validate_registered_campaign(campaign):
             and campaign["workload_class"] == group["workload_class"]
             and campaign["runs"] == [dict(run_id=r["run_id"], strategy=ARM_STRATEGIES[group["arm"]])
                                      for r in group["runs"]], "campaign differs from registered runs")
+    # Do not add semantic imports/work to unchanged original v3 campaigns.
+    # An unregistered attachment still refuses before any native operation.
+    registration = validate_registration(campaign["registration"])
+    if "semantic_input" in registration or "semantic_input" in campaign:
+        from upgrade_semantic_inputs import check_campaign
+        check_campaign(registration, campaign)
     return group
 
 

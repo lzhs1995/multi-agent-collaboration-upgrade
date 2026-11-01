@@ -92,7 +92,8 @@ def check_opportunities(opportunities):
                 "zero or missing DP1/DP2 opportunities: " + kind)
 
 
-def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=True, response_observation=False):
+def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=True, response_observation=False,
+             semantic_input=None):
     from upgrade_experiment import private_root
     from orchestration_planner import ID_RE
     root = private_root(root)
@@ -113,6 +114,10 @@ def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=T
     value = dict(schema=SCHEMA, benchmark_id=benchmark_id, root=str(root), created_at=utc_now(), plan=plan_ref,
                  compact=compact, groups=groups, pairs=pairs, factors=factors, opportunities=opportunities,
                  contract=v3.CONTRACT, response_observation=v3.observation_policy(response_observation))
+    if semantic_input is not None:
+        from upgrade_semantic_inputs import check_registration
+        value["semantic_input"] = dict(semantic_input)
+        check_registration(value)
     root.mkdir(parents=True, mode=0o700)
     return write_json(root / "registration.json", value, exclusive=True)
 
@@ -120,7 +125,8 @@ def register(root, benchmark_id, plan_path, *, factors, opportunities, compact=T
 def validate_registration(ref):
     value = json_ref(ref, "JEV paired registration")
     require(value.get("schema") == SCHEMA, "not an S2 registration; v3 data is never relabeled")
-    require(set(value) == FIELDS, "registration fields changed")
+    require(set(value) == FIELDS | ({"semantic_input"} if "semantic_input" in value else set()),
+            "registration fields changed")
     groups, pairs = layout(value["root"], value["plan"], compact=value["compact"])
     require(value["groups"] == groups and value["pairs"] == pairs, "groups or pairs differ from the frozen S2 layout")
     require(all(g["strategy"] == STRATEGY == v3.ARM_STRATEGIES[g["arm"]] and g["transport"] is None
@@ -130,4 +136,7 @@ def validate_registration(ref):
     v3.validate_observation_policy(value["response_observation"])
     check_factors(value["pairs"], value["factors"])
     check_opportunities(value["opportunities"])
+    if "semantic_input" in value:
+        from upgrade_semantic_inputs import check_registration
+        check_registration(value)
     return value

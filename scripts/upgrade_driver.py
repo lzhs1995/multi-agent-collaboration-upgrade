@@ -70,6 +70,8 @@ def configure(request_ref, *, overall_timeout_seconds=None, node_failure_drain_s
     if node_failure_drain_seconds:
         require_drain_source(request["source"])
     verify_tree(request["corpus"])
+    from upgrade_semantic_inputs import check_corpus
+    check_corpus(registration, request["corpus"])
     authorize(request["native_authorizations"])
     modes = set()
     for group, runtime_ref in request["runtimes"].items():

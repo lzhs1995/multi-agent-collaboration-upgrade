@@ -164,6 +164,8 @@ def freeze_campaign(request_ref):
     sessions = capture_adopted_sessions(request["runtime"], request["adoption"])
     records = authorize(request["native_authorizations"])
     inputs_source = corpus_refs(corpus)
+    from upgrade_semantic_inputs import BODY_PATH, check_corpus
+    check_corpus(registration, tree_manifest(corpus))
     plan = registered_corpus_plan(root / "inputs", request["revision"], group["workload_class"], registration)
     root.mkdir(parents=True, mode=0o700)
     write_json(root / "freeze-intent.json", dict(request=request_ref, started_at=utc_now(),
@@ -195,6 +197,11 @@ def freeze_campaign(request_ref):
             checker=file_ref(destination / "scripts/orchestration_checker.py"), checker_timeout_seconds=30,
             metrics=copy.deepcopy(METRICS_V3_OUTPUT_EFFECTS), decision_provider="rules", minimum_improvement_percent=15,
             third_party_api=False, replacement_sessions=False)
+        if "semantic_input" in registration:
+            # Keep the old corpus validator, files and task graph untouched.
+            # This explicit S2-only copy is outside the 84-file corpus tree.
+            write_bytes_once(root / BODY_PATH, read_ref(registration["semantic_input"], "S2 semantic input"))
+            campaign["semantic_input"] = file_ref(root / BODY_PATH)
         # Re-read the same adopted original files, including their current model.
         # A fresh external native inventory is verified again by every real run.
         capture_adopted_sessions(request["runtime"], request["adoption"])
