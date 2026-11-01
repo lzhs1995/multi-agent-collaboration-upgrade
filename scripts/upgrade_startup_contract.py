@@ -297,13 +297,17 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
         existing = spec["existing_workspace_uuid"]
         require(isinstance(existing, str) and existing == str(uuid.UUID(existing)), "STARTUP_EXISTING_WORKSPACE_INVALID")
         fields |= {"existing_workspace_uuid"}
-    if "existing_split_targets" in spec:
+    require(not {'existing_split_targets', 'existing_tab_targets'} <= set(spec),
+            'STARTUP_ONE_EXISTING_TARGET_MODE_REQUIRED')
+    for target_field in ('existing_split_targets', 'existing_tab_targets'):
+        if target_field not in spec:
+            continue
         from upgrade_existing_workspace import normalize_split_targets
-        targets = normalize_split_targets(spec.get("existing_workspace_uuid"), spec["existing_split_targets"])
-        require(targets == spec["existing_split_targets"]
+        targets = normalize_split_targets(spec.get("existing_workspace_uuid"), spec[target_field])
+        require(targets == spec[target_field]
                 and set(targets.values()) <= set(spec["protected_surface_uuids"]),
-                "STARTUP_EXISTING_SPLIT_TARGET_INVALID")
-        fields |= {"existing_split_targets"}
+                'STARTUP_EXISTING_TARGET_INVALID')
+        fields |= {target_field}
     require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA),
             "STARTUP_FIELDS_CHANGED")
     source = checked_path(spec["controller"])

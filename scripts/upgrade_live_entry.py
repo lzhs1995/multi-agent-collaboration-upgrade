@@ -1,8 +1,9 @@
 """Private harness startup extension; not a second message sender.
 
-The only creation operation is one cmux new-workspace with an initial layout.
-Each client inherits Seatbelt before reaching this entrypoint. Existing agent
-input, handshake, tasks and callbacks remain on the original MAC bridge.
+Creation uses one new workspace or three held surfaces in an explicitly pinned
+existing workspace. Each client inherits Seatbelt before reaching this
+entrypoint. Existing agent input, handshake, tasks and callbacks remain on the
+original MAC bridge.
 """
 from __future__ import annotations
 
@@ -380,24 +381,34 @@ def launch(ref, spec, binding, *, spawn=False, spawn_authorized=False):
 
 
 def _launch_existing(ref, spec, control, workspace, child_capability):
-    """R511 existing-workspace mode: one side pane per lane in the pinned workspace, never a new workspace.
+    """One held surface per lane in the pinned workspace, using an explicit pane or split.
 
     The same per-lane held entry command as ``layout_for`` is given at pane
     creation, so no input is typed; old surfaces stay in protected_surface_uuids.
+    Explicit tab targets keep the pane layout while recording the actual tab
+    allocation count separately from pane allocation.
     """
     import upgrade_existing_workspace as ew
     cmux = spec["pins"]["cmux"]["path"]
-    targets = spec.get("existing_split_targets")
+    tabs = 'existing_tab_targets' in spec
+    targets = spec.get('existing_tab_targets') if tabs else spec.get('existing_split_targets')
+    target_panes = None
     if targets is not None:
         try:
             # Read-only UUID resolution; no focus, title or newest-tab selection.
             snapshot = subprocess.run([cmux, "tree", "--all", "--json", "--id-format", "both"],
                 capture_output=True, text=True, timeout=10, check=True)
-            ew.verify_split_targets(json.loads(snapshot.stdout), workspace, targets)
+            tree = json.loads(snapshot.stdout)
+            if tabs:
+                target_panes = ew.tab_target_panes(tree, workspace, targets)
+            else:
+                ew.verify_split_targets(tree, workspace, targets)
         except (ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
             raise ContractError("EXISTING_SPLIT_TARGET_UNVERIFIED: " + str(exc)) from exc
-    argvs = {lane: ew.pane_argv(cmux, workspace, lane, lane_command(ref, spec, lane),
-                             surface_uuid=targets[lane] if targets is not None else None) for lane in LANES}
+    argvs = {lane: (ew.tab_argv(cmux, workspace, lane, lane_command(ref, spec, lane), target_panes[lane])
+                   if tabs else ew.pane_argv(cmux, workspace, lane, lane_command(ref, spec, lane),
+                                            surface_uuid=targets[lane] if targets is not None else None))
+             for lane in LANES}
 
     def run(argv, timeout):
         try:
@@ -406,12 +417,16 @@ def _launch_existing(ref, spec, control, workspace, child_capability):
             raise TimeoutError from exc
 
     def write_intent(value):
+        if tabs:
+            value = dict(value, surface_creation_attempts=value['pane_creation_attempts'], pane_creation_attempts=0)
         write_json(control / "intent.json", dict(
             schema="upgrade-startup-intent-v2", startup=ref, created_at=utc_now(), spawn=True, spawn_authorized=True,
             input_operations=0, existing_workspace_uuid=workspace, **value,
             **({"child_hook_capability": child_capability} if child_capability is not None else {})), exclusive=True)
 
     def write_result(value):
+        if tabs:
+            value = dict(value, surface_creation_attempts=value['pane_creation_attempts'], pane_creation_attempts=0)
         write_json(control / "result.json", dict(
             schema="upgrade-startup-result-v2", startup=ref, observed_at=utc_now(),
             returncode=0 if value["status"] == "RETURNED" else 1, existing_workspace_uuid=workspace,

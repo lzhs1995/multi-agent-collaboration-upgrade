@@ -91,6 +91,44 @@ class MaterializedStartupTests(unittest.TestCase):
                                  provider_configuration=({}, {}), **options)
         self.assertFalse(arm_paths(validate_context(context), "B")["controllers"].exists())
 
+    def test_existing_tabs_are_bound_in_the_materialized_private_controller(self):
+        targets = {lane: '583F053A-F82A-4573-8332-A7DA39DD0643' for lane in LANES}
+        context = init_experiment(self.root / 't', 'held-tabs', self.source_controller)
+        runtime = json_ref(materialize_live(context, 'B', binaries=self.binaries,
+            provider_configuration=({}, {}), existing_workspace_uuid='35bed1fd-1e0b-452d-8dc0-9ffd67387cb0',
+            existing_tab_targets=targets, protected_surface_uuids=set(targets.values())))
+        spec, _ = validate_startup(runtime['startup'])
+        self.assertEqual(spec['existing_tab_targets'], {lane: target.lower() for lane, target in targets.items()})
+        self.assertNotIn('existing_split_targets', spec)
+        controller = Path(spec['controller']) / 'scripts'
+        code = '''import sys
+sys.path.insert(0, sys.argv[1])
+from mac_upgrade_live_inspect import confirmed_launch
+ref = {'path': 'fixture'}
+intent = dict(startup=ref, spawn=True, spawn_authorized=True, existing_workspace_uuid='w')
+result = dict(startup=ref, returncode=0, workspace_creation_attempts=0,
+              pane_creation_attempts=0, surface_creation_attempts=3, existing_workspace_uuid='w')
+assert confirmed_launch(intent, result, {'existing_workspace_uuid':'w', 'existing_tab_targets':{}}, ref)
+assert not confirmed_launch(intent, dict(result, returncode=1), {'existing_workspace_uuid':'w', 'existing_tab_targets':{}}, ref)
+print('PRIVATE_TAB_INSPECTOR_PASS')
+'''
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(controller)],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'PRIVATE_TAB_INSPECTOR_PASS')
+        self.assertFalse(Path(spec['adoption_path']).exists())
+        self.assertFalse((Path(runtime['state_root']) / 'startup/intent.json').exists())
+
+    def test_mixed_tab_and_split_targets_refuse_before_materialization(self):
+        context = init_experiment(self.root / 'm', 'mixed-targets', self.source_controller)
+        targets = {lane: '583F053A-F82A-4573-8332-A7DA39DD0643' for lane in LANES}
+        with self.assertRaisesRegex(ContractError, 'ONE_EXISTING_TARGET_MODE_REQUIRED'):
+            materialize_live(context, 'B', binaries=self.binaries, provider_configuration=({}, {}),
+                existing_workspace_uuid='35bed1fd-1e0b-452d-8dc0-9ffd67387cb0',
+                existing_split_targets=targets, existing_tab_targets=targets,
+                protected_surface_uuids=set(targets.values()))
+        self.assertFalse(arm_paths(validate_context(context), 'B')['controllers'].exists())
+
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS kernel isolation")
     def test_actual_controller_default_footer_and_tip_input_boundaries(self):
         controller = Path(self.spec["controller"]) / "scripts"

@@ -1,11 +1,10 @@
-"""Existing-workspace held allocation (R511 option b): side panes in a pinned workspace, never a new one.
+"""Held allocation in a pinned existing workspace, never a new workspace.
 
-Pure argv builders and set checks only; nothing here calls cmux. The one real
-allocation is a separate explicit step that snapshots the workspace first,
-runs at most three of these argv lists, and then proves with a second snapshot
-that every old surface survived and the new surfaces are exactly the created,
-disjoint trio. Whether ``new-pane`` honours ``--id-format uuids`` in its reply
-is NOT_VERIFIED until that real call.
+Pure argv builders and set checks only; nothing here calls cmux. Explicit
+surface targets select an original split or resolve to existing panes for new
+terminal tabs. Tabs retain the layout and old sessions when repeated test groups
+would exceed split space. Each real allocation retains one intent and at most
+three creation calls; native startup and adoption remain separate live checks.
 """
 from __future__ import annotations
 
@@ -48,6 +47,29 @@ def verify_split_targets(tree, workspace_uuid, targets):
                 or rows[0][1].get("type") != "terminal"):
             raise ValueError("split target is not a unique terminal in the pinned workspace")
     return targets
+
+
+def tab_target_panes(tree, workspace_uuid, targets):
+    """Resolve each original protected surface to its actual pane; no layout mutation."""
+    targets = verify_split_targets(tree, workspace_uuid, targets)
+    panes = {str(uuid.UUID(surface['id'])): _uuid(pane['id'], 'pane')
+             for window in tree['windows'] for workspace in window['workspaces']
+             for pane in workspace['panes'] for surface in pane['surfaces']}
+    selected = {lane: panes[target] for lane, target in targets.items()}
+    all_panes = [_uuid(pane['id'], 'pane') for window in tree['windows']
+                 for workspace in window['workspaces'] for pane in workspace['panes']]
+    if any(all_panes.count(pane) != 1 for pane in selected.values()):
+        raise ValueError('tab target pane is not unique')
+    return selected
+
+
+def tab_argv(cmux, workspace_uuid, lane, command, pane_uuid):
+    """One new held terminal tab in an explicitly pinned existing pane."""
+    if lane not in LANES or not isinstance(command, str) or not command.strip():
+        raise ValueError('known lane and held command required')
+    return [str(cmux), '--json', '--id-format', 'uuids', 'new-surface', '--type', 'terminal',
+            '--workspace', _uuid(workspace_uuid, 'workspace'), '--pane', _uuid(pane_uuid, 'pane'),
+            '--command', command, '--focus', 'false']
 
 
 def pane_argv(cmux, workspace_uuid, lane, command, *, surface_uuid=None):

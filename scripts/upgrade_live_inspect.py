@@ -122,6 +122,23 @@ def recovered_candidates(bridge, native, identity, spec, stage, startup_ref):
     return {lane: rows_[0] for lane, rows_ in found.items()}
 
 
+def confirmed_launch(intent, result, spec, startup_ref):
+    """A returned original allocation, with honest pane/tab counts for its pinned mode."""
+    if (intent.get('startup') != startup_ref or result.get('startup') != startup_ref
+            or intent.get('spawn') is not True or intent.get('spawn_authorized') is not True
+            or type(result.get('returncode')) is not int or result['returncode'] != 0):
+        return False
+    if spec.get('existing_workspace_uuid') is None:
+        return result.get('workspace_creation_attempts') == 1
+    if (result.get('workspace_creation_attempts') != 0
+            or result.get('existing_workspace_uuid') != intent.get('existing_workspace_uuid')
+            or result.get('existing_workspace_uuid') != spec['existing_workspace_uuid']):
+        return False
+    if 'existing_tab_targets' in spec:
+        return result.get('pane_creation_attempts') == 0 and result.get('surface_creation_attempts') == len(LANES)
+    return result.get('pane_creation_attempts') == len(LANES)
+
+
 def inspect(startup_ref, spec, binding, *, stage=None):
     """stage: a validated fence; readiness then admits only that stage's window.
 
@@ -135,12 +152,7 @@ def inspect(startup_ref, spec, binding, *, stage=None):
     intent, result = json_ref(intent_ref), json_ref(result_ref)
     # R511 existing-workspace mode: one pane per lane in the pinned workspace, no workspace creation.
     existing = spec.get("existing_workspace_uuid") is not None
-    require(intent["startup"] == result["startup"] == startup_ref
-            and intent.get("spawn") is True and intent.get("spawn_authorized") is True
-            and result["returncode"] == 0
-            and ((result["workspace_creation_attempts"] == 0 and result.get("pane_creation_attempts") == len(LANES)
-                  and result.get("existing_workspace_uuid") == intent.get("existing_workspace_uuid")
-                  == spec["existing_workspace_uuid"]) if existing else result["workspace_creation_attempts"] == 1),
+    require(confirmed_launch(intent, result, spec, startup_ref),
             "ORIGINAL_LAUNCH_UNCONFIRMED")
     bridge = ReadOnlyCmux(spec["pins"]["cmux"]["path"])
     launches, launch_refs = {}, {}

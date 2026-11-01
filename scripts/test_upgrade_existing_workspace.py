@@ -86,6 +86,22 @@ class ExistingWorkspaceTests(unittest.TestCase):
     def test_tree_surfaces_are_read_by_uuid_not_by_title(self):
         self.assertEqual(ew.surfaces(TREE), OLD)
 
+    def test_tab_targets_pin_existing_panes_without_splitting_the_layout(self):
+        panes = ew.tab_target_panes(target_tree(), WS, TARGETS)
+        self.assertEqual(panes['codex'], '4BC763F6-E84E-4A22-90E8-BE1D8E090608')
+        self.assertEqual(panes['claude_a'], panes['codex'])
+        argv = ew.tab_argv('cmux', WS, 'codex', 'held codex', panes['codex'])
+        self.assertIn('new-surface', argv)
+        self.assertEqual(argv[argv.index('--pane') + 1], panes['codex'])
+        self.assertEqual(argv[argv.index('--workspace') + 1], WS)
+        self.assertFalse({'new-split', 'new-pane', 'new-workspace'} & set(argv))
+
+    def test_tab_targets_refuse_a_duplicate_pane_even_with_unique_surfaces(self):
+        tree = target_tree()
+        tree['windows'][0]['workspaces'][0]['panes'][0]['id'] = tree['windows'][0]['workspaces'][0]['panes'][1]['id']
+        with self.assertRaises(ValueError):
+            ew.tab_target_panes(tree, WS, TARGETS)
+
     def test_disjoint_trio_passes_and_every_violation_is_refused(self):
         self.assertEqual(ew.require_disjoint(OLD, OLD | NEW, NEW), sorted(NEW))
         lost = set(list(OLD)[1:])
@@ -237,6 +253,65 @@ class LaunchExistingTests(unittest.TestCase):
                         control, WS.lower(), None)
             self.assertEqual(runner.call_count, 1)
             self.assertEqual(list(control.iterdir()), [])
+
+    def test_three_tabs_publish_a_success_the_real_inspector_accepts_without_new_panes(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import upgrade_live_entry as entry
+        from upgrade_live_inspect import confirmed_launch
+        with tempfile.TemporaryDirectory(prefix='heldtabs-') as temporary:
+            control = Path(temporary).resolve()
+            calls = []
+            before = target_tree()
+            def fake_run(argv, **kwargs):
+                calls.append(argv)
+                if 'tree' in argv:
+                    return Done(0, json.dumps(before))
+                self.assertIn('new-surface', argv)
+                self.assertFalse({'new-split', 'new-pane', 'new-workspace'} & set(argv))
+                return Done(0, json.dumps({'surface_id': sorted(NEW)[len(calls) - 2]}))
+            ref = {'path': 'startup', 'sha256': 'a' * 64, 'bytes': 1}
+            spec = {'pins': {'cmux': {'path': 'cmux'}}, 'existing_workspace_uuid': WS.lower(),
+                    'existing_tab_targets': TARGETS}
+            with patch.object(entry, 'lane_command', side_effect=lambda ref, spec, lane: 'held ' + lane), \
+                    patch.object(entry.subprocess, 'run', side_effect=fake_run):
+                value = entry._launch_existing(ref, spec, control, WS.lower(), None)
+            self.assertEqual(value['returncode'], 0)
+            result = json.loads((control / 'result.json').read_text())
+            intent = json.loads((control / 'intent.json').read_text())
+            self.assertEqual((result['workspace_creation_attempts'], result['pane_creation_attempts'],
+                              result['surface_creation_attempts']), (0, 0, 3))
+            self.assertTrue(confirmed_launch(intent, result, spec, ref))
+            self.assertEqual(before, target_tree())
+            self.assertEqual(len(calls), 4)
+            for field, value in [('returncode', 1), ('pane_creation_attempts', 3),
+                                 ('surface_creation_attempts', 2), ('existing_workspace_uuid', WS)]:
+                with self.subTest(field=field):
+                    changed = dict(result, **{field: value})
+                    self.assertFalse(confirmed_launch(intent, changed, spec, ref))
+            self.assertFalse(confirmed_launch(intent, dict(result, returncode=False), spec, ref))
+
+    def test_failed_tab_preserves_the_actual_surface_attempt_count_without_retry(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import upgrade_live_entry as entry
+        from orchestration_common import ContractError
+        with tempfile.TemporaryDirectory(prefix='heldtabfail-') as temporary:
+            control = Path(temporary).resolve()
+            replies = [Done(0, json.dumps(target_tree())), Done(0, 'first tab'), Done(1, 'tab refused')]
+            with patch.object(entry, 'lane_command', return_value='held'), \
+                    patch.object(entry.subprocess, 'run', side_effect=replies) as runner:
+                with self.assertRaises(ContractError):
+                    entry._launch_existing({'path': 'startup'},
+                        {'pins': {'cmux': {'path': 'cmux'}}, 'existing_tab_targets': TARGETS},
+                        control, WS.lower(), None)
+            result = json.loads((control / 'result.json').read_text())
+            self.assertEqual((result['returncode'], result['pane_creation_attempts'],
+                              result['surface_creation_attempts']), (1, 0, 2))
+            self.assertEqual(result['failed_lane'], 'claude_a')
+            self.assertEqual(runner.call_count, 3)
 
 
 if __name__ == "__main__":
