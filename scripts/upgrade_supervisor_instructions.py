@@ -9,6 +9,50 @@ from orchestration_common import read_ref, require, write_bytes_once
 from upgrade_communication_plan import supervisor_messages
 
 
+def jev_steps(campaign, campaign_ref):
+    """S2 only: when the supervisor makes its DP1/DP2 advice calls; empty for every other campaign."""
+    if "semantic_input" not in campaign:
+        return ""
+    from orchestration_binding import unbound_nodes
+    from orchestration_common import file_ref, json_ref
+    from orchestration_planner import validate_plan
+    from upgrade_benchmark import validate_registration
+    from upgrade_semantic_inputs import ADVICE_INDEX_PATH
+    nodes = unbound_nodes(validate_plan(json_ref(campaign["plan"], "frozen plan")))
+    require(nodes, "an S2 campaign needs deliberately unbound nodes")
+    names = ", ".join(nodes)
+    group = validate_registration(campaign["registration"])["groups"][campaign["session_group"]]
+    prefix = shlex.join(["rtk", "proxy", campaign["python"]["path"], "-B",
+        str(Path(campaign["adapter"]["path"]) / "scripts/jev_advice_run.py"),
+        "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"]])
+    on_args, source = "", "This is the off arm: pass no registration, socket or key."
+    use = "Then publish-decision with --advice-sha256 null and --action supervisor_review, then bind-unbound."
+    if group["advisory"] == "advisory-on":
+        index = file_ref(Path(campaign["root"]) / ADVICE_INDEX_PATH)
+        on_args = " --registration REG --registration-sha256 REG_SHA256 --worker-socket SOCKET"
+        source = (f"Take SOCKET for RUN and REG/REG_SHA256 for RUN/NODE from the frozen index {index['path']} "
+                  f"(sha256 {index['sha256']}). Never pass or read a key.")
+        use = ("Then execute its returned read_command exactly once and read the complete advice body it prints,\n"
+               "before any publish-decision for that node. Only then publish-decision with that result's\n"
+               "advice_sha256 and --action accepted, rejected or supervisor_review for what you actually do with\n"
+               "the advice, then bind-unbound. A failed or uncertain read is never repeated; report it as UNKNOWN\n"
+               "and never publish a decision citing advice you did not read.")
+    return f"""
+
+S2 JEV decision points (each exactly once; use this second fixed prefix only for them):
+{prefix}
+{source}
+DP1: before your publish-decision for each deliberately unbound node ({names}) in a run,
+call the prefix with --run RUN --node NODE{on_args} and read its complete JSON result.
+{use} The advice informs, never replaces, your own decision.
+DP2: once all three registered semantic-input notices of a run are in this session, and before you
+open any of their bodies, call the prefix once with --run RUN --node {nodes[0]} --inbox-event semantic-RUN{on_args}.
+Then run each returned read_requests command once, in the returned order, read each complete body
+and act on it in your normal work. Never read a semantic body another way, reorder these reads or
+relabel eligibility. REJECTED, STOPPED or an uncertain return is final: never repeat the call.
+STOP_AFFECTED_JEV_TEST_AND_REPORT_TO_USER stops further advice calls in this run; report it."""
+
+
 def render(campaign_ref):
     campaign = validate_campaign(campaign_ref)
     require(campaign.get("version") == 3 and campaign.get("evidence_class") == "cli_campaign_v3",
@@ -95,7 +139,7 @@ For EACH run in the order above:
    Claude node through the original controller before reusing that lane.
 7. After all nodes are accepted, all original leases released and Claude markers disarmed, call
    `finish --run RUN`, then `verify --run RUN`. Inspect the actual result. Do not fabricate a closure
-   or edit its timestamps. Move directly to wait-permit for the next registered run in this group.
+   or edit its timestamps. Move directly to wait-permit for the next registered run in this group.{jev_steps(campaign, campaign_ref)}
 
 Failure/timeout contract: the registered cap is 1800 seconds. New work is refused at the cap or a
 schedule halt. Original-log observation, candidate review, acceptance of already finished work,

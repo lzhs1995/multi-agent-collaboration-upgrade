@@ -212,6 +212,80 @@ class SocketServeTests(unittest.TestCase):
         self.assertFalse((self.root / "w.sock").exists())
 
 
+class SupervisorJevStepsTests(unittest.TestCase):
+    """R548 P2: the frozen supervisor instructions name when DP1/DP2 are called, per arm."""
+
+    def setUp(self):
+        self.root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevsup-")))
+        self.addCleanup(__import__("shutil").rmtree, self.root)
+        self.campaign = dict(semantic_input={"offline_fixture": True}, registration={"offline_fixture": True},
+                             session_group="fixture", plan={"offline_fixture": True}, root=str(self.root),
+                             python={"path": "/usr/bin/python3"}, adapter={"path": "/frozen/adapter"})
+        self.ref = dict(path=str(self.root / "campaign.json"), sha256="c" * 64)
+
+    def steps(self, advisory, campaign=None):
+        from unittest.mock import patch
+        import upgrade_supervisor_instructions as sup
+        with patch("orchestration_binding.unbound_nodes", return_value=["inventory", "merge"]), \
+                patch("orchestration_planner.validate_plan", side_effect=lambda plan: plan), \
+                patch("orchestration_common.json_ref", side_effect=lambda ref, *a: ref), \
+                patch("upgrade_benchmark.validate_registration",
+                      return_value={"groups": {"fixture": {"advisory": advisory}}}):
+            return sup.jev_steps(self.campaign if campaign is None else campaign, self.ref)
+
+    def test_non_s2_campaign_adds_nothing(self):
+        self.assertEqual(self.steps("advisory-on", campaign={}), "")
+
+    def test_off_arm_names_both_points_and_no_registration_or_socket(self):
+        text = self.steps("advisory-off")
+        for needle in ("DP1: before your publish-decision", "(inventory, merge)",
+                       "--node inventory --inbox-event semantic-RUN", "/frozen/adapter/scripts/jev_advice_run.py",
+                       "read_requests command once, in the returned order", "never repeat the call"):
+            self.assertIn(needle, text)
+        self.assertNotIn("--registration", text)
+        self.assertNotIn("--worker-socket", text)
+        dp1 = text[text.index("DP1:"):text.index("DP2:")]
+        self.assertIn("--advice-sha256 null and --action supervisor_review, then bind-unbound", dp1)
+        for word in ("read_command", "advice body", "advice_sha256 and"):
+            self.assertNotIn(word, dp1)
+
+    def test_on_arm_pins_the_frozen_index_and_never_a_key(self):
+        from upgrade_semantic_inputs import ADVICE_INDEX_PATH
+        with self.assertRaises((OSError, ContractError)):
+            self.steps("advisory-on")
+        index = self.root / ADVICE_INDEX_PATH
+        index.parent.mkdir()
+        index.write_text("{}")
+        text = self.steps("advisory-on")
+        self.assertIn(file_ref(index)["sha256"], text)
+        self.assertEqual(text.count("--registration REG --registration-sha256 REG_SHA256 --worker-socket SOCKET"), 2)
+        self.assertNotIn("--credential-fd", text)
+        dp1 = text[text.index("DP1:"):text.index("DP2:")]
+        read, publish = dp1.index("execute its returned read_command exactly once"), dp1.index("Only then publish-decision")
+        self.assertLess(read, publish)
+        self.assertIn("advice_sha256 and --action accepted, rejected or supervisor_review", dp1)
+        self.assertIn("never publish a decision citing advice you did not read", dp1)
+        self.assertNotIn("--advice-sha256 null", dp1)
+
+
+class AdviceReadCommandTests(unittest.TestCase):
+    """R556: the on result carries the frozen reader command for its real published notice."""
+
+    def test_command_equals_the_bind_gate_reader_for_a_published_notice(self):
+        import json
+        from upgrade_advice_publish import publish_advice
+        from upgrade_body_read import read_command
+        root = Path(os.path.realpath(tempfile.mkdtemp(prefix="jevread-")))
+        self.addCleanup(__import__("shutil").rmtree, root)
+        body = json.dumps(dict(marker="JEV_ADVICE_r1_n1_X", run_id="r1", node_id="n1",
+                               advice={"status": "RESPONDED", "text": "x" * 4000}))
+        notice = publish_advice(root, "r1", "n1", body)["notice"]
+        campaign = dict(python={"path": "/usr/bin/python3"}, controller={"path": "/frozen/controller"})
+        self.assertEqual(run.advice_read_command(campaign, notice),
+                         read_command("/usr/bin/python3", "/frozen/controller", notice))
+        self.assertIn("/frozen/controller/scripts/mac_upgrade_body_read.py --notice", run.advice_read_command(campaign, notice))
+
+
 class DP1PairedArmTests(unittest.TestCase):
     """R548 P2: DP1 advice in an S2 campaign uses exactly its paired group's advisory arm."""
 

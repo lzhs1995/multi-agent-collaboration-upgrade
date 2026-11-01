@@ -229,7 +229,18 @@ def record_advice(co, node_id: str, *, registration=None, connection=None, crede
                 worker_status=answer["advice"]["status"], model_requests=answer["model_requests"],
                 journal=answer["journal"], ledger=answer["ledger"],
                 advice_sha256=published["body_sha256"] if published else None,
-                notice=published["notice"] if published else None)
+                notice=published["notice"] if published else None,
+                read_command=advice_read_command(co.campaign, published["notice"]) if published else None)
+
+
+def advice_read_command(campaign, notice) -> str:
+    """The one complete body read the bind gate requires before publish-decision (R556).
+
+    The same frozen reader and arguments that ``Coordinator`` re-derives for the
+    advice chain, so the supervisor's original call is the evidence it checks.
+    """
+    from upgrade_body_read import read_command
+    return read_command(campaign["python"]["path"], campaign["controller"]["path"], notice)
 
 
 INBOX_DIRECTORY = "jev-inbox"

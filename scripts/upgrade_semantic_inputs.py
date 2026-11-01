@@ -24,6 +24,8 @@ BOUNDARY = "after_native_run_start_before_business"
 CLASSES = ("uneven_successor", "fan_in", "write_conflict")
 BODY_PATH = "semantic/INPUT.json"
 SENDER_DUTIES_PATH = "semantic/sender-duties.json"
+# On arm only: per run, the worker socket and each unbound node's pinned JEV registration.
+ADVICE_INDEX_PATH = "semantic/advice-index.json"
 ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}\Z")
 
 
