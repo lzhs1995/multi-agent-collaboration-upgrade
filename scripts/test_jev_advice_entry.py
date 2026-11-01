@@ -21,6 +21,17 @@ class CredentialFdTests(unittest.TestCase):
         with self.assertRaises(OSError):
             os.fstat(fd)
 
+    def test_regular_file_fd_is_refused_unread_and_closed(self):
+        handle = tempfile.TemporaryFile()
+        handle.write(b"sk-in-a-regular-file\n")
+        handle.flush()
+        fd = os.dup(handle.fileno())
+        handle.close()
+        with self.assertRaisesRegex(ContractError, "pipe or FIFO"):
+            run.read_credential(fd)
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
     def test_empty_or_multi_token_input_is_refused(self):
         for data in (b"", b"\n", b"two keys\n"):
             with self.subTest(data=data), self.assertRaises(ContractError):
@@ -43,6 +54,14 @@ class SenderDutiesTests(unittest.TestCase):
                          ("claude_a", "codex", sem.BOUNDARY))
         self.assertFalse(duties["ordinary_communication_denominator_changed"])
         self.assertEqual(sem.SENDER_DUTIES_PATH, "semantic/sender-duties.json")
+
+
+class SemanticSenderStartupTests(unittest.TestCase):
+    def test_opt_in_must_be_boolean_before_any_materialization(self):
+        from upgrade_live_materialize import materialize_live
+        for value in (None, 0, 1, "true"):
+            with self.subTest(value=value), self.assertRaisesRegex(ContractError, "SEMANTIC_SENDER_CHANGED"):
+                materialize_live({}, "B", binaries={}, semantic_sender=value)
 
 
 class RegisteredConnectionTests(unittest.TestCase):

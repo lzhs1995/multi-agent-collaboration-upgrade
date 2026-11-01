@@ -122,10 +122,13 @@ def read_credential(fd: int) -> str:
     """Read the on-arm key once from an inherited pipe/FIFO fd, then close it (R545 P2).
 
     The key arrives only in process: never argv, environment, file or log.
+    A regular file, socket or tty is refused before any byte is read (R546-F1).
     """
     import os
+    import stat
     chunks = []
     try:
+        require(stat.S_ISFIFO(os.fstat(fd).st_mode), "the credential fd must be an inherited pipe or FIFO")
         while True:
             chunk = os.read(fd, 4096)
             if not chunk:
