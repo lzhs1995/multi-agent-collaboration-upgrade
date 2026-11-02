@@ -758,7 +758,7 @@ class InspectorFlowTests(unittest.TestCase):
         write_json(self.root / "startup/result.json", dict(startup=self.startup, returncode=0,
                    workspace_creation_attempts=1, stdout="OK workspace:42\n"))
 
-    def inspect_fixture(self, stage=None):
+    def inspect_fixture(self, stage=None, *, readiness_effect=None):
         import cmux_daemon_identity as identity
         import cmux_native_delivery as native
         # The RPC adapter belongs to the pinned base controller and is copied
@@ -780,6 +780,7 @@ class InspectorFlowTests(unittest.TestCase):
             stack.enter_context(patch.object(subject, "binding_boundary", return_value=None))
             readiness = stack.enter_context(patch.object(subject, "readiness_evidence",
                 return_value={"model": "fixture-model", "model_record": {"offline_fixture": True}}))
+            readiness.side_effect = readiness_effect
             stack.enter_context(patch.object(identity, "process", return_value=self.server))
             client = stack.enter_context(patch.object(rpc, "DaemonRPC")).return_value
             client.socket_identity = {"offline_fixture": True}
@@ -797,6 +798,38 @@ class InspectorFlowTests(unittest.TestCase):
         self.assertTrue(result["ready"], result["errors"])
         self.assertEqual(set(lanes), set(LANES))
         self.assertEqual({s["workspace_uuid"] for s in result["sessions"].values()}, {self.workspace})
+
+    def test_failed_claude_startup_is_observed_without_adoption_or_model_claim(self):
+        import upgrade_startup_continuity as continuity
+        self.binding["context"] = write_json(self.root / "context.json", {"experiment_id": "original-task"})
+
+        def readiness(native, session, lane, *args, **kwargs):
+            if lane != "codex":
+                raise ContractError("READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED")
+            return {"model": "fixture-model", "model_record": {"offline_fixture": True}}
+
+        def failure(native, session, lane, *args, **kwargs):
+            return {"lane": lane, "offline_fixture": True}
+
+        with patch.object(continuity, "claude_startup_failure_evidence", side_effect=failure) as observe:
+            result, _ = self.inspect_fixture(readiness_effect=readiness)
+        self.assertFalse(result["ready"])
+        self.assertEqual(set(result["startup_failures"]), {"claude_a", "claude_b"})
+        self.assertEqual(observe.call_count, 2)
+        self.assertEqual(set(result["readiness"]), {"codex"})
+        for lane in ("claude_a", "claude_b"):
+            self.assertNotIn("model", result["sessions"][lane])
+            self.assertEqual(result["errors"][lane], "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED")
+
+    def test_failed_identity_never_reaches_startup_terminal_parser(self):
+        import upgrade_startup_continuity as continuity
+        target = self.launches["claude_a"]["surface_uuid"]
+        self.clients[target]["birth"] = [9, 9]
+        with patch.object(continuity, "claude_startup_failure_evidence") as observe:
+            result, _ = self.inspect_fixture()
+        observe.assert_not_called()
+        self.assertNotIn("startup_failures", result)
+        self.assertEqual(result["errors"]["claude_a"], "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED")
 
     def test_workspace_movement_and_pid_or_birth_changes_fail_before_readiness(self):
         lane = "claude_a"

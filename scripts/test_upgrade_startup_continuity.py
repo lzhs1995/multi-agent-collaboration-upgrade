@@ -168,6 +168,171 @@ def prompt_for_codex(spec):
     return readiness_prompt(spec["controller"], spec["pins"]["python"]["path"], spec["pins"]["rtk"]["path"], "codex")
 
 
+class ClaudeStartupFailureEvidenceTests(unittest.TestCase):
+    """Complete original journals, including the observed native Goal chain."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.startup = write_json(self.root / "startup.json", {"offline_fixture": True})
+        self.configuration = write_json(self.root / "settings.json", {"model": "fixture-claude"})
+
+    def fixture(self, lane="claude_a", *, goal=False, label="original"):
+        (self.root / label).mkdir()
+        journal = NativeFixture(self.root / label, "claude", session_id=str(uuid.uuid4()))
+        spec = dict(controller=str(self.root / "controller"), clients={lane: dict(
+            native_root=str(journal.path.parent), session_id=journal.session["session_id"])},
+            pins={"python": dict(path="/pinned/python"), "rtk": dict(path="/pinned/rtk"),
+                  lane + "/settings.json": self.configuration})
+        uid = str(uuid.uuid4())
+        if goal:
+            from upgrade_startup_contract import GOAL_SCHEMA, native_goal_condition
+            condition = native_goal_condition("Complete the original task", self.root / "instructions.md")
+            spec.update(schema=GOAL_SCHEMA, goal_startup={lane: condition})
+            anchor = journal.append(dict(type="attachment", uuid=uid, parentUuid=None,
+                sessionId=journal.session["session_id"], timestamp="2026-10-21T00:00:01Z",
+                attachment=dict(type="goal_status", met=False, sentinel=True, condition=condition)))
+            # Claude's local command and harness user records continue the
+            # original Goal attachment's parent chain, as in the j5 journals.
+            parent = str(uuid.uuid4())
+            journal.append(journal.message("user", "<local-command-stdout>Goal set</local-command-stdout>",
+                at="2026-10-21T00:00:02Z", uuid=parent, parentUuid=uid))
+            uid = parent
+            parent = str(uuid.uuid4())
+            journal.append(journal.message("user", "Continue the original Goal.",
+                at="2026-10-21T00:00:03Z", uuid=parent, parentUuid=uid, isMeta=True))
+            uid = parent
+        else:
+            prompt = readiness_prompt(spec["controller"], "/pinned/python", "/pinned/rtk", lane)
+            anchor = journal.append(journal.message("user", prompt,
+                at="2026-10-21T00:00:01Z", uuid=uid, parentUuid=None))
+        error = journal.message("assistant", "API Error: Request rejected (429)",
+            at="2026-10-21T00:00:04Z", uuid=str(uuid.uuid4()), parentUuid=uid,
+            isApiErrorMessage=True, apiErrorStatus=429)
+        error["message"].update(id=str(uuid.uuid4()), type="message", model="<synthetic>",
+                                stop_reason="stop_sequence")
+        return journal, spec, anchor, error
+
+    def scan(self, journal, spec, lane="claude_a"):
+        from upgrade_startup_continuity import claude_startup_failure_evidence
+        session = dict(journal.session, transcript=native._pin_file(journal.path, "claude",
+                       journal.session["session_id"]))
+        return claude_startup_failure_evidence(native, session, lane, spec, self.startup,
+                                               task_id="original-task", now=time.time())
+
+    def test_both_original_lanes_normal_and_native_goal_keep_exact_terminal(self):
+        for lane in ("claude_a", "claude_b"):
+            for goal in (False, True):
+                with self.subTest(lane=lane, goal=goal):
+                    journal, spec, anchor, error = self.fixture(lane, goal=goal, label=lane + str(goal))
+                    terminal = journal.append(error)
+                    value = self.scan(journal, spec, lane)
+                    self.assertEqual(value["prompt"], anchor)
+                    self.assertEqual(value["outcome"]["native_record"], terminal)
+                    self.assertEqual(value["outcome"]["http_status"], 429)
+                    self.assertEqual(value["configuration"], self.configuration)
+                    self.assertFalse(value["model_response_observed"])
+                    self.assertFalse(value["adoption_proven"])
+                    self.assertEqual(value["input_operations"], 0)
+
+    def test_native_status_not_text_and_only_original_main_terminal_qualifies(self):
+        mutations = {
+            "status_missing": lambda r: r.pop("apiErrorStatus"),
+            "status_boolean": lambda r: r.update(apiErrorStatus=True),
+            "status_string": lambda r: r.update(apiErrorStatus="429"),
+            "status_success": lambda r: r.update(apiErrorStatus=200),
+            "unlinked": lambda r: r.update(parentUuid=str(uuid.uuid4())),
+            "sidechain": lambda r: r.update(isSidechain=True),
+            "wrong_session": lambda r: r.update(sessionId=str(uuid.uuid4())),
+            "truncated": lambda r: r.update(truncatedAfterOutput=True),
+            "nonterminal": lambda r: r["message"].update(stop_reason=None),
+            "text_only": lambda r: r.update(isApiErrorMessage=False),
+            "future": lambda r: r.update(timestamp="2099-01-01T00:00:00Z"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                journal, spec, _, error = self.fixture(goal=True, label=label)
+                mutate(error)
+                journal.append(error)
+                with self.assertRaises((ContractError, native.NativeDeliveryError)):
+                    self.scan(journal, spec)
+
+    def test_goal_change_and_quoted_command_do_not_create_original_startup_authority(self):
+        for label in ("different_condition", "second_set", "quoted_only"):
+            journal, spec, _, error = self.fixture(goal=True, label=label)
+            if label == "different_condition":
+                spec["goal_startup"]["claude_a"] = "Other task"
+            elif label == "second_set":
+                journal.append(dict(type="attachment", uuid=str(uuid.uuid4()),
+                    sessionId=journal.session["session_id"], timestamp="2026-10-21T00:00:03Z",
+                    attachment=dict(type="goal_status", met=False, sentinel=True,
+                                    condition=spec["goal_startup"]["claude_a"])))
+            else:
+                spec["schema"] = "upgrade-startup-v2"
+            journal.append(error)
+            with self.subTest(label=label), self.assertRaises(ContractError):
+                self.scan(journal, spec)
+
+    def test_native_timestamp_overlap_keeps_parent_and_offset_order(self):
+        journal, spec, _, error = self.fixture(goal=True)
+        parent = str(uuid.uuid4())
+        journal.append(journal.message("user", "Original native local command continuation.",
+            at="2026-10-21T00:00:02.999Z", uuid=parent, parentUuid=error["parentUuid"], isMeta=True))
+        error["parentUuid"] = parent
+        terminal = journal.append(error)
+        value = self.scan(journal, spec)
+        self.assertEqual(value["outcome"]["native_record"], terminal)
+
+    def test_terminal_timestamp_before_original_startup_is_refused(self):
+        journal, spec, _, error = self.fixture(goal=True)
+        error["timestamp"] = "2026-10-21T00:00:00Z"
+        journal.append(error)
+        with self.assertRaisesRegex(ContractError, "INPUT_BOUNDARY_CHANGED"):
+            self.scan(journal, spec)
+
+    def test_real_model_work_or_executed_probe_prevents_pre_response_failure_claim(self):
+        from upgrade_startup_contract import readiness_command
+        for label in ("model_work", "probe"):
+            journal, spec, _, error = self.fixture(label=label)
+            response = journal.message("assistant", "Original work.",
+                at="2026-10-21T00:00:02Z", uuid=str(uuid.uuid4()), parentUuid=error["parentUuid"])
+            response["message"].update(id="msg_original", model="fixture-claude",
+                                        type="message", stop_reason="end_turn")
+            if label == "probe":
+                command = readiness_command(spec["controller"], "/pinned/python", "/pinned/rtk", "claude_a")
+                response["message"]["content"] = [dict(type="tool_use", name="Bash", id="toolu_probe",
+                                                        input={"command": command + " 2>&1"})]
+            journal.append(response)
+            error["parentUuid"] = response["uuid"]
+            journal.append(error)
+            with self.subTest(label=label), self.assertRaisesRegex(ContractError,
+                    "MODEL_RESPONSE_ALREADY_OBSERVED|PROBE_ALREADY_EXECUTED"):
+                self.scan(journal, spec)
+
+    def test_internal_retries_and_half_written_tail_are_not_terminal_proof(self):
+        journal, spec, _, error = self.fixture()
+        journal.append(dict(type="system", subtype="api_error", uuid=str(uuid.uuid4()),
+            parentUuid=error["parentUuid"], sessionId=journal.session["session_id"],
+            timestamp="2026-10-21T00:00:02Z", retryAttempt=3, maxRetries=10, error={"status": 502}))
+        with self.assertRaisesRegex(ContractError, "UNAVAILABLE_NOT_PROVEN"):
+            self.scan(journal, spec)
+        journal.append(error)
+        with journal.path.open("ab") as stream:
+            stream.write(b'{"type":"assistant"')
+        with self.assertRaisesRegex(ContractError, "NATIVE_EOF_INCOMPLETE"):
+            self.scan(journal, spec)
+
+    def test_changed_configuration_is_refused_without_rewriting_journal(self):
+        journal, spec, _, error = self.fixture()
+        journal.append(error)
+        original = file_ref(journal.path)
+        Path(self.configuration["path"]).write_text('{"model":"changed"}\n')
+        with self.assertRaises(ContractError):
+            self.scan(journal, spec)
+        self.assertEqual(file_ref(journal.path), original)
+
+
 class StartupFailureEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

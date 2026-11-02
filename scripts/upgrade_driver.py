@@ -342,6 +342,50 @@ class Driver:
         return self.halt("Original Codex turn " + cause + "; no replay: "
                          + failure["turn_id"], "FAILED", [ref])
 
+    def startup_failure(self, runtime_ref, result):
+        """A source-verified Claude startup terminal ends this comparison only.
+
+        Keep the exact inspector result and all missing slots. This neither
+        labels sustained availability nor authorizes input, restart or fallback.
+        """
+        observation = result.get("observation", {})
+        inspected = observation.get("result", {}) if isinstance(observation, dict) else None
+        failures = inspected.get("startup_failures", {}) if isinstance(inspected, dict) else {}
+        failed = {lane: value for lane, value in failures.items()
+                  if lane in ("claude_a", "claude_b")} if isinstance(failures, dict) else {}
+        if not failed:
+            return None
+        ref = result["evidence"]
+        require(result.get("status") == "NOT_READY" and json_ref(ref) == observation
+                and observation["runtime"] == runtime_ref and observation["returncode"] == 0
+                and observation["startup"] == json_ref(runtime_ref)["startup"]
+                and observation["command"] == "experiment-inspect" and observation["input_operations"] == 0
+                and inspected["schema"] == "upgrade-live-inspection-v2"
+                and inspected["startup"] == observation["startup"]
+                and inspected["ready"] is False and inspected["stopped"] is False
+                and inspected["input_operations"] == 0,
+                "original startup failure inspection changed")
+        for lane, failure in failed.items():
+            session = inspected["sessions"][lane]
+            event, pin = failure["outcome"], session["transcript"]
+            require(failure["schema"] == "upgrade-original-claude-startup-failure-v1"
+                    and failure["startup"] == inspected["startup"] and failure["lane"] == lane
+                    and failure["observed_eof"] == pin and failure["model_response_observed"] is False
+                    and failure["adoption_proven"] is False and failure["input_operations"] == 0
+                    and inspected["errors"][lane] == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
+                    and lane not in inspected["readiness"]
+                    and session["provider"] == "claude" and event["kind"] == "API_ERROR"
+                    and event["terminal"] is True and type(event.get("http_status")) is int
+                    and 400 <= event["http_status"] <= 599
+                    and event["session_id"] == session["session_id"]
+                    and event["surface_uuid"] == session["surface_uuid"]
+                    and all(event["native_record"][key] == pin[key] for key in ("path", "device", "inode")),
+                    "original Claude startup terminal changed")
+        causes = ", ".join(lane + " HTTP " + str(failed[lane]["outcome"]["http_status"])
+                           for lane in sorted(failed))
+        return self.halt("Original Claude startup ended with native API failure: " + causes
+                         + "; comparison failed, overall task continues; no replay", "FAILED", [ref])
+
     def _tick(self):
         state = schedule.status(self.registration_ref)
         if state["status"] in TERMINAL:
@@ -417,6 +461,9 @@ class Driver:
             require_running(self.registration_ref)
             self._check_overall_deadline()
             result = control(runtime_ref, "adopt")
+            failure = self.startup_failure(runtime_ref, result)
+            if failure is not None:
+                return failure
             return dict(result, step=step)
         adoption_ref = file_ref(adoption_path)
         validate_adoption(runtime_ref, adoption_ref, runtime=runtime)

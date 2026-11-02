@@ -27,6 +27,12 @@ failure ends that registered comparison attempt but does not cancel the user's
 overall task. Continue authorized independent implementation and review with the
 available original participants. Do not count a fallback workload as a completed
 paired sample or silently move an old task to a new controller.
+For a new controller, a complete original Claude journal can establish a terminal
+API failure before its first model response or readiness probe. Preserve the
+original input/Goal parent chain, session and transcript fence; an internal retry
+or quoted error is insufficient. The Driver ends that comparison promptly,
+keeps its failed and missing slots, and grants no restart or input authority.
+See [startup failure validation](docs/STARTUP-FAILURE-VALIDATION.md).
 For a prepared experiment's exact socket scope, verify the unique path set and
 each group's original path binding independently of JSON mapping order. Keep
 the registered experiment execution order unchanged. If preparation stops after

@@ -224,6 +224,15 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                            freeze_fence=session["transcript"])
         except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
             errors[lane] = str(exc)
+            if (stage is None and lane in ("claude_a", "claude_b") and lane in sessions
+                    and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+                from upgrade_startup_continuity import claude_startup_failure_evidence
+                try:
+                    context = json_ref(binding["context"])
+                    startup_failures[lane] = claude_startup_failure_evidence(native, sessions[lane], lane,
+                        spec, startup_ref, task_id=context["experiment_id"], now=time.time())
+                except (ValueError, OSError, KeyError, native.NativeDeliveryError) as failure_error:
+                    errors[lane] = "STARTUP_FAILURE_UNVERIFIED:" + str(failure_error)
             if (stage is None and lane == "codex" and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
                     and lane in sessions and startup_continuity_enabled(binding)):
                 from upgrade_startup_continuity import startup_failure_evidence
@@ -279,6 +288,6 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                 stopped=os.path.lexists(spec["stop_path"]) or (stage is not None and os.path.lexists(
                     Path(stage["control"]) / "stop.json")), input_operations=0,
                 **({"startup_failures": startup_failures}
-                   if stage is None and startup_continuity_enabled(binding) else {}),
+                   if stage is None and (startup_failures or startup_continuity_enabled(binding)) else {}),
                 **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}),
                 **({"recovery": recovery_ref} if recovery_ref is not None else {}))

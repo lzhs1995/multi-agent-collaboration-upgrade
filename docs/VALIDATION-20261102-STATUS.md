@@ -22,6 +22,12 @@ CI log SHA256: `0b24cc936f0c19abea84ee2329b5ca7b802e92440778ada1ebd71d9d2ae78660
 These are code checks. They establish no native task completion, automatic
 client loading, continuous Goal behavior, or collaboration speedup.
 
+The subsequent prospective Claude startup-failure repair passed 177 affected
+regressions, zero failures/errors, rc0. It recognizes an original terminal API
+failure before readiness and ends only that registered comparison promptly.
+The 3,108-test results above remain attached to the earlier candidate. See
+[the repair and its limits](STARTUP-FAILURE-VALIDATION.md).
+
 ## Native attempt and actual blocker
 
 The required station launch commands are:
@@ -62,6 +68,13 @@ then recorded 499 when the local deadline canceled its subsequent attempt.
 The observer made two client requests with no client retry; the gateway made
 four upstream attempts. These remain synthetic transport diagnostics and
 failed observations, with no native-client readiness or formal paired sample.
+
+At 2026-11-02T01:43:17Z, two new fixed-route synthetic requests returned actual
+HTTP429 JSON errors with `Retry-After` 40 and 28 seconds. The local station
+reported the selected `linxi-paid` route's 10 requests/minute limit. This is a
+rate-limit observation, not a completed response or a permanent account-failure
+finding. A subsequent bounded observation starts only after both advertised
+cooldown deadlines and remains separate from native/formal samples.
 
 ROOT changed no shared gateway settings and stopped no other task. A fresh
 completed response on the fixed station route is needed before a new

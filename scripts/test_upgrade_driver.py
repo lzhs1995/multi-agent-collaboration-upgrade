@@ -589,6 +589,77 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(report["runs"][0]["status"], "TIMEOUT")
         self.assertEqual(self.actions, [("launch", "pilot-B")])
 
+    def failed_startup_observation(self):
+        """A frozen inspector-shaped fixture; native grammar is tested separately."""
+        from test_orchestration_native import NativeFixture, STAMP
+        import cmux_native_delivery as native
+        runtime_ref = self.case.runtimes["pilot-B"]
+        runtime = json_ref(runtime_ref)
+        sessions, failures = {}, {}
+        for lane in ("claude_a", "claude_b"):
+            journal = NativeFixture(self.root, "claude")
+            terminal = journal.append(dict(type="assistant", timestamp=STAMP,
+                sessionId=journal.session["session_id"], uuid="77b66e85-b03c-4197-a485-4598031667fe",
+                isApiErrorMessage=True, apiErrorStatus=429))
+            session = dict(journal.session, transcript=native._pin_file(journal.path, "claude",
+                           journal.session["session_id"]))
+            sessions[lane] = session
+            failures[lane] = dict(schema="upgrade-original-claude-startup-failure-v1", lane=lane,
+                startup=runtime["startup"], observed_eof=session["transcript"], model_response_observed=False,
+                adoption_proven=False, input_operations=0, outcome=dict(kind="API_ERROR", terminal=True,
+                    http_status=429, session_id=session["session_id"], surface_uuid=session["surface_uuid"],
+                    native_record=terminal))
+        observation = dict(runtime=runtime_ref, startup=runtime["startup"], command="experiment-inspect",
+            returncode=0, input_operations=0, result=dict(schema="upgrade-live-inspection-v2",
+                startup=runtime["startup"], ready=False, stopped=False, input_operations=0,
+                sessions=sessions, startup_failures=failures, readiness={},
+                errors={lane: "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED" for lane in failures}))
+        ref = write_json(self.root / "startup-observation.json", observation, exclusive=True)
+        return dict(status="NOT_READY", evidence=ref, observation=observation, input_operations=0)
+
+    def test_original_claude_startup_errors_halt_before_timeout_and_never_relaunch(self):
+        self.driver.tick()
+        self.driver.tick()
+        result = self.failed_startup_observation()
+        with patch.object(driver, "control", return_value=result) as adopt, \
+                patch.object(self.driver, "_clock", return_value={"seconds": 100}):
+            failed = self.driver.tick()
+        self.assertEqual((failed["status"], failed["classification"]), ("HALTED", "FAILED"))
+        adopt.assert_called_once_with(self.case.runtimes["pilot-B"], "adopt")
+        self.assertEqual(json_ref(failed["halt"])["evidence"], [result["evidence"]])
+        self.assertIn("claude_a HTTP 429, claude_b HTTP 429", json_ref(failed["halt"])["reason"])
+        final = self.driver.tick()
+        report = json_ref(final["report"])
+        self.assertEqual((len(report["runs"]), len(report["pairs"])), (33, 15))
+        self.assertEqual(report["runs"][0]["status"], "FAILED")
+        self.assertEqual(self.actions, [("launch", "pilot-B")])
+        self.assertEqual(driver.schedule.status(self.case.ref)["permits"], 1)
+
+    def test_changed_return_or_non_native_terminal_does_not_become_verified_failure(self):
+        import copy
+        original = self.failed_startup_observation()
+        mutations = {
+            "unfrozen_return": lambda r: r["observation"].update(returncode=2),
+            "other_runtime": lambda r: r["observation"].update(runtime={"other": True}),
+            "stopped": lambda r: r["observation"]["result"].update(stopped=True),
+            "boolean_status": lambda r: r["observation"]["result"]["startup_failures"]["claude_a"]
+                ["outcome"].update(http_status=True),
+            "wrong_inode": lambda r: r["observation"]["result"]["startup_failures"]["claude_a"]
+                ["outcome"]["native_record"].update(inode=999999),
+            "adoption_claim": lambda r: r["observation"]["result"]["startup_failures"]["claude_a"]
+                .update(adoption_proven=True),
+        }
+        for label, mutate in mutations.items():
+            result = copy.deepcopy(original)
+            mutate(result)
+            if label != "unfrozen_return":
+                result["evidence"] = write_json(self.root / (label + "-observation.json"),
+                                                result["observation"], exclusive=True)
+            with self.subTest(label=label), self.assertRaises(ContractError):
+                self.driver.startup_failure(self.case.runtimes["pilot-B"], result)
+        self.assertEqual(self.actions, [])
+        self.assertEqual(driver.schedule.status(self.case.ref)["permits"], 0)
+
     def test_changed_frozen_source_halts_before_any_client_launch(self):
         self.driver.tick()
         (self.root / "source/pinned.txt").write_text("unregistered source drift")

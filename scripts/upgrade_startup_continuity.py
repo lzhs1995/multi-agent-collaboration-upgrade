@@ -20,7 +20,7 @@ from orchestration_common import (ContractError, canonical, checked_path, contra
                                   require, strict_json, verify_tree, within, write_json)
 from upgrade_readiness_evidence import (EXEC_COMMAND_KEYS, command_in_tool, native_records,
                                         readiness_evidence)
-from upgrade_native_outcomes import codex_outcomes, claude_outcomes, native_text
+from upgrade_native_outcomes import canonical_uuid, codex_outcomes, claude_outcomes, native_text
 from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt, readiness_command, readiness_prompt,
                                       startup_continuity_enabled)
 import upgrade_toml as tomllib
@@ -447,6 +447,87 @@ def startup_failure_evidence(native, session, lane, spec, startup_ref, *, task_i
     return dict(schema="upgrade-original-startup-failure-v1", startup=startup_ref, lane=lane,
         prompt=prompt_ref, model=model, model_record=relevant[-1][0], outcome=event,
         observed_eof=session["transcript"], adoption_proven=False, input_operations=0)
+
+
+@contract_errors("original Claude startup failure")
+def claude_startup_failure_evidence(native, session, lane, spec, startup_ref, *, task_id, now):
+    """Observe a terminal API error before any original Claude model response.
+
+    Process/kernel authority comes from the inspector. A configured model is
+    not a model response, and this observation grants no adoption or input.
+    Later model work, incomplete journals and unlinked errors remain unknown.
+    """
+    require(lane in ("claude_a", "claude_b") and session["provider"] == "claude"
+            and session["session_id"] == spec["clients"][lane]["session_id"],
+            "STARTUP_FAILURE_ORIGINAL_CLAUDE_REQUIRED")
+    now = finite(now, "startup failure clock")
+    configuration = spec["pins"][lane + "/settings.json"]
+    json_ref(configuration, "original Claude configuration")
+    command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
+                                spec["pins"]["rtk"]["path"], lane)
+    goal_mode = spec.get("schema") == GOAL_SCHEMA
+    prompt = None if goal_mode else readiness_prompt(spec["controller"],
+        spec["pins"]["python"]["path"], spec["pins"]["rtk"]["path"], lane)
+    rows, anchors, goals, descendants, seen_ids, size = [], [], [], set(), set(), 0
+    anchor_epoch = None
+    for ref, record in native_records(native, session):
+        require(len(rows) < MAX_STARTUP_RECORDS and size + ref["length"] <= MAX_STARTUP_BYTES,
+                "STARTUP_FAILURE_NATIVE_INTERVAL_PENDING")
+        size += ref["length"]
+        rows.append((ref, record))
+        if record.get("isSidechain") is True or record.get("sessionId") != session["session_id"]:
+            continue
+        if record.get("type") not in ("user", "assistant", "system", "attachment"):
+            continue
+        epoch = parse_time(record["timestamp"]).timestamp()
+        # Native local-command user records can be appended 1 ms out of
+        # timestamp order. Their original parent chain and file offsets order
+        # them; retain the clock bound and the anchor-to-terminal time check.
+        require(0 <= epoch <= now,
+                "STARTUP_FAILURE_NATIVE_CHRONOLOGY_CHANGED")
+        attachment = record.get("attachment")
+        is_anchor = not goal_mode and native_text(record, "claude", "user") == prompt
+        if (goal_mode and record.get("type") == "attachment" and isinstance(attachment, dict)
+                and attachment.get("type") == "goal_status"):
+            goals.append(ref)
+            is_anchor = (attachment.get("met") is False and attachment.get("sentinel") is True
+                         and attachment.get("failed") is not True
+                         and attachment.get("condition") == spec["goal_startup"][lane])
+        uid = canonical_uuid(record.get("uuid"), "native startup chain id")
+        require(uid not in seen_ids, "STARTUP_FAILURE_NATIVE_CHAIN_ID_REUSED")
+        seen_ids.add(uid)
+        if is_anchor:
+            anchors.append(ref)
+            anchor_epoch = epoch
+            descendants.add(uid)
+        elif record.get("parentUuid") in descendants:
+            descendants.add(uid)
+        message = record.get("message", {})
+        if record.get("type") == "assistant" and isinstance(message, dict):
+            for block in message.get("content", []) if isinstance(message.get("content"), list) else []:
+                if (isinstance(block, dict) and block.get("type") == "tool_use"
+                        and block.get("name") == "Bash" and command_in_tool(block.get("input"), command,
+                            ("command",))):
+                    require(False, "STARTUP_FAILURE_PROBE_ALREADY_EXECUTED")
+            require(record.get("isApiErrorMessage") is True or message.get("model") in (None, "<synthetic>"),
+                    "STARTUP_FAILURE_MODEL_RESPONSE_ALREADY_OBSERVED")
+    require(len(anchors) == 1 and (not goal_mode or len(goals) == 1),
+            "STARTUP_FAILURE_ORIGINAL_COMPLETE_INPUT_REQUIRED")
+    values = claude_outcomes(session, rows, task_id, now)
+    require(values and values[-1]["kind"] == "API_ERROR",
+            "STARTUP_FAILURE_UNAVAILABLE_NOT_PROVEN")
+    event = values[-1]
+    terminals = [(ref, record) for ref, record in rows if ref == event["native_record"]]
+    require(len(terminals) == 1 and terminals[0][1]["uuid"] in descendants
+            and anchors[0]["offset"] < event["native_record"]["offset"]
+            and anchor_epoch <= event["at_epoch"],
+            "STARTUP_FAILURE_INPUT_BOUNDARY_CHANGED")
+    with native._open(session["transcript"]["path"]) as stream:
+        native._check_file(stream, session)
+    json_ref(configuration, "unchanged original Claude configuration")
+    return dict(schema="upgrade-original-claude-startup-failure-v1", startup=startup_ref, lane=lane,
+        prompt=anchors[0], configuration=configuration, outcome=event, observed_eof=session["transcript"],
+        model_response_observed=False, adoption_proven=False, input_operations=0)
 
 
 def main(argv=None):
