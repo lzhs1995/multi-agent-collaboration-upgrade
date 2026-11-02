@@ -6,7 +6,7 @@ callback settlement while preserving native delivery evidence and independent
 acceptance. **Native collaboration speedup has not been demonstrated.**
 
 中文：保留 cmux 作为终端，MAC 作为原会话投递层，upgrade 负责本地依赖调度与批量推进。
-当前是独立私有实验技能，尚未推广到生产共享技能；Jev/TypeSafe 没有接入在线服务。
+当前是独立私有实验技能，尚未推广到生产共享技能。Jev/TypeSafe 的真实请求、账本与消费入口已实现并有一次实际诊断消费；正式工作流的效率比较仍未完成。
 
 ## Implemented behavior
 
@@ -31,7 +31,34 @@ New v3 experiments require an explicit private context and pinned complete
 controller. Historical attempts retain their original controller and evidence.
 Shared MAC/thesis-refiner integration has a separate maintainer.
 
-## Current validation — 2026-10-19
+## Current validation — 2026-11-02
+
+Candidate `52efd3c908125c938914e64f540b8f5cff6f7cde` passed the original local
+full suite: 3,108 tests, zero failures/errors, one skip, exit code 0. The four
+[CI jobs](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41360493790)
+each reported 3,108 tests with zero failures/errors. These validate the code,
+not live collaboration performance.
+
+The latest registered j5 attempt ended at its startup deadline before either
+Claude completed readiness: measured business runs **0/33**, formal JEV pairs
+**0/15**. Its original launch, CAS, permit, release and stop remain consumed.
+Required station commands were verified: `mg cx agentrouter-a` and
+`mg cc linxi -k linxi-s1`. Native and gateway records show upstream 429/503/502;
+the later two 150-second synthetic Claude-signature probes received keepalives
+only and timed out. Exact gateway records show 502 followed by local-cancel
+499 for each probe. HTTP 200 headers do not establish a completed model response.
+
+One separate real JEV diagnostic returned HTTP 200 with `jev-1.14.0` in
+2.816 seconds (556 input / 72 output tokens). ROOT read and used its work-kind
+judgment while code retained `NO_IDLE_LANE`. This is an actual consumer
+diagnostic, not a formal paired sample or an efficiency result. Account-level
+request count and charged cost remain unverified.
+
+See [current evidence and remaining acceptance](docs/VALIDATION-20261102-STATUS.md).
+Native efficiency and production adoption remain **NOT_ACCEPTED**. The original
+nine-hour deadline was missed; a later attempt does not reset it.
+
+## Historical validation — 2026-10-19
 
 Tested code and R30 frozen v25: `d8a158509680de53f9c8bdc8c541408c3054f605`.
 All 356 exported files match that commit. Subsequent delivery edits are
