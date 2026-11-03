@@ -101,8 +101,10 @@ EOF or `message_stop`; both reached the local timeout. Their overlap was
 establish two usable native clients or sustained capacity. No new native input,
 launch or formal sample was produced by these diagnostics.
 
-The conservative local disk observations at 15:25Z and 15:31Z were 35.31 GiB
-and 34.31 GiB. Both fall below the original 40 GiB prerequisite; no new S40
+The local disk observations at 15:25Z and 15:31Z were 35.31 GiB
+and 34.31 GiB. At 16:13:37Z (November 4, 00:13 local), a fresh
+`min(statvfs, APFS)` observation was **22.36 GiB**. These observations fall below
+the original 40 GiB prerequisite; no new S40
 admission has been received. S40's original surface initially displayed a Hooks
 review dialog and a draft; the successor preserved them. Once the original
 session could be authenticated and its input was empty, the successor submitted
@@ -111,9 +113,11 @@ record at 15:56:35.829Z proves notice reception. The original bridge observer
 had already ended pending; independent readback verified the later record at
 offset 1,862,291,175, SHA256
 `e9d9b4d6d394fb7b1b9de83cbbbd8081df59f9066a0f9f8885535e7d3f3beb31`.
-No repeat paste or recovery key was used. Full body consumption and a
-substantive reply remain unverified; the original session displayed provider
-502 errors. Owner43's original surface currently has no Claude process;
+The original controller subsequently reconciled the same attempt to
+`NATIVE_RECEIVED` with zero new input. No repeat paste or recovery key was used.
+Full body consumption and a substantive reply remain unverified; the original
+session displayed remote compaction 502 errors and `Goal stalled`.
+Owner43's original surface currently has no Claude process;
 historical freeze evidence is not a current live handshake.
 
 The proposed j6 preparation remains unexecuted. The original R663 preparation
