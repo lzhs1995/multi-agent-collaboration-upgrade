@@ -79,6 +79,44 @@ class AvailabilityTests(unittest.TestCase):
         for payload in ({"submission_state": "DELIVERY_QUEUED_AT_RECEIVER", "http_status": 401}, {"budget_below_phase_minimum": True}):
             self.assertFalse(a.classify_failure(payload)["takeover"])
 
+    def test_billing_status_is_independent_of_provider_message_language(self):
+        for message in ("余额不足", "", "Compte épuisé"):
+            with self.subTest(message=message):
+                result = a.classify_failure({"http_status": 402, "message": message})
+                self.assertEqual(result["category"], "UNAVAILABLE_BILLING")
+                self.assertFalse(result["retry"])
+        queued = a.classify_failure({"http_status": 402, "message": "余额不足",
+                                    "submission_state": "DELIVERY_QUEUED_AT_RECEIVER"})
+        self.assertEqual(queued["category"], "DELIVERY_QUEUED_AT_RECEIVER")
+        self.assertFalse(queued["takeover"])
+
+    def test_retry_advice_respects_longer_provider_delay_at_boundary(self):
+        payload = {"http_status": 503, "retryable": True, "retry_after_seconds": 300}
+        early = a.classify_failure(payload, attempts=1, now=160, last_attempt_at=100)
+        self.assertFalse(early["retry"])
+        self.assertEqual(early["retry_after_seconds"], 240)
+        due = a.classify_failure(payload, attempts=1, now=400, last_attempt_at=100)
+        self.assertTrue(due["retry"])
+        self.assertEqual(due["retry_after_seconds"], 0)
+        exhausted = a.classify_failure(payload, attempts=3, now=400, last_attempt_at=100)
+        self.assertFalse(exhausted["retry"])
+        short = a.classify_failure(dict(payload, retry_after_seconds=5),
+                                   attempts=1, now=159, last_attempt_at=100)
+        self.assertFalse(short["retry"])
+        self.assertEqual(short["retry_after_seconds"], 1)
+
+    def test_invalid_retry_delay_never_falls_back_to_a_shorter_default(self):
+        for delay in (-1, True, "300", float("nan"), float("inf")):
+            with self.subTest(delay=delay), self.assertRaisesRegex(a.AvailabilityError, "INVALID_RETRY_DELAY"):
+                a.classify_failure({"http_status": 503, "retryable": True,
+                                    "retry_after_seconds": delay},
+                                   attempts=1, now=160, last_attempt_at=100)
+
+    def test_explicit_retry_delay_without_original_attempt_time_is_not_immediately_eligible(self):
+        with self.assertRaisesRegex(a.AvailabilityError, "ORIGINAL_ATTEMPT_TIME"):
+            a.classify_failure({"http_status": 503, "retryable": True,
+                                "retry_after_seconds": 300}, attempts=1, now=160)
+
     def test_entry_points_block_before_delivery(self):
         import cmux_bridge
         state_file = self.root / "state.json"

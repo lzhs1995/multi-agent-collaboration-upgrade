@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -91,17 +92,24 @@ def classify_failure(payload, attempts=0, now=None, last_attempt_at=None):
     if payload.get("budget_below_phase_minimum"):
         return {"category": "SUPERVISOR_BUDGET_TOO_SHORT", "takeover": False, "retry": False}
     code = payload.get("http_status")
-    if "billing" in text or "payment" in text or "no-account" in text:
+    if (type(code) is int and code == 402) or "billing" in text or "payment" in text or "no-account" in text:
         return {"category": "UNAVAILABLE_BILLING", "takeover": True, "retry": False}
     if code in (401, 403):
         return {"category": "UNAVAILABLE_AUTH", "takeover": True, "retry": False}
     if code == 429 or "quota" in text or "usage limit" in text:
         return {"category": "UNAVAILABLE_QUOTA", "takeover": True, "retry": False}
     if code in (502, 503, 504, 524) and payload.get("retryable") is True:
+        delay = payload.get("retry_after_seconds", 60)
+        if type(delay) not in (int, float) or not math.isfinite(delay) or delay < 0:
+            raise AvailabilityError("INVALID_RETRY_DELAY")
+        if "retry_after_seconds" in payload and last_attempt_at is None:
+            raise AvailabilityError("RETRY_DELAY_REQUIRES_ORIGINAL_ATTEMPT_TIME")
+        delay = max(60, delay)
+        remaining = max(0, delay - (now - last_attempt_at)) if last_attempt_at is not None else 0
         exhausted = attempts >= 3
-        eligible = last_attempt_at is None or now - last_attempt_at >= 60
+        eligible = remaining == 0
         return {"category": "EXECUTOR_DEGRADED", "takeover": exhausted,
-                "retry": not exhausted and eligible, "retry_after_seconds": max(0, 60 - (now - last_attempt_at)) if last_attempt_at is not None else 0}
+                "retry": not exhausted and eligible, "retry_after_seconds": remaining}
     if payload.get("kind") in {"COMPACT_FAILED", "SURFACE_LOST", "REPEATED_NO_PROGRESS"}:
         return {"category": "EXECUTOR_DEGRADED", "takeover": True, "retry": False}
     return {"category": "UNCLASSIFIED", "takeover": False, "retry": False}
