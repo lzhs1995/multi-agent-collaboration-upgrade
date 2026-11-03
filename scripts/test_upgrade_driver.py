@@ -559,20 +559,27 @@ class DriverTests(unittest.TestCase):
     def test_cli_keeps_runner_lock_between_ticks_and_refuses_another_cli(self):
         args = ["run", "--config", self.ref["path"], "--config-sha256", self.ref["sha256"]]
         seen = []
+        original_sleep = time.sleep
 
         def during_wait(seconds):
             path = self.driver.root / "runner.lock"
             before = path.stat()
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
                 seen.append(driver.main(["tick", *args[1:]]))
+            self.assertIn("coordinator is already active", json.loads(output.getvalue())["error"])
             self.assertEqual((path.stat().st_dev, path.stat().st_ino), (before.st_dev, before.st_ino))
             self.assertEqual(driver.schedule.status(self.case.ref)["permits"], 0)
 
         with patch.object(driver.Driver, "tick", side_effect=[
                 {"status": "WAITING_ORIGINAL_SUPERVISOR"}, {"status": "COMPLETE", "report": {}}]) as tick, \
-                patch.object(driver.time, "sleep", side_effect=during_wait), \
+                patch.object(driver, "time", wraps=time) as driver_time, \
                 contextlib.redirect_stdout(io.StringIO()):
+            # Patching time.sleep globally also intercepts subprocess.wait's
+            # polling during the boot-id probe on macOS. Mock only this module.
+            driver_time.sleep.side_effect = during_wait
+            self.assertIs(time.sleep, original_sleep)
             self.assertEqual(driver.main(args), 0)
+            driver_time.sleep.assert_called_once()
         self.assertEqual(seen, [2])
         self.assertEqual(tick.call_count, 2)
         with exclusive_lock(self.driver.root / "runner.lock"):
