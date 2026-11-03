@@ -31,7 +31,26 @@ New v3 experiments require an explicit private context and pinned complete
 controller. Historical attempts retain their original controller and evidence.
 Shared MAC/thesis-refiner integration has a separate maintainer.
 
-## Current validation — 2026-11-03
+## Current validation — 2026-11-04
+
+Candidate `a6ea11abc6be699be83dec51812aa79e6fe1366c` passed all four
+[Ubuntu/macOS × Python 3.10/3.14 CI jobs](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41702862357).
+It adds language-independent HTTP 402 classification and respects a longer
+original retry delay. The runner-lock test now mocks only the driver's clock,
+preserving subprocess waits and the competing-runner rejection assertion.
+Related local suites passed 76 availability/delivery checks and 48 driver checks;
+these are separate suites, not a new local full-suite result.
+
+The user approved `claude-opus-5-5` for both arms of the next independent
+comparison. A bounded dependency-workload observation returned correct text,
+EOF and `message_stop` on both overlapping requests. An earlier observation
+returned two empty refusals and is retained. Latest actual disk capacity was
+27.895 GiB, below the unchanged 40 GiB prerequisite; S40 admission is pending.
+The new file-only preparation has been derived and checked, but j6 remains
+unregistered. Formal business **0/33**, JEV **0/15**, and native efficiency
+**NOT_ACCEPTED**. See [the current evidence](docs/VALIDATION-20261104-MODEL55.md).
+
+## Previous validated candidate — 2026-11-03
 
 Candidate `adc70616f443658273da1ca614667208d1148036` passed the original local
 full suite: 3,120 tests, zero failures/errors, one skip, exit code 0. The four

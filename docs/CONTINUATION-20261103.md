@@ -74,12 +74,26 @@ registration's own denominator and report attempt-level and whole-task results.
 
 ## Immediate next step
 
-Obtain S40's substantive reply and resolve the failed route/disk prerequisites. The
+November 4 update: the user approved `claude-opus-5-5` in both arms of the new
+independent comparison. Candidate `a6ea11ab` passed all four CI jobs, and S05
+returned two complete correct dependency-workload responses. The new private
+preparation script and factor table are ready for validation; no registration
+has been created. Latest actual disk capacity is below 40 GiB, and original S40
+admission remains pending. See [the current evidence](VALIDATION-20261104-MODEL55.md).
+The stages above retain the November 3 state as history; their source/model pins
+must not override this explicitly authorized prospective amendment.
+
+Obtain S40's substantive reply and restore the original disk prerequisite. The
 November 3 successor evidence is in
 `/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/SUCCESSOR-01a1a1e3-20261103-v1`.
 The original j6 preparation is
 `/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/R663-ROOT-PREREQUISITE-READBACK-AND-PREP-PREVIEW-v1/prepare_next_file_only_PREVIEW.py`.
 Do not manufacture `ROOT-PREREQUISITES-VERIFIED-v1.json` from failed checks.
+
+For the authorized model55 comparison, use the prepared successor entry instead:
+`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/SUCCESSOR-01a1a1e3-20261104-MODEL55-v3/prepare_model55_file_only.py`.
+Its default invocation validates without writing. `--apply` is reserved for
+verified original-format prerequisites and performs file preparation only.
 
 Local documentation, evidence review and preparation may continue independently.
 Do not repeat the already successful full suite unless code changes or a new
