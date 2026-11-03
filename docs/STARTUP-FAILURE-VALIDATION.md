@@ -29,9 +29,13 @@ the original host return rc0. Both original j5 HTTP429 terminals were recognized
 in a separate read-only historical reparse. That reparse did not reauthenticate
 live processes, update j5, adopt a lane or grant new input authority.
 
-The original candidate `52efd3c` passed 3,108 local tests and all four CI jobs.
-Those results belong to that candidate; they do not certify this changed source.
-The new full-suite/CI disposition is recorded separately when available.
+Candidate `adc70616f443658273da1ca614667208d1148036`, which includes this repair,
+subsequently passed the original full local suite: 3,120 tests, zero failures or
+errors, one skip, rc0, in 2,515.418 seconds. All four jobs in
+[CI run 41375226072](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41375226072)
+reported 3,120 tests with zero failures/errors. R660 retains the original logs,
+source pins and result records. The previous 3,108-test result belongs to
+`52efd3c`; neither candidate's code checks establish native workflow efficiency.
 
 Original evidence:
 `/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/R657-ROOT-CLAUDE-STARTUP-FAILURE-REPAIR-v1/`.

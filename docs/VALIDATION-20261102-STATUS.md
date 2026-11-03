@@ -1,4 +1,4 @@
-# Upgrade and JEV: current evidence — 2026-11-02
+# Upgrade and JEV: current evidence — updated 2026-11-03
 
 Status: ACTIVE / NOT_ACCEPTED. Current implementation work is CODEX_SOLO;
 review is `solo_self_review`. The original objective is usable Codex + two
@@ -7,25 +7,28 @@ upgrade-vs-MAC and JEV advisory-off/on efficiency measurements.
 
 ## Code verification
 
-Candidate: `52efd3c908125c938914e64f540b8f5cff6f7cde`.
-The original local full suite finished with 3,108 tests, zero failures/errors,
-one skip, exit code 0, in 2,741.679 seconds. Four CI jobs reported 3,108 tests
+Candidate: `adc70616f443658273da1ca614667208d1148036`.
+The original local full suite finished with 3,120 tests, zero failures/errors,
+one skip, exit code 0, in 2,515.418 seconds. Four CI jobs reported 3,120 tests
 with zero failures/errors:
-<https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41360493790>.
-The 483-member frozen source snapshot matched the candidate. Documentation
+<https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41375226072>.
+The 485-member frozen source snapshot matched the candidate. Documentation
 updates after that candidate do not constitute a new tested code revision.
 
-Local stdout SHA256: `95b77cc0d593acc73025368b223bcbfd98e9ce2c04fba6ae4954535c59b177d2`.
-Local stderr SHA256: `3fe9170582f65a16ea104066c3cf0be0f38bc88a4739c0c13b15c808724c746b`.
-CI log SHA256: `0b24cc936f0c19abea84ee2329b5ca7b802e92440778ada1ebd71d9d2ae78660`.
+Local stdout SHA256: `c8d25e1711b900188d8a864bcbc4f7c8b13a44c9b6eeb3c479c3fec1016d2b58`.
+Local stderr SHA256: `6522c519adb44dabe261c3a39e86437af5dbb6b8cd254f0c3774dea30388e821`.
+CI log SHA256: `ea808284cdae6dd47c3c21ee434f426ce0ea37b29fea212d8329d34ac955f308`.
+Source archive: 1,995,343 bytes,
+SHA256 `ff8e6fb301ce49f9167ac1f9cbd3fd167d29f2a409dc3f01e12479ec550e3fb1`.
 
 These are code checks. They establish no native task completion, automatic
 client loading, continuous Goal behavior, or collaboration speedup.
 
-The subsequent prospective Claude startup-failure repair passed 177 affected
+The prospective Claude startup-failure repair passed 177 affected
 regressions, zero failures/errors, rc0. It recognizes an original terminal API
 failure before readiness and ends only that registered comparison promptly.
-The 3,108-test results above remain attached to the earlier candidate. See
+It is included in the 3,120-test candidate above. The earlier 3,108-test results
+remain attached to `52efd3c908125c938914e64f540b8f5cff6f7cde`. See
 [the repair and its limits](STARTUP-FAILURE-VALIDATION.md).
 
 ## Native attempt and actual blocker
@@ -80,6 +83,44 @@ ROOT changed no shared gateway settings and stopped no other task. A fresh
 completed response on the fixed station route is needed before a new
 independently registered native comparison. Existing workspace/panes and
 context-bearing sessions remain the preferred continuation boundaries.
+
+## Successor observation — 2026-11-03
+
+The user authorized session `01a1a1e3-349c-7f32-bd3a-5328502f6f4b` to continue
+the original `01a159cf-6685-76b0-b779-b4572afab31b` task. Its current native
+surface is `86272C3F-AB2B-42FB-BAEF-65A072A29F27`, in the original workspace
+`6FB20312-9E66-43DB-AF09-92C3B18E1296`. Historical numeric surface references
+were renumbered. Original endpoint UUIDs, controllers and attempts remain bound;
+this continuation does not enroll the task in Herdr or reset j5.
+
+At 2026-11-03T15:25:58Z, two new synthetic Claude-signature requests used the
+same fixed station key, model and betas with a 60-second bound. Both returned
+HTTP 200 SSE headers and 36 bytes of keepalive comments. Neither returned text,
+EOF or `message_stop`; both reached the local timeout. Their overlap was
+60.001 seconds, with two client requests and zero client retries. This does not
+establish two usable native clients or sustained capacity. No new native input,
+launch or formal sample was produced by these diagnostics.
+
+The conservative local disk observations at 15:25Z and 15:31Z were 35.31 GiB
+and 34.31 GiB. Both fall below the original 40 GiB prerequisite; no new S40
+admission has been received. S40's original surface initially displayed a Hooks
+review dialog and a draft; the successor preserved them. Once the original
+session could be authenticated and its input was empty, the successor submitted
+one protected maintenance notice through MAC 0.4.84. A fresh original user
+record at 15:56:35.829Z proves notice reception. The original bridge observer
+had already ended pending; independent readback verified the later record at
+offset 1,862,291,175, SHA256
+`e9d9b4d6d394fb7b1b9de83cbbbd8081df59f9066a0f9f8885535e7d3f3beb31`.
+No repeat paste or recovery key was used. Full body consumption and a
+substantive reply remain unverified; the original session displayed provider
+502 errors. Owner43's original surface currently has no Claude process;
+historical freeze evidence is not a current live handshake.
+
+The proposed j6 preparation remains unexecuted. The original R663 preparation
+script needs complete overlapping route responses and a fresh S40 admission
+before it can register or materialize the next attempt. Do not write a passing
+prerequisite record from these failed observations. See the
+[ordered continuation plan](CONTINUATION-20261103.md).
 
 ## JEV implementation and measured limits
 
@@ -152,3 +193,7 @@ ROOT evidence root:
 - `R654-ROOT-LINXI-ROUTING-AND-CAPACITY-FINDING-v1`: original route record offsets/hashes and current configuration observations.
 - `R655-ROOT-FIXED-LINXI-CLIENT-SIGNATURE-CAPACITY-v1`: both 150-second synthetic probes and exact gateway records.
 - `R656-ROOT-J5-RECEIPT-AND-CURRENT-DELIVERY-v1`: verified existing receipt/log/consumer references and the current ROOT disposition.
+- `R660-ROOT-STARTUP-CANDIDATE-FULL-v1`: original 3,120-test local/CI results, 485-member source archive and final candidate record.
+- `R663-ROOT-PREREQUISITE-READBACK-AND-PREP-PREVIEW-v1`: gated j6 preparation script, still unexecuted.
+- `R666-INCOMING-V291-v1`: latest original S40 full-body readback and retained prerequisite failures.
+- `SUCCESSOR-01a1a1e3-20261103-v1`: user authorization, native identity, current capacity and two new bounded route observations.

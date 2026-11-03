@@ -31,12 +31,12 @@ New v3 experiments require an explicit private context and pinned complete
 controller. Historical attempts retain their original controller and evidence.
 Shared MAC/thesis-refiner integration has a separate maintainer.
 
-## Current validation — 2026-11-02
+## Current validation — 2026-11-03
 
-Candidate `52efd3c908125c938914e64f540b8f5cff6f7cde` passed the original local
-full suite: 3,108 tests, zero failures/errors, one skip, exit code 0. The four
-[CI jobs](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41360493790)
-each reported 3,108 tests with zero failures/errors. These validate the code,
+Candidate `adc70616f443658273da1ca614667208d1148036` passed the original local
+full suite: 3,120 tests, zero failures/errors, one skip, exit code 0. The four
+[CI jobs](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/41375226072)
+each reported 3,120 tests with zero failures/errors. These validate the code,
 not live collaboration performance.
 
 The latest registered j5 attempt ended at its startup deadline before either
@@ -54,7 +54,14 @@ judgment while code retained `NO_IDLE_LANE`. This is an actual consumer
 diagnostic, not a formal paired sample or an efficiency result. Account-level
 request count and charged cost remain unverified.
 
-See [current evidence and remaining acceptance](docs/VALIDATION-20261102-STATUS.md).
+Two new concurrent, bounded fixed-route diagnostics on November 3 again returned
+only keepalives: no answer text, EOF or `message_stop` within 60 seconds. These
+were synthetic capacity checks, with no native input and no formal samples.
+The successor retained the original MAC 0.4.84 controller and stopped j5;
+the proposed j6 comparison has not been registered or launched.
+
+See [current evidence and remaining acceptance](docs/VALIDATION-20261102-STATUS.md)
+and the [ordered continuation plan](docs/CONTINUATION-20261103.md).
 Native efficiency and production adoption remain **NOT_ACCEPTED**. The original
 nine-hour deadline was missed; a later attempt does not reset it.
 
