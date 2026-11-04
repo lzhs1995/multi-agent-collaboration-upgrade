@@ -11,12 +11,19 @@ import os
 from pathlib import Path
 import stat
 
-from orchestration_common import checked_path, read_regular, require
+from orchestration_common import ContractError, checked_path, read_regular, require
 from upgrade_live_integrity import artifact_ref
 
 POLICY = "codex-complete-package-v1"
 MAX_MEMBERS = 4096
 MAX_BYTES = 2 * 1024 ** 3
+
+
+def _resolve(path, failure):
+    try:
+        return path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ContractError(failure) from exc
 
 
 def _inventory(root):
@@ -30,7 +37,7 @@ def _inventory(root):
             key = path.relative_to(root).as_posix()
             require(len(result) < MAX_MEMBERS, "CODEX_PACKAGE_TOO_MANY_MEMBERS")
             if stat.S_ISLNK(mode):
-                target = path.resolve(strict=True)
+                target = _resolve(path, "CODEX_PACKAGE_LINK_ESCAPES_OR_IS_NOT_FILE:" + key)
                 require(target.is_relative_to(root) and target.is_file(),
                         "CODEX_PACKAGE_LINK_ESCAPES_OR_IS_NOT_FILE:" + key)
                 result[key] = {"kind": "symlink", "target": os.readlink(path),
@@ -62,18 +69,19 @@ def package_contract(package, codex_pin):
             and metadata.get("pathDir") == "codex-path", "CODEX_PACKAGE_LAYOUT_UNSUPPORTED")
     # Do not execute a shell launcher to guess its entrypoint. App-bundle
     # launchers need their own supported resolver before this policy can admit.
-    require((root / "bin/codex").resolve(strict=True) == binary,
+    require(_resolve(root / "bin/codex", "CODEX_PACKAGE_ENTRYPOINT_MISMATCH") == binary,
             "CODEX_PACKAGE_ENTRYPOINT_MISMATCH")
     for name in ("codex-resources", "codex-path"):
         require(inventory.get(name, {}).get("kind") == "directory",
                 "CODEX_PACKAGE_DIRECTORY_MISSING:" + name)
     helper_path = root / "bin/codex-code-mode-host"
     require(helper_path.is_file(), "CODEX_PACKAGE_CODE_MODE_HOST_MISSING")
-    helper = helper_path.resolve(strict=True)
+    helper = _resolve(helper_path, "CODEX_PACKAGE_CODE_MODE_HOST_MISSING")
     require(helper.is_relative_to(root), "CODEX_PACKAGE_HELPER_ESCAPES")
     # The registered direct executable must have the same adjacent host. A
     # valid bin/host elsewhere in the archive cannot fix a broken launch path.
-    require((binary.parent / "codex-code-mode-host").resolve(strict=True) == helper,
+    require(_resolve(binary.parent / "codex-code-mode-host",
+                     "CODEX_PACKAGE_ADJACENT_HOST_MISMATCH") == helper,
             "CODEX_PACKAGE_ADJACENT_HOST_MISMATCH")
     for path in (binary, helper):
         require(os.access(path, os.X_OK) and path.stat().st_mode & 0o111,

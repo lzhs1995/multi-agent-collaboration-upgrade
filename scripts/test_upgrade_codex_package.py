@@ -59,8 +59,22 @@ class PackageTests(unittest.TestCase):
 
     def test_packaged_host_without_adjacent_resolution_is_not_enough(self):
         (self.package / "codex-code-mode-host").unlink()
-        with self.assertRaises((ContractError, OSError)):
+        with self.assertRaisesRegex(ContractError, "CODEX_PACKAGE_ADJACENT_HOST_MISMATCH"):
             package_contract(self.package, self.pin)
+
+    def test_missing_entrypoint_and_dangling_links_have_named_diagnostics(self):
+        entry = self.package / "bin/codex"
+        entry.unlink()
+        with self.assertRaisesRegex(ContractError, "CODEX_PACKAGE_ENTRYPOINT_MISMATCH"):
+            package_contract(self.package, self.pin)
+        entry.symlink_to('../' + self.binary.name)
+        link = self.package / 'broken'
+        for target in ('does-not-exist', 'broken'):
+            with self.subTest(target=target):
+                link.symlink_to(target)
+                with self.assertRaisesRegex(ContractError, "CODEX_PACKAGE_LINK_ESCAPES_OR_IS_NOT_FILE:broken"):
+                    package_contract(self.package, self.pin)
+                link.unlink()
 
     def test_outside_link_and_directory_link_are_rejected(self):
         link = self.package / "other"

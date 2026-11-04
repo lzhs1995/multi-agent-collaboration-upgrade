@@ -62,6 +62,31 @@ class SocketBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, 'LAYOUT_UNVERIFIED'):
                 boundary.boundary_plan(self.alias, pin)
 
+    def test_each_verified_build_keeps_its_own_exact_binary_binding(self):
+        for sha, size in boundary.VERIFIED_BUILDS.items():
+            with self.subTest(sha=sha):
+                pin = dict(sha256=sha, bytes=size)
+                plan = boundary.boundary_plan(self.alias, pin)
+                self.assertEqual((plan['binary_sha256'], plan['binary_bytes']), (sha, size))
+                self.assertEqual(plan['physical'], self.plan['physical'])
+                self.assertEqual(boundary.validate_boundary(plan, self.alias, binary_pin=pin), self.alias)
+                for other_sha, other_size in boundary.VERIFIED_BUILDS.items():
+                    if other_sha != sha:
+                        with self.assertRaisesRegex(ContractError, 'LAYOUT_UNVERIFIED'):
+                            boundary.validate_boundary(plan, self.alias,
+                                binary_pin=dict(sha256=other_sha, bytes=other_size))
+
+    def test_binary_registry_rejects_unknown_and_malformed_declarations(self):
+        for pin in (None, [], {}, dict(sha256=[], bytes=1),
+                    dict(self.pin, bytes=True), dict(self.pin, bytes=float(self.pin['bytes'])),
+                    dict(self.pin, sha256='0' * 64)):
+            with self.subTest(pin=pin), self.assertRaisesRegex(ContractError, 'LAYOUT_UNVERIFIED'):
+                boundary.boundary_plan(self.alias, pin)
+        for key, value in (('binary_sha256', '0' * 64), ('binary_bytes', True),
+                           ('binary_bytes', float(self.pin['bytes']))):
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(ContractError, 'LAYOUT_UNVERIFIED'):
+                boundary.validate_boundary(dict(self.plan, **{key: value}), self.alias)
+
     def test_wrong_alias_regular_socket_symlink_lock_hardlink_and_mode_refuse(self):
         self.endpoint()
         self.alias.unlink()
