@@ -363,6 +363,9 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     require(isinstance(protected, list) and protected == sorted({str(uuid.UUID(x)) for x in protected}),
             "STARTUP_PROTECTED_ENDPOINTS_CHANGED")
     pins = spec["pins"]
+    if "codex_package" in binding:
+        from upgrade_codex_package import verify_package_contract
+        verify_package_contract(binding["codex_package"], pins["codex"])
     required = {"codex", "claude", "cmux", "rtk", "node", "python", "codex_original_wrapper", "claude_original_wrapper",
                 "codex_wrapper", "claude_wrapper", "claude_ps", "helper", "codex-hooks.json", "claude-settings.json",
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
