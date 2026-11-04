@@ -17,6 +17,20 @@ from orchestration_common import checked_path, require
 SOCKET_POLICY = "private-cli-roots-exact-codex-socket-v2"
 CODEX_SHA256 = "56fe2ab47d01b97375f2d5f213562d53144e77dd03dd75a19bdf344ec1261921"
 CODEX_BYTES = 646156856
+# Exact builds with the same independently checked advertised-path SHA256
+# layout. This is not a version/name allow rule; new builds need fresh proof.
+VERIFIED_BUILDS = {
+    CODEX_SHA256: CODEX_BYTES,
+    "d8990e3ee7acfbc26f91265b12a1a83f0fee40d0e0f8f1f40a37d4ec21f499cf": 260293200,
+}
+
+
+def _verified_binary(pin):
+    require(isinstance(pin, dict) and isinstance(pin.get("sha256"), str)
+            and type(pin.get("bytes")) is int
+            and VERIFIED_BUILDS.get(pin["sha256"]) == pin["bytes"],
+            "SOCKET_BINARY_LAYOUT_UNVERIFIED")
+    return pin["sha256"], pin["bytes"]
 
 
 def shared_directory():
@@ -41,8 +55,7 @@ def _directory_identity(path):
 
 def boundary_plan(advertised, binary_pin):
     """Compute a read-only proposal. Refuse unverified builds and occupied paths."""
-    require(binary_pin.get("sha256") == CODEX_SHA256 and binary_pin.get("bytes") == CODEX_BYTES,
-            "SOCKET_BINARY_LAYOUT_UNVERIFIED")
+    binary_sha256, binary_bytes = _verified_binary(binary_pin)
     advertised = advertised_path(advertised)
     directory = shared_directory()
     physical = directory / hashlib.sha256(os.fsencode(advertised)).hexdigest()
@@ -50,12 +63,15 @@ def boundary_plan(advertised, binary_pin):
     value = dict(schema="upgrade-exact-codex-socket-v1", advertised=str(advertised),
                  physical=str(physical), lock=str(physical.with_suffix(".lock")),
                  directory_identity=_directory_identity(directory), uid=os.geteuid(),
-                 binary_sha256=CODEX_SHA256, binary_bytes=CODEX_BYTES)
+                 binary_sha256=binary_sha256, binary_bytes=binary_bytes)
     validate_boundary(value, advertised, binary_pin=binary_pin, fresh=True)
     return value
 
 
 def validate_boundary(value, advertised, *, binary_pin=None, fresh=False, live=False):
+    require(isinstance(value, dict), "SOCKET_BOUNDARY_CHANGED")
+    binary_sha256, binary_bytes = _verified_binary(dict(
+        sha256=value.get("binary_sha256"), bytes=value.get("binary_bytes")))
     advertised = advertised_path(advertised)
     directory = shared_directory()
     physical = directory / hashlib.sha256(os.fsencode(advertised)).hexdigest()
@@ -63,10 +79,10 @@ def validate_boundary(value, advertised, *, binary_pin=None, fresh=False, live=F
     expected = dict(schema="upgrade-exact-codex-socket-v1", advertised=str(advertised),
                     physical=str(physical), lock=str(lock),
                     directory_identity=_directory_identity(directory), uid=os.geteuid(),
-                    binary_sha256=CODEX_SHA256, binary_bytes=CODEX_BYTES)
+                    binary_sha256=binary_sha256, binary_bytes=binary_bytes)
     require(value == expected and len(os.fsencode(physical)) <= 103, "SOCKET_BOUNDARY_CHANGED")
     if binary_pin is not None:
-        require(binary_pin.get("sha256") == CODEX_SHA256 and binary_pin.get("bytes") == CODEX_BYTES,
+        require(_verified_binary(binary_pin) == (binary_sha256, binary_bytes),
                 "SOCKET_BINARY_LAYOUT_UNVERIFIED")
     if fresh:
         require(not any(os.path.lexists(p) for p in (advertised, physical, lock)),

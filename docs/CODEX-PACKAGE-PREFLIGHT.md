@@ -41,3 +41,15 @@ the materializer's no-arm refusal, actual frozen-module imports and startup
 rechecks, helper loss during a hold in all three lanes, and old API behavior.
 No test starts an agent or replays j6. Full-package hashing adds preparation and
 validation cost; do not omit it from future measured cold-start timing.
+
+The package check deliberately also runs with `verify_pins=False`: that option
+skips ordinary artifact hashing, while this semantic package requirement remains
+mandatory. The post-hold check must never reuse a cached earlier result. One
+independent read-only check of the 354.5 MB official 0.164.0 package took about
+0.4 seconds; measure the actual overhead in the next registered comparison.
+Missing entrypoints, adjacent hosts and dangling or cyclic links return named
+package contract errors instead of leaking a raw path-resolution exception.
+
+The socket policy has a separate exact-build registry. Complete package
+verification alone does not admit a new binary's socket layout. See
+[official socket compatibility](OFFICIAL-SOCKET-COMPATIBILITY.md).
