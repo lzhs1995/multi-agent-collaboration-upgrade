@@ -107,7 +107,7 @@ def native_readers(name, text):
                             "import upgrade_native_roots as private_roots")
         node = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "client_candidates")
         text = edit_nodes(text, [(node, 'def client_candidates():\n'
-            '    matcher = private_roots.codex_process_matcher()\n'
+            '    matcher = private_roots.codex_process_matcher(globals().get("official_codex"))\n'
             '    return [pid for pid, path in private_process.inventory(matcher)]')])
         return standalone_identity(_terminal_reads(text))
     if name == "cmux_native_delivery.py":

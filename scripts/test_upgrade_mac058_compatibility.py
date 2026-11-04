@@ -259,22 +259,40 @@ class UpstreamTransformTests(unittest.TestCase):
         self.assertEqual(namespace["collect"](env), standalone.return_value)
         standalone.assert_called_once_with(env, [])
 
-    def test_private_inventory_retains_the_registered_official_codex_name(self):
+    def test_private_inventory_keeps_mixed_names_for_original_ambiguity_checks(self):
+        import upgrade_native_roots as roots
         after = native_readers("cmux_daemon_identity.py", source("cmux_daemon_identity.py"))
-        selected = "codex-aarch64-apple-darwin"
-        rows = [(101, "/official/" + selected), (102, "/old/codex"), (103, "/native/claude")]
-        observed = []
+        official_path = "/official/codex-aarch64-apple-darwin"
+        rows = [(101, official_path), (102, "/old/codex"), (103, "/native/claude")]
 
         def inventory(matcher):
-            observed.extend(path for _, path in rows if matcher(path))
             return [(pid, path) for pid, path in rows if matcher(path)]
 
-        namespace = dict(private_process=types.SimpleNamespace(inventory=inventory),
-                         private_roots=types.SimpleNamespace(
-                             codex_process_matcher=lambda: lambda path: Path(path).name == selected))
+        for pin in (official_path, "/old/codex"):
+            with self.subTest(pin=pin), patch.object(roots, "executable_pins", return_value={
+                    "codex": {"path": pin}, "claude": {"path": "/native/claude"}}):
+                namespace = dict(private_process=types.SimpleNamespace(inventory=inventory),
+                                 private_roots=roots,
+                                 official_codex=lambda path: path == official_path)
+                definitions(after, {"client_candidates"}, namespace)
+                self.assertEqual(namespace["client_candidates"](), [101, 102])
+                # A legacy source without the verifier still keeps both the
+                # registered name and plain codex, without guessing new names.
+                del namespace["official_codex"]
+                expected = [101, 102] if pin == official_path else [102]
+                self.assertEqual(namespace["client_candidates"](), expected)
+
+    def test_private_discovery_preserves_original_verifier_errors(self):
+        import upgrade_native_roots as roots
+        after = native_readers("cmux_daemon_identity.py", source("cmux_daemon_identity.py"))
+        verifier = Mock(side_effect=RuntimeError("original discovery unavailable"))
+        namespace = dict(private_roots=roots, official_codex=verifier,
+                         private_process=types.SimpleNamespace(
+                             inventory=lambda matcher: matcher("/official/codex-aarch64-apple-darwin")))
         definitions(after, {"client_candidates"}, namespace)
-        self.assertEqual(namespace["client_candidates"](), [101])
-        self.assertEqual(observed, ["/official/" + selected])
+        with patch.object(roots, "executable_pins", return_value={"codex": {"path": "/old/codex"}}):
+            with self.assertRaisesRegex(RuntimeError, "original discovery unavailable"):
+                namespace["client_candidates"]()
 
     def test_unknown_native_rpc_import_shape_is_refused_before_execution(self):
         before = source("cmux_codex_input.py")

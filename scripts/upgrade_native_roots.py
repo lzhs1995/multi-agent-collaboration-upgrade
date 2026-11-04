@@ -61,12 +61,16 @@ def candidate_process_matcher():
     return lambda name: Path(name).name in names
 
 
-def codex_process_matcher():
+def codex_process_matcher(official=None):
     # Discovery only; the native collector must still verify the process and
     # foreground evidence. Do not drop a registered official executable merely
     # because its publisher uses a platform-qualified filename.
-    name = Path(executable_pins()["codex"]["path"]).name
-    return lambda candidate: Path(candidate).name == name
+    names = {"codex", Path(executable_pins()["codex"]["path"]).name}
+    # Retain the source controller's other official candidates too. A second
+    # executable must not disappear from ambiguity checks just because its
+    # filename differs from this experiment's pin. Admission stays unchanged.
+    return lambda candidate: (Path(candidate).name in names
+                              or (official is not None and official(candidate)))
 
 
 def executable_provider(process):
