@@ -572,8 +572,16 @@ assert delivery.private_process is inventory
 assert identity.private_process.inventory is inventory.inventory
 assert delivery.private_process.inventory_for_tty is inventory.inventory_for_tty
 p = identity.process(os.getpid())
-rows = inventory.inventory(lambda name: Path(name).name == Path(p['executable']).name)
-assert sum(int(pid) == os.getpid() for pid, path in rows) == 1
+# Read the real kernel membership inside Seatbelt, then use only this stable
+# process for the materialized path/identity integration check. Unrelated live
+# processes can exec/reparent during a global scan, which must refuse rather
+# than make this fixture depend on machine-wide inactivity. The syscall race
+# tests cover that refusal; this fixture neither retries nor ignores it.
+assert inventory._pids(inventory._lib()).count(os.getpid()) == 1
+from unittest.mock import patch
+with patch.object(inventory, '_pids', return_value=[os.getpid()]):
+    rows = inventory.inventory(lambda name: Path(name).name == Path(p['executable']).name)
+assert rows == [[str(os.getpid()), p['executable']]], rows
 expected_tty = os.environ['TEST_CONTROLLING_TTY']
 assert inventory.terminal(p) == expected_tty
 if expected_tty != '?':
