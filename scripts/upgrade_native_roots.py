@@ -61,6 +61,14 @@ def candidate_process_matcher():
     return lambda name: Path(name).name in names
 
 
+def codex_process_matcher():
+    # Discovery only; the native collector must still verify the process and
+    # foreground evidence. Do not drop a registered official executable merely
+    # because its publisher uses a platform-qualified filename.
+    name = Path(executable_pins()["codex"]["path"]).name
+    return lambda candidate: Path(candidate).name == name
+
+
 def executable_provider(process):
     for provider, pin in executable_pins().items():
         if process["executable"] != pin["path"]:

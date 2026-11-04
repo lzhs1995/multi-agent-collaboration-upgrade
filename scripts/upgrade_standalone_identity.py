@@ -11,13 +11,26 @@ from pathlib import Path
 import uuid
 
 
+def native_codex(native, process):
+    """Retain legacy names; delegate official names to the original verifier.
+
+    Older controllers without that capability still refuse unfamiliar names.
+    A basename match alone never admits a newly supported official executable.
+    """
+    if Path(process.get("executable", "")).name == "codex":
+        return True
+    verify = getattr(native, "official_codex", None)
+    return bool(verify is not None and verify(process.get("executable", ""),
+                                            process.get("argv"), process.get("file_identity")))
+
+
 def collect(env, chain, *, payload=None):
     import cmux_daemon_identity as native
     import cmux_foreground_thread as foreground
     import upgrade_process_inventory as inventory
 
     candidates = [(i, p) for i, p in enumerate(chain)
-                  if Path(p.get("executable", "")).name == "codex"
+                  if native_codex(native, p)
                   and p.get("argv", [])[1:2] != ["app-server"]]
     if not candidates:
         return None
@@ -54,7 +67,10 @@ def collect(env, chain, *, payload=None):
         if any(item["env"].get(key) != client["env"][key]
                for key in ("CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID")):
             raise native.IdentityError("standalone kernel scope differs")
-    selected = foreground.read(client)
+    # Modern source controllers already define the official foreground fallback
+    # (including ambiguous-writer refusal). Preserve it in the private adapter.
+    read_foreground = getattr(native, "foreground_selection", foreground.read)
+    selected = read_foreground(client)
     if not isinstance(selected, dict) or selected.get("thread_id") != session:
         # Inherited root selectors never grant a child the foreground inbox.
         raise native.IdentityError("standalone native foreground thread missing or changed")
@@ -66,7 +82,7 @@ def collect(env, chain, *, payload=None):
     again, daemon = native._ancestry()
     if again != chain or daemon is not None or native.process(client["pid"]) != client:
         raise native.IdentityError("standalone native ancestry drift")
-    if foreground.read(client) != selected:
+    if read_foreground(client) != selected:
         raise native.IdentityError("standalone native foreground changed during observation")
     return dict(session=session, daemon=None, client=dict(client, tty=tty),
                 chain=[current] + chain, foreground=selected, caller_kind="standalone_native",

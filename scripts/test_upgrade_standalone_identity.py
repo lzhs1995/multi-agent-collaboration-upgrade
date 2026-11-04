@@ -75,6 +75,50 @@ class StandaloneIdentityTests(unittest.TestCase):
         self.assertIsNone(collect(self.env, self.chain))
         self.process.assert_not_called()
 
+    def test_official_name_requires_original_verifier_and_foreground_reader(self):
+        official = "/native/codex-aarch64-apple-darwin"
+        for p in (self.client, self.server):
+            p["executable"] = official
+            p["argv"][0] = official
+        verifier = Mock(side_effect=lambda path, argv, identity: path == official
+                        and argv[0] == official and identity in (self.client["file_identity"],
+                                                               self.server["file_identity"]))
+        selected = Mock(return_value=self.selection)
+        with patch.object(native, "official_codex", verifier, create=True), \
+                patch.object(native, "foreground_selection", selected, create=True):
+            proof = collect(self.env, self.chain)
+        self.assertEqual(proof["client"]["pid"], self.client["pid"])
+        self.assertEqual(proof["foreground"], self.selection)
+        self.foreground.assert_not_called()
+        self.assertEqual(selected.call_count, 2)
+        self.assertIn((official, self.client["argv"], self.client["file_identity"]),
+                      [call.args for call in verifier.call_args_list])
+
+    def test_official_name_without_original_verification_is_not_identity(self):
+        for p in (self.client, self.server):
+            p["executable"] = "/native/codex-aarch64-apple-darwin"
+            p["argv"][0] = p["executable"]
+        for verifier in (None, Mock(return_value=False)):
+            with self.subTest(verifier=verifier), \
+                    patch.object(native, "official_codex", verifier, create=True):
+                self.assertIsNone(collect(self.env, self.chain))
+        self.process.assert_not_called()
+        self.foreground.assert_not_called()
+
+    def test_original_foreground_ambiguity_is_not_replaced_with_legacy_evidence(self):
+        with patch.object(native, "foreground_selection", create=True,
+                          side_effect=native.IdentityError("multiple writable rollouts")):
+            with self.assertRaisesRegex(native.IdentityError, "multiple writable rollouts"):
+                collect(self.env, self.chain)
+        self.foreground.assert_not_called()
+
+    def test_original_foreground_drift_is_still_refused(self):
+        with patch.object(native, "foreground_selection", create=True,
+                          side_effect=[self.selection, dict(self.selection, thread_id=CHILD)]):
+            with self.assertRaisesRegex(native.IdentityError, "foreground changed"):
+                collect(self.env, self.chain)
+        self.foreground.assert_not_called()
+
     def test_two_native_clients_are_ambiguous(self):
         self.chain.append(dict(self.client, pid=12345))
         with self.assertRaisesRegex(native.IdentityError, "ambiguous"):

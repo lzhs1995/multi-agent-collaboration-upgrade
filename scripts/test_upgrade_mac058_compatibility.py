@@ -259,6 +259,23 @@ class UpstreamTransformTests(unittest.TestCase):
         self.assertEqual(namespace["collect"](env), standalone.return_value)
         standalone.assert_called_once_with(env, [])
 
+    def test_private_inventory_retains_the_registered_official_codex_name(self):
+        after = native_readers("cmux_daemon_identity.py", source("cmux_daemon_identity.py"))
+        selected = "codex-aarch64-apple-darwin"
+        rows = [(101, "/official/" + selected), (102, "/old/codex"), (103, "/native/claude")]
+        observed = []
+
+        def inventory(matcher):
+            observed.extend(path for _, path in rows if matcher(path))
+            return [(pid, path) for pid, path in rows if matcher(path)]
+
+        namespace = dict(private_process=types.SimpleNamespace(inventory=inventory),
+                         private_roots=types.SimpleNamespace(
+                             codex_process_matcher=lambda: lambda path: Path(path).name == selected))
+        definitions(after, {"client_candidates"}, namespace)
+        self.assertEqual(namespace["client_candidates"](), [101])
+        self.assertEqual(observed, ["/official/" + selected])
+
     def test_unknown_native_rpc_import_shape_is_refused_before_execution(self):
         before = source("cmux_codex_input.py")
         anchor = "from cmux_codex_rpc import DaemonRPC, RPCError"

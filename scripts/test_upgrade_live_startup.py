@@ -933,6 +933,32 @@ class InputGateTests(unittest.TestCase):
 
 
 class NativeRootTests(unittest.TestCase):
+    def test_codex_discovery_uses_registered_name_without_admitting_same_named_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp).resolve()
+            path = base / "codex-aarch64-apple-darwin"
+            path.write_bytes(b"registered native fixture")
+            pin = artifact_ref(path)
+            st = path.stat()
+            proc = dict(pid=23, birth=[1, 2], executable=str(path),
+                        file_identity=[st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns])
+            pins = {"codex": pin, "claude": {"path": "/pinned/claude"}}
+            with patch.object(roots, "executable_pins", return_value=pins), \
+                    patch.object(roots, "process_root", return_value=base):
+                candidate = roots.codex_process_matcher()
+                self.assertTrue(candidate(str(path)))
+                self.assertFalse(candidate("/other/codex"))
+                self.assertFalse(candidate("/pinned/claude"))
+                self.assertEqual(roots.executable_provider(proc), "codex")
+                other = base / "other" / path.name
+                other.parent.mkdir()
+                other.write_bytes(path.read_bytes())
+                self.assertTrue(candidate(str(other)))  # Discovery is not admission.
+                self.assertIsNone(roots.executable_provider(dict(proc, executable=str(other))))
+                path.write_bytes(b"changed native fixture!!!")
+                with self.assertRaises((ContractError, ValueError)):
+                    roots.executable_provider(proc)
+
     def test_frozen_name_matcher_does_not_cache_selected_executable_integrity(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp).resolve() / '2.1.226'
