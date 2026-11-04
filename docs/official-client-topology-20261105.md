@@ -76,7 +76,25 @@ Evaluate a separately registered task/thread contract for future remote runs:
    Only after that stage passes may the unchanged 33/15 business matrix resume
    under a new registration. Preserve old attempts, deadlines and costs.
 
-This design is under independent review and is not implemented or activated.
+The original independent S40 and Claude consultations found this task-thread
+design viable, with the enrollment/caller/visibility gaps listed above still
+open. It is not implemented or activated as a complete transport.
+
+The new `upgrade_rpc_peer.py` implements one narrow prerequisite: kernel peer
+PID and uid plus an exact server incarnation/executable/argv check on the
+connected Unix socket, with a second read to catch drift. Local socket tests
+cover a different same-user server, changed birth, executable and argv, and
+mid-read replacement. A read-only diagnostic against the actual original j7
+server confirmed peer PID 46405 and the pinned birth before and after real
+`thread/read`. The result explicitly says `foreground_authentication=false`
+and `enrollment_proven=false`. This module is not connected to any legacy path.
+
+Separately, the original frozen readiness parser correlated the exact native
+startup prompt, one successful Codex probe, its nested command result and
+automatic PreToolUse/PostToolUse records against the server-owned original
+rollout. That is historical evidence for the new design; it neither supplies
+a current invoking-tool proof nor changes j7's TIMEOUT or absent adoption.
+
 If its required evidence cannot be obtained with the official client, the
 alternative is an explicitly registered embedded topology with guarded
 terminal input. That alternative must report native RPC as unavailable and
