@@ -955,7 +955,8 @@ class NativeRootTests(unittest.TestCase):
                     patch.object(roots, "process_root", return_value=base):
                 candidate = roots.codex_process_matcher()
                 self.assertTrue(candidate(str(path)))
-                self.assertFalse(candidate("/other/codex"))
+                self.assertTrue(candidate("/other/codex"))
+                self.assertIsNone(roots.executable_provider(dict(proc, executable="/other/codex")))
                 self.assertFalse(candidate("/pinned/claude"))
                 self.assertEqual(roots.executable_provider(proc), "codex")
                 other = base / "other" / path.name

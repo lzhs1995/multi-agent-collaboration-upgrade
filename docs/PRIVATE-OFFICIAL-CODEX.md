@@ -24,3 +24,12 @@ installed client, or migrate any existing controller or experiment.
 Offline tests establish adapter behavior and rejection boundaries only. A new
 experiment still needs the original signed-package checks and actual tool,
 automatic-hook, delivery and acceptance evidence before a readiness claim.
+
+## Discovery preserves ambiguity
+
+Private discovery includes the registered executable name, plain `codex`, and
+every additional candidate recognized by the original controller's official
+verifier. Registering one filename must not hide a second client with a different
+filename. The source collector still checks the selected process, foreground
+thread and uniqueness; discovering a candidate never admits it. Controllers
+without an official verifier retain the registered and legacy names only.
