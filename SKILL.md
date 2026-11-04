@@ -17,6 +17,13 @@ remain unchanged. Actual automatic hook adoption must be verified before live in
 
 The inherited transport contract below remains a compatibility reference. v2
 campaigns retain their original controller and evidence; v3 is a separate format.
+New CLI materialization requires `--codex-package` and binds the selected main
+executable, its adjacent code-mode helper and the observed package contents.
+Verify official archive provenance first; this local closure check does not
+prove tool readiness. Preserve the real probe and old failed startup attempts.
+New Python callers must explicitly pass `codex_package` to obtain this guard;
+legacy API calls are not retroactively covered. See
+[Codex package preflight](docs/CODEX-PACKAGE-PREFLIGHT.md).
 Offline estimates, replay and passing tests do not prove live efficiency. Report
 the paired benchmark and correctness results before considering production use.
 The current three-availability-state integration requirements and their evidence

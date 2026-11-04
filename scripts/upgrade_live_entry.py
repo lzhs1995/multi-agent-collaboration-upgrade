@@ -475,6 +475,11 @@ def start_client(ref, spec, binding, lane):
         # Held before chdir, the Codex server and exec: the pane's exact UUIDs
         # exist, but no native client, provider request or input does yet.
         hold(ref, spec, binding, lane, launched)
+    if "codex_package" in binding:
+        # A held lane can wait for hours after load_startup validated its pins.
+        # Recheck after release, before any server or native client starts.
+        from upgrade_codex_package import verify_package_contract
+        verify_package_contract(binding["codex_package"], spec["pins"]["codex"])
     os.chdir(spec["work_root"])
     os.umask(0o077)
     if lane == "codex":

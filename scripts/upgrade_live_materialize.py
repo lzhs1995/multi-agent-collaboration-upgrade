@@ -29,6 +29,7 @@ from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_B
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
+from upgrade_codex_package import package_contract
 
 SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgrade_existing_workspace.py",
            "upgrade_native_roots.py", "upgrade_client_isolation.py", "upgrade_live_entry.py",
@@ -40,7 +41,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_toml.py", "upgrade_toml_re.py",
            "upgrade_child_hook.py", "upgrade_child_budget_protocol.py",
            "upgrade_native_outcomes.py", "upgrade_startup_continuity.py", "upgrade_readiness_evidence.py",
-           "upgrade_stage_fence.py")
+           "upgrade_stage_fence.py", "upgrade_codex_package.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -80,7 +81,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      goal_startup=None, lane_instructions=None, response_observation=False,
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
-                     semantic_sender=False, existing_split_targets=None, existing_tab_targets=None):
+                     semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
+                     codex_package=None):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -135,6 +137,10 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         path = checked_path(value)
         require(path.is_file() and os.access(path, os.X_OK), "startup executable missing: " + name)
         executable_pins[name] = artifact_ref(path)
+    # New CLI preparations require the package. The optional Python parameter
+    # retains old fixture/caller compatibility; it does not upgrade old runtimes.
+    package = (package_contract(codex_package, executable_pins["codex"])
+               if codex_package is not None else None)
     station = None
     if station_launchers is not None:
         require(isinstance(station_launchers, dict) and set(station_launchers) == {"mg", "magpie", "codex", "claude"}
@@ -274,6 +280,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["pre_exec_hold"] = PRE_EXEC_HOLD
     if station is not None:
         binding["station_launchers"] = station
+    if package is not None:
+        binding["codex_package"] = package
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -470,6 +478,8 @@ def main(argv=None):
     for name in ("codex", "claude", "codex-wrapper", "claude-wrapper", "cmux", "rtk", "node"):
         parser.add_argument("--" + name, required=True, help="absolute native executable path")
     parser.add_argument("--codex-credentials", help="copy this credential file into the private client root")
+    parser.add_argument("--codex-package", required=True,
+                        help="complete canonical package for the selected Codex; checked before materialization")
     parser.add_argument("--claude-credentials", help="copy this credential file into both private Claude roots")
     parser.add_argument("--protected-surface-uuid", action="append", default=[])
     parser.add_argument("--native-policy", choices=(NATIVE_POLICY, SOCKET_POLICY), default=NATIVE_POLICY,
@@ -498,7 +508,8 @@ def main(argv=None):
                                continuity_registration=args.register_private_continuity,
                                child_budget=args.register_native_child_budget,
                                startup_continuity=args.register_startup_continuity,
-                               semantic_sender=args.semantic_sender)
+                               semantic_sender=args.semantic_sender,
+                               codex_package=args.codex_package)
         print(json.dumps(dict(status="MATERIALIZED_NOT_LAUNCHED", runtime=ref, input_operations=0),
                          ensure_ascii=False, indent=2))
         return 0
