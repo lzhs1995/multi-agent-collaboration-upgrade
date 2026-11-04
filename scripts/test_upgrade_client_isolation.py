@@ -175,6 +175,35 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result.stdout.decode().split("\0")[:-1], expected)
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS Seatbelt")
+    def test_codex_zsh_heredoc_uses_private_prefix_without_widening_sandbox(self):
+        native = private_native_roots(self.paths)["codex"]
+        (native / "tmp").mkdir(parents=True, mode=0o700)
+        self.paths["tmp"].mkdir(mode=0o700)
+        prepare_client_temp(self.paths, "codex")
+        profile = self.root / "codex-shell.sb"
+        profile.write_bytes(sandbox_profile([native, self.paths["tmp"]]))
+        outside = self.root / "outside"
+        outside.write_text("unchanged")
+        env = clean_child_environment(environment(private_native_roots(self.paths), self.paths, "codex"))
+        env.pop("TMPPREFIX", None)
+        payload = "private here-document\n" * 600
+        script = "/bin/cat <<'PRIVATE_EOF'\n" + payload + "PRIVATE_EOF\n"
+        argv = [str(SANDBOX), "-f", str(profile), "/bin/zsh", "-f", "-c", script]
+        before = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(before.returncode, 0, "baseline must reproduce the denied /tmp heredoc")
+        self.assertIn("temp file", before.stderr)
+        config = tomllib.loads(codex_config({}, native, self.hooks).decode())
+        env.update(config["shell_environment_policy"]["set"])
+        after = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertEqual(after.stdout, payload)
+        denied = subprocess.run([str(SANDBOX), "-f", str(profile), "/bin/zsh", "-f", "-c",
+            'print pollution > "$1"', "test", str(outside)],
+            env=env, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(outside.read_text(), "unchanged")
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS Seatbelt")
     def test_actual_child_temporary_files_stay_private_and_outside_writes_fail(self):
         self.paths["tmp"].mkdir(mode=0o700)
         base = prepare_client_temp(self.paths, "claude_a")

@@ -80,7 +80,13 @@ def codex_config(original, native_root, hook_config):
     config.update(sqlite_home=str(native_root / "sqlite"), log_dir=str(native_root / "log"),
                   history={"persistence": "none"}, check_for_update_on_startup=False,
                   allow_login_shell=False, approval_policy="never", sandbox_mode="danger-full-access",
+                  shell_environment_policy={"set": {"TMPPREFIX": str(native_root / "tmp" / "zsh")}},
                   projects={str(native_root.parent.parent / "work"): {"trust_level": "trusted"}})
+    # zsh creates here-document files under TMPPREFIX, defaulting to /tmp/zsh
+    # even when TMPDIR points into the private arm. The native root's tmp
+    # directory is prepared before launch and already inside Seatbelt. Pin the
+    # tool-shell override explicitly; the official core environment whitelist
+    # does not inherit TMPPREFIX. Do not open global /tmp to fix shell writes.
     # The mandatory inherited Seatbelt is the actual write boundary. A second
     # cwd-only sandbox would deny this arm's sibling evidence/campaign paths.
     # Automatic discovery is from the CLI's own, separately configured native
