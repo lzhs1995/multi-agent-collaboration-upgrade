@@ -103,10 +103,12 @@ def native_readers(name, text):
             "'HOME', 'CODEX_HOME', 'CODEX_CLIENT_THREAD_OBSERVER')",
             "'HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_CLIENT_THREAD_OBSERVER')")
         text = replace_once(text, "import cmux_identity_budget as budget",
-                            "import cmux_identity_budget as budget\nimport upgrade_process_inventory as private_process")
+                            "import cmux_identity_budget as budget\nimport upgrade_process_inventory as private_process\n"
+                            "import upgrade_native_roots as private_roots")
         node = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "client_candidates")
         text = edit_nodes(text, [(node, 'def client_candidates():\n'
-            '    return [pid for pid, path in private_process.inventory(lambda name: Path(name).name == "codex")]')])
+            '    matcher = private_roots.codex_process_matcher()\n'
+            '    return [pid for pid, path in private_process.inventory(matcher)]')])
         return standalone_identity(_terminal_reads(text))
     if name == "cmux_native_delivery.py":
         text = replace_once(text,
