@@ -52,6 +52,13 @@ class CampaignActorTests(unittest.TestCase):
                 binding_slots={"settle":dict(schema=SLOT_SCHEMA,resolver="campaign-settle-marker-v1",
                     source_path=str(self.c.root/"runs/run-01/nodes/local/failure-candidate.json"),
                     producer_operation="failure-candidate")})
+        if getattr(self,"closeout_mode",False):
+            for name,action,observation in (("status-before","status","before-start"),
+                    ("status-after","status","after-closeout"),("recover-original","recover","blocked-original"),
+                    ("finish","finish",None),("verify-original","verify","closed-original")):
+                operations[name]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
+                    observation=observation))
+            self.registration["initial_operations"]=list(operations)
         self.reg_ref=write_json(self.control/"operations.json",self.registration)
         self.ledger=OperationLedger.create(self.control/"ledger.sqlite",self.registration)
         self.addCleanup(self.ledger.close)
@@ -87,7 +94,7 @@ class CampaignActorTests(unittest.TestCase):
     def call(self,name):
         payload=self.ledger.resolve_operation(name)[0]["payload"]
         descriptor=control_script(self.c.campaign,self.c.ref,payload["action"],payload["run_id"],
-            **{k:payload.get(k) for k in ("node_id","marker","decision","decision_fields","boundary","reason")})
+            **{k:payload.get(k) for k in ("node_id","marker","decision","decision_fields","boundary","reason","observation")})
         self.native.append(dict(timestamp=utc_now(),type="response_item",payload=dict(type="custom_tool_call",
             name="exec",call_id="outer-"+name,input=descriptor["script"],
             internal_chat_message_metadata_passthrough=dict(turn_id=fixtures.TURN))))
@@ -317,6 +324,58 @@ class CampaignFailureActorTests(unittest.TestCase):
         self.assertEqual(f.ledger.inspect("inner-failure-candidate")["phase"],"NATIVE_COMPLETED")
         self.assertEqual(f.ledger.db.execute("SELECT count(*) FROM bindings").fetchone()[0],0)
         self.assertTrue(f.actor.closed)
+
+
+class CampaignCloseoutTests(unittest.TestCase):
+    def fixture(self):
+        f=CampaignActorTests();f.failure_mode=True;f.closeout_mode=True
+        f.setUp();self.addCleanup(f.doCleanups)
+        return f
+
+    def result(self,f,name):
+        f.call(name);f.complete(name)
+        return json_ref(f.ledger.inspect("inner-"+name)["receipt"])["result"]
+
+    def blocked(self,f):
+        for name in ("start","claim","block"):self.result(f,name)
+
+    def test_original_status_recovery_and_failed_run_closeout(self):
+        f=self.fixture()
+        self.assertEqual(self.result(f,"status-before")["state"],"NOT_STARTED")
+        self.blocked(f)
+        run=f.c.root/"runs/run-01"
+        from orchestration_common import tree_manifest
+        before=tree_manifest(str(run),kind="output")
+        observed=self.result(f,"recover-original")
+        self.assertEqual(observed["input_operations"],0)
+        self.assertEqual(observed["status"]["states"]["local"],"BLOCKED")
+        self.assertEqual(before,tree_manifest(str(run),kind="output"))
+        for name in ("failure-candidate","settle"):self.result(f,name)
+        finished=self.result(f,"finish")
+        self.assertEqual(finished["status"],"FAILED_PRESERVED")
+        finish=file_ref(run/"finish.json")
+        verified=self.result(f,"verify-original")
+        self.assertEqual(verified,finished)
+        self.assertEqual(file_ref(finish["path"]),finish)
+        self.assertEqual(self.result(f,"status-after")["state"],"CLOSED")
+        self.assertEqual(f.ledger.db.execute("SELECT count(*) FROM calls").fetchone()[0],10)
+
+    def test_premature_closeout_does_not_release_blocked_work(self):
+        f=self.fixture();self.blocked(f)
+        with self.assertRaisesRegex(ContractError,"active/uncertain work"):f.call("finish")
+        self.assertFalse((f.c.root/"runs/run-01/finish.json").exists())
+        self.assertEqual(f.runner.status("run-01")["states"]["local"],"BLOCKED")
+        self.assertEqual(f.ledger.inspect("inner-finish")["phase"],"UNKNOWN")
+        with self.assertRaisesRegex(ContractError,"CLOSED_NO_REPLAY"):f.actor.step()
+
+    def test_observation_ids_cannot_authorize_effects_or_other_scopes(self):
+        f=self.fixture()
+        for action,kwargs in (("start",{"observation":"replay"}),
+                ("finish",{"observation":"replay"}),("status",{}),
+                ("recover",{"observation":"x","node_id":"local"}),
+                ("verify",{"observation":"x","boundary":"local_boundary"})):
+            with self.subTest(action=action,kwargs=kwargs),self.assertRaises(ContractError):
+                operation_payload(f.c.campaign,action,"run-01",**kwargs)
 
 
 if __name__=="__main__":unittest.main()

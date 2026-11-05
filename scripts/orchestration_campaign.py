@@ -132,7 +132,7 @@ def decision_argument_fields(decision):
 
 
 def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, marker=None,
-                   decision=None, decision_fields=None, boundary=None, reason=None):
+                   decision=None, decision_fields=None, boundary=None, reason=None, observation=None):
     """Exact native supervisor tool request used to bind start/accept timestamps.
 
     This is returned for the supervisor to invoke, never appended to a journal by
@@ -152,8 +152,9 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
         from upgrade_task_campaign import campaign_control
         return campaign_control(campaign, campaign_ref, action, run_id, node_id=node_id,
                                 marker=marker, decision=decision, decision_fields=decision_fields,
-                                boundary=boundary, reason=reason)
-    require(boundary is None and reason is None, "failure producer fields require explicit task controls")
+                                boundary=boundary, reason=reason,observation=observation)
+    require(boundary is None and reason is None and observation is None,
+            "typed operation fields require explicit task controls")
     argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
             str(Path(campaign["adapter"]["path"]) / "scripts" / "orchestration_run.py"),
             "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"],

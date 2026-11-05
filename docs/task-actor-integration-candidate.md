@@ -83,6 +83,13 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   before releasing resources. Local offline failure settlement passes through
   the real actor and ledger. False delegated/preparation boundaries, modified
   source, STOP and unknown responses preserve the blocker without replay.
+- Run-level status, read-only recovery, finish and verification now have typed
+  controls. Repeated observations require separate predeclared observation IDs
+  in the same finite ledger; that field is forbidden on mutating operations.
+  Finish calls the original full-run verifier and retains its lease/disarm/
+  input-accounting requirements. A blocked node still refuses closeout.
+  Offline failure closeout and independent rereading of the original finish
+  artifact pass; these do not prove live input attribution or callback release.
 - `TaskService` now drives that same actor and retained RPC connection in bounded
   pulses. Idle polls preserve the connection and budgets. Late native results
   bind before a queued dependent operation; a normal terminal event waits for
@@ -157,7 +164,9 @@ it never recreates an absent artifact, sends a response or reopens the actor.
 Recovery after losing that in-memory owner and enrollment for a later turn
 remain unimplemented. Creating a second service or recreating its exclusive
 directories is not recovery.
-Typed `advance`/instructions/finish/recovery also remain unconnected. These are
+Typed `advance` and supervisor instructions remain unconnected. Status and
+read-only recovery have typed observations; finish and verify use the original
+full-run checker. Process-owner recovery and broader transport are still
 explicit pending work, not a complete campaign registration interface.
 
 ## Remaining execution order

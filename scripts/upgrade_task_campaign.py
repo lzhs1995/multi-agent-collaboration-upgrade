@@ -24,9 +24,11 @@ BINDING_SCHEMA = "upgrade-task-campaign-controls-v2"
 PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
-                     "settle", "publish-decision", "bind-unbound"})
+                     "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify"})
+READ_ACTIONS = frozenset({"status", "recover", "verify"})
+RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
-ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason")
+ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation")
 MARKER_SLOTS = {
     "campaign-accept-marker-v1": ("accept", "candidate", "candidate.json"),
     "campaign-settle-marker-v1": ("settle", "failure-candidate", "failure-candidate.json"),
@@ -34,13 +36,13 @@ MARKER_SLOTS = {
 
 
 def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
-                      decision=None, decision_fields=None, boundary=None, reason=None):
+                      decision=None, decision_fields=None, boundary=None, reason=None, observation=None):
     """Exact finite command, suitable for freezing before its model invocation."""
     from orchestration_campaign import DECISION_ARGUMENTS
     require(action in ACTIONS, "TASK_CAMPAIGN_ACTION_NOT_REGISTERABLE")
     require(run_id in {r["run_id"] for r in campaign["runs"]}, "TASK_CAMPAIGN_UNKNOWN_RUN")
-    if action == "start":
-        require(node_id is None, "TASK_CAMPAIGN_START_HAS_NO_NODE")
+    if action in RUN_ACTIONS:
+        require(node_id is None, "TASK_CAMPAIGN_RUN_CONTROL_HAS_NO_NODE")
     else:
         plan = json_ref(campaign["plan"])
         require(isinstance(node_id, str) and node_id in {n["id"] for n in plan["nodes"]},
@@ -74,6 +76,15 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
         extra["reason"] = reason
     else:
         require(reason is None, "TASK_CAMPAIGN_UNEXPECTED_BLOCKER")
+    if action in READ_ACTIONS:
+        import re
+        require(isinstance(observation,str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",observation),
+                "TASK_CAMPAIGN_FIXED_OBSERVATION_REQUIRED")
+        # Multiple planned read-only snapshots have distinct frozen IDs. They
+        # share the same ledger; this cannot create another mutating attempt.
+        extra["observation"] = observation
+    else:
+        require(observation is None, "TASK_CAMPAIGN_UNEXPECTED_OBSERVATION")
     return dict(schema=PAYLOAD_SCHEMA, campaign_id=campaign["campaign_id"],
                 campaign_root=campaign["root"], action=action, run_id=run_id, node_id=node_id,
                 marker=marker, decision=decision, decision_fields=decision_fields, **extra)
@@ -218,6 +229,14 @@ def campaign_handler(runner, registration_ref, receipts):
         find_control(reader, script, after=runner.campaign["sessions"]["codex"]["freeze_fence"]["offset"])
         action, run, node = payload["action"], payload["run_id"], payload["node_id"]
         if action == "start": result = runner.start(run)
+        elif action == "status": result = runner.status(run)
+        elif action == "recover": result = runner.recover(run)
+        elif action == "finish":
+            from orchestration_verify import finish_run
+            result = finish_run(runner.co(run))
+        elif action == "verify":
+            from orchestration_verify import verify_run
+            result = verify_run(runner.ref,run,fixtures=runner.fixtures)
         elif action == "claim": result = runner.claim(run, node)
         elif action == "candidate": result = runner.candidate(run, node)
         elif action == "block": result = runner.block(run, node, payload["reason"])
