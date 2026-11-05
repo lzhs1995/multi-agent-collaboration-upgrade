@@ -129,6 +129,55 @@ class SettlementTests(unittest.TestCase):
 
 
 REAL_CONTEXT=callback._context
+REAL_VERIFY_RECEIVER=callback.verify_receiver
+
+
+class DeliveryAuthorityTests(unittest.TestCase):
+    """Actual reader with original .84 fixture settlement, no live deployment."""
+    def setUp(self):
+        self.f=SettlementTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.receipt=self.f.settle()
+
+    def read(self):
+        from orchestration_native import verify_delivery
+        bundle=dict(receipt=write_json(self.f.root/'readback.json',self.receipt),
+                    attempts=[file_ref(self.f.attempt_path)])
+        with patch.object(callback,'verify_receiver',wraps=REAL_VERIFY_RECEIVER):
+            return verify_delivery(bundle,self.f.receiver,self.f.sender,self.f.text,
+                                   fixtures=True,uuid_semantics=True)
+
+    def strip_authority(self):
+        for key in ('receiver_task_actor','receiver_authentication','reconciled_read_only',
+                    'native_evidence','receiver_identity','input_operations'):
+            self.receipt.pop(key,None)
+
+    def test_removing_receipt_flags_cannot_downgrade_unknown_attempt(self):
+        self.strip_authority()
+        with self.assertRaisesRegex(ContractError,'RECEIVER_PROOF_REQUIRED'):self.read()
+
+    def test_unknown_attempt_cannot_claim_sender_confirmation_in_receipt(self):
+        self.strip_authority();self.receipt['reconciled_read_only']=False
+        self.receipt['phase']='CONFIRMED'
+        with self.assertRaisesRegex(ContractError,'RECEIVER_PROOF_REQUIRED'):self.read()
+
+    def test_confirmed_phase_without_original_result_cannot_downgrade(self):
+        self.strip_authority();self.f.attempt['phase']='CONFIRMED'
+        write_json(self.f.attempt_path,self.f.attempt)
+        with self.assertRaisesRegex(ContractError,'RECEIVER_PROOF_REQUIRED'):self.read()
+
+    def test_original_sender_result_remains_accepted_without_receiver_proof(self):
+        self.strip_authority();self.f.attempt.update(phase='CONFIRMED',result=dict(
+            confirmed=True,confirmation_source='native_user_message_v1',
+            native_binding=self.f.bound,native_proof=self.receipt['native_proof']))
+        write_json(self.f.attempt_path,self.f.attempt)
+        self.assertEqual(self.read()['transport_retries'],0)
+
+    def test_sender_result_with_different_native_proof_requires_receiver(self):
+        self.strip_authority();self.f.attempt.update(phase='CONFIRMED',result=dict(
+            confirmed=True,confirmation_source='native_user_message_v1',
+            native_binding=self.f.bound,native_proof=dict(self.receipt['native_proof'],offset=0)))
+        write_json(self.f.attempt_path,self.f.attempt)
+        with self.assertRaisesRegex(ContractError,'RECEIVER_PROOF_REQUIRED'):self.read()
 
 
 class ProvenanceTests(unittest.TestCase):

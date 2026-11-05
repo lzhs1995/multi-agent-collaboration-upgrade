@@ -634,9 +634,20 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     require(receipt.get("attempt") == refs[-1]["path"] and receipt.get("confirmed") is True, "receipt not bound to original attempt")
     b = attempt.get("native_binding", {})
     require(receipt.get("native_binding") == b, "original native binding required")
-    if "receiver_task_actor" in receipt or "receiver_authentication" in receipt or (
-            b.get("schema") == "native-delivery-task-v1" and receipt.get("reconciled_read_only") is True
-            and "native_evidence" in receipt):
+    task_callback = (b.get("schema") == "native-delivery-task-v1"
+                     and "completion_callback" in attempt.get("binding", {}))
+    # Select authority from the pinned original attempt, never removable receipt
+    # flags. A sender-confirmed callback must carry the same original result;
+    # all other TASK callback settlements require the enrolled receiver proof.
+    result = attempt.get("result", {})
+    sender_confirmed = (attempt.get("phase") == "CONFIRMED" and isinstance(result, dict)
+                        and result.get("confirmed") is True
+                        and result.get("confirmation_source") == "native_user_message_v1"
+                        and result.get("native_binding") == b
+                        and isinstance(result.get("native_proof"), dict)
+                        and result["native_proof"] == receipt.get("native_proof"))
+    if ("receiver_task_actor" in receipt or "receiver_authentication" in receipt
+            or task_callback and not sender_confirmed):
         from upgrade_task_callback import verify_receiver
         verify_receiver(receipt, receiver, sender)
     # Task receipts store `binding`; callback receipts flatten the binding fields

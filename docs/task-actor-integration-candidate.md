@@ -337,3 +337,15 @@ request and releases the retained connection references; it cannot be reopened
 by supplying another holder. Five new regressions plus the affected advice
 suite pass (19 total). This is a same-process capability retention contract,
 not isolation from arbitrary memory mutation or a live deployment result.
+
+## Callback receipt authority correction
+
+The campaign reader derives the need for receiver enrollment from the original
+TASK callback attempt. Removing receipt flags or receiver proof cannot turn an
+UNKNOWN attempt into sender-confirmed delivery. A sender-confirmed callback is
+accepted only when its original CONFIRMED attempt contains the matching native
+result; explicit receiver provenance is always checked when present.
+
+Six targeted local checks passed, including omitted flags, a false receipt phase,
+missing or mismatched sender results, and the existing typed target reader. These
+checks use local fixtures and original .84 validation, not live callback delivery.
