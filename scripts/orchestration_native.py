@@ -574,7 +574,8 @@ def delivery_identity(receiver, sender):
 
 
 def check_native_binding(binding, receiver, sender, text, *, fixtures=False, uuid_semantics=False):
-    require(binding.get("schema") == "native-delivery-v1", "original native binding required")
+    from upgrade_task_target_evidence import check_target
+    check_target(binding, receiver)
     require(binding.get("provider") == receiver["provider"] and binding.get("session_id") == receiver["session_id"],
             "receiver session mismatch")
     require(binding.get("process") == receiver["process"] and binding.get("tty") == receiver["tty"],
@@ -632,7 +633,7 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     attempt = attempts[-1]
     require(receipt.get("attempt") == refs[-1]["path"] and receipt.get("confirmed") is True, "receipt not bound to original attempt")
     b = attempt.get("native_binding", {})
-    require(receipt.get("native_binding") == b and b.get("schema") == "native-delivery-v1", "original native binding required")
+    require(receipt.get("native_binding") == b, "original native binding required")
     # Task receipts store `binding`; callback receipts flatten the binding fields
     # and retain identity in the original attempt/native binding.
     if "binding" in receipt:
@@ -653,7 +654,8 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     for item in process["birth"]:
         count(item, "process birth")
     reader = NativeReader(receiver, fixtures=fixtures)
-    original_offset = reader.verify_pin(b["transcript"])
+    original_offset = check_native_binding(b, receiver, sender, text, fixtures=fixtures,
+                                           uuid_semantics=uuid_semantics)
     events = attempt.get("events")
     require(isinstance(events, list) and all(isinstance(e, dict) for e in events), "input events missing")
     inputs = [e for e in events if e.get("phase") in ("PASTE_INTENT", "NATIVE_INPUT_INTENT")]
@@ -685,6 +687,9 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
             require(req.get("method") == "turn/start", "native input method invalid")
             require(req.get("observed_status") == "idle", "idle turn observation missing")
         require(req.get("transport") == "codex-native-input-v1" and req.get("params") == params, "native input request/overrides changed")
+        if b["schema"] == "native-delivery-task-v1":
+            require(req.get("method") == "turn/steer" and req.get("socket") == b["task_target"]["socket"],
+                    "TASK_TARGET_ORIGINAL_INPUT_CHANGED")
         require(fence.get("native_request_sha256") == digest(json.dumps(req, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()), "native request hash mismatch")
         peer = req.get("socket", {})
         for name in ("uid", "peer_uid", "mode", "device", "inode"):

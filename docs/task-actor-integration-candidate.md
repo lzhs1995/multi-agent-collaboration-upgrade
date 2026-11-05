@@ -284,6 +284,26 @@ readiness or enrollment. This validates the observed command's destination;
 it is not proof of an established TUI connection or callback delivery. Existing
 kernel peer/process checks and complete adoption requirements still apply.
 
+New generated controllers now have an explicit `native-delivery-task-v1`
+target. The original startup anchor names the journal-writing server and task
+UUID; the original launch names its displayed TUI PID/birth/workspace/surface.
+The binding retains both roles and verifies the actual input connection against
+the original socket and kernel peer. Native intent/fence/one-shot transmission
+and exact user-record receipt checks stay in the original controller. The
+campaign reader derives the target from the adopted receiver's original
+runtime, and refuses a legacy-schema downgrade. Legacy controllers and attempts
+are not migrated. The static contract is separate from the runtime RPC helper
+so the external adapter retains a complete dependency closure.
+
+Only active `turn/steer` is currently connected. Idle external `turn/start` is
+explicitly refused because the retained service must first support enrollment
+of that original external input into its existing turn ledger. TASK delivery
+has no terminal fallback. Actor-aware sending/harness, receiver-side settlement,
+60-second requests, full adoption and live verification remain incomplete.
+The local tests exercise the transformed original .84 readers and input path,
+real local socket/journal boundaries with mocked deployment/process/RPC replies,
+and .34/.58/.84 generated-source compatibility; they do not prove a live callback.
+
 S40's first bounded advice review found caller-owned capability substitution:
 changing the held connection after factory validation sent the first request to
 the replacement. The correction retains the original holder and connection

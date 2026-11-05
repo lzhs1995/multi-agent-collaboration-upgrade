@@ -20,7 +20,7 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_task_operations", "upgrade_task_creation", "upgrade_task_thread",
     "upgrade_task_startup", "upgrade_task_actor", "upgrade_task_socket_policy", "upgrade_task_tui",
     "upgrade_task_readiness", "upgrade_task_control", "upgrade_task_bindings", "upgrade_task_network",
-    "upgrade_task_descriptors")}
+    "upgrade_task_descriptors", "upgrade_task_target", "upgrade_task_target_contract")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -819,6 +819,10 @@ def transform_live(name, text, paths, controller, *, compatibility):
     before_gates = text
     text = live_gates(name, text)
     gates_changed = text != before_gates
+    from upgrade_task_target_patch import task_target_paths
+    before_target = text
+    text = task_target_paths(name, text)
+    task_target_changed = text != before_target
     if name == "mac_harness.py":
         # This remains the harness double gate, with a structured, pinned
         # startup contract. It never uses the legacy paste-to-shell launcher.
@@ -834,6 +838,8 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("authenticated_private_native_roots")
     if gates_changed:
         changes.append("original_input_adoption_gate_or_automatic_hook_observer")
+    if task_target_changed:
+        changes.append("explicit_task_target_original_native_delivery")
     if name == "mac_harness.py":
         changes.append("structured_experiment_startup_double_gate")
         changes.append("exact_bridge_probe_screen_evidence")
