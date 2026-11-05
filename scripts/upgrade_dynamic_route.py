@@ -1,8 +1,9 @@
 """Protocol routing for a future single-upstream task-tool relay.
 
-The official server broadcasts dynamic calls to attached clients, so a direct
-TUI and an independent responder can race. This router reserves one namespace
-for the controller on the SAME upstream connection and forwards other traffic.
+The official server broadcasts dynamic calls to attached clients. The official
+remote TUI ignores custom namespaces, but the server does not enforce an
+exclusive responder. This OPTIONAL router reserves one namespace for the
+controller on the SAME upstream connection and forwards other traffic.
 It does not open sockets, authenticate callers, execute operations or publish
 enrollment. Its owner must establish peer identity, task authority, durable
 intents, cancellation and recovery before using a returned task-call action.

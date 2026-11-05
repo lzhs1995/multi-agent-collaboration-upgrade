@@ -147,13 +147,66 @@ a real accepted-socket transfer to a child whose response is refused. Finally,
 file_identity denotes path stat metadata rather than a mapped-binary content
 hash; official package/signature verification remains a separate requirement.
 
-`upgrade_dynamic_route.py` adds the protocol router for the candidate relay.
+`upgrade_dynamic_route.py` adds an optional protocol router for a candidate relay.
 It reserves `upgrade_collaboration` calls for the controller on one upstream
 connection; original TUI tools/approvals and notifications remain TUI traffic.
 It rejects another thread, reused request/call IDs, a TUI response to a reserved
 call, unknown response owners and retry after intended response or disconnect.
 Eight tests exercise routing, ID namespace collisions and refusal behavior.
 This is not a live relay, durable operation ledger or actor enrollment.
+
+The independent S40 review corrected the routing premise: official external
+TUI `app_server_events.rs:622–628` returns without responding when the namespace
+is not `codex_tui`. Consequently a relay is not required merely to prevent the
+official TUI from answering our custom tools. The router remains an unactivated
+candidate. The server still lacks an exclusive dynamic responder; an unrelated
+connection knowing an ID can consume its callback. Exact peer verification
+alone does not prevent that. The next minimal deployment separates the remote
+TUI's connection permission from the app-server/agent descendants, denies those
+descendants connecting to the protected socket, and records original operation
+intent/result plus exact native completion. Trusted unsandboxed operators remain
+outside the adversarial agent boundary; no global same-user isolation is claimed.
+
+## New bounded-operation candidate and first real diagnostic
+
+`upgrade_task_operations.py` records an exclusive operation intent before any
+external effect. The model selects only a controller-declared operation ID for
+one exact task/thread/turn. Operation and request IDs cannot be reused after
+restart, cancellation or UNKNOWN. Results, original external receipts and one
+response intent are persisted separately. An exact authenticated native result
+can settle an unknown response; a competing/mismatched result becomes CONFLICT.
+Neither result settlement nor socket write claims subsequent model consumption.
+Ten tests include actual competing processes and a process that exits after its
+external effect, before recording the result.
+
+`upgrade_task_socket_policy.py` is a direct-connect restriction, not complete
+agent confinement. Two tests include a real Darwin server accepting controller
+input, refusal of descendant direct/alias/rename/hardlink paths, and functioning
+unrelated IPC/TCP. The independent review identified additional deployment paths:
+cmux/Herdr command brokers, remote execution environments and inherited FDs.
+These remain prerequisites to full experimental admission. Production channels
+and old profiles have not been changed. The network rule now uses the official
+`remote unix-socket` filter. A fresh socket must be absent before launch because
+official startup tests for an existing server by attempting a self-connection.
+
+`upgrade_task_rpc.py` retains server requests that arrive while waiting for a
+client response, checks the exact kernel peer on receives and sends, and closes
+its socket even when peer verification refuses cleanup. Three tests cover
+opposite-direction ID collisions, refusal before write, and failure cleanup.
+The controller still supplies genuine enrollment and durable send authority.
+
+The first separately scoped real diagnostic used the same official binary and
+the unchanged agentrouter-a / 3465 / gpt-6-astra route. Official server startup,
+experimental initialize, thread/start with dynamicTools and turn/start succeeded.
+The upstream gateway then returned HTTP 401 "unauthorized client detected";
+no dynamic operation occurred, no native tool result or model consumption passed.
+This is an upstream client-acceptance failure, not evidence of duplicate local
+Codex installations. Its original attempt and 180-second budget are retained;
+it must not be replayed. A controller-versus-TUI client-origin difference is an
+investigation hypothesis, not a proven cause. No client identity/header was
+forged, no route was substituted, and no business item was accepted. The live
+run used the RPC code before the cleanup-only correction; that correction has
+separate local regression evidence.
 
 The routing issue comes from official `bespoke_event_handling.rs:1100` and
 `outgoing_message.rs:347,578`: dynamic calls target subscribed connections, and
