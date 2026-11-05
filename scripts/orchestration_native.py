@@ -634,6 +634,11 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     require(receipt.get("attempt") == refs[-1]["path"] and receipt.get("confirmed") is True, "receipt not bound to original attempt")
     b = attempt.get("native_binding", {})
     require(receipt.get("native_binding") == b, "original native binding required")
+    if "receiver_task_actor" in receipt or "receiver_authentication" in receipt or (
+            b.get("schema") == "native-delivery-task-v1" and receipt.get("reconciled_read_only") is True
+            and "native_evidence" in receipt):
+        from upgrade_task_callback import verify_receiver
+        verify_receiver(receipt, receiver, sender)
     # Task receipts store `binding`; callback receipts flatten the binding fields
     # and retain identity in the original attempt/native binding.
     if "binding" in receipt:

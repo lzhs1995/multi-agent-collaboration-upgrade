@@ -201,6 +201,29 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
 
 ## Deliberately unclaimed capabilities
 
+The explicit campaign callback receiver now has a zero-input settlement entry.
+It requires the original active `TaskCampaignGate`, exact model invocation and
+INTENDED operation, original dispatched pack and selected Claude lane. It holds
+the sender's existing delivery lock, calls that pinned controller's unchanged
+pack/report/native-fence validator, and publishes via its no-overwrite receipt
+function. It rechecks the live owner, deployment, STOP and original evidence
+before publication. The new receipt records task-actor authentication separately
+from foreground identity; the campaign delivery reader verifies that provenance
+and rejects its omission on task receiver settlement. Typed `callback`, normal
+candidate construction and callback-boundary failure evidence use this path.
+Legacy campaigns keep their original receiver entry. Component tests use real
+local journals/locks/SQLite and original .84 validation with mocked deployment;
+the separate typed dispatch test mocks the transport outcome. No actual callback,
+body consumption, full adoption or business run follows from these tests.
+
+S40's two response-incarnation findings in the target adapter are corrected:
+every generated input RPC now checks the original socket and kernel peer both
+before the request and immediately after its response, before reading response
+fields. A mutation response failing that check preserves the consumed original
+intent as UNKNOWN with no retry or terminal fallback. S40's unchanged two failing
+cases passed on the correction. Idle external turn enrollment is still missing;
+new TASK callback input currently permits active steering only.
+
 The actual same-surface startup sequence has not been run for this candidate.
 The production campaign factory owns its enrollment gate; standalone TaskActor
 remains a component whose owner must supply one. Full TASK adoption is absent. The

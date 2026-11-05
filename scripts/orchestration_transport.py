@@ -144,6 +144,10 @@ class PinnedRuntime:
                                            force_compose=False, reconcile_only=reconcile_only)
 
     def settle_callback(self, pack, transcript, line):
+        if "task_controls" in self.campaign:
+            from upgrade_task_callback import reconcile
+            with self.modules("cmux_bridge", "callback_native_evidence", "delivery_receipts", "availability_contract") as modules:
+                return reconcile(self.campaign, pack, *modules, transcript=transcript, line=line)
         with self.modules("cmux_bridge", "callback_native_evidence") as (bridge, callback):
             # The actual foreground supervisor and environment are retained.
             # Never invoke the executor's submit_completion_callback here.
