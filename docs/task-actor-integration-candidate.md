@@ -51,6 +51,15 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   This is not inherited-FD, Mach/Apple Events, allowed-service authentication
   or a complete tool boundary. Required cooperation still needs a restricted
   channel; no full runtime/adoption claim follows from the network probe.
+- New TASK terminal launchers require stdin/stdout/stderr to identify the same
+  real terminal, close every other inherited descriptor before startup work,
+  and repeat closure immediately before native exec. Initial closure is recorded
+  in the original lane launch record. Actual PTY tests cover accepted/listening
+  sockets, ordinary files, a high descriptor and each lane's launcher-to-exec
+  path. Redirected output is refused before descriptor mutation. The app-server
+  still uses its separate `Popen(close_fds=True)` with explicit input/log FDs.
+  This addresses launcher inheritance; it does not prove every native client's
+  later helper/tool path or establish the entire live adoption boundary.
 - Public official configuration removes shell, apps/plugins and nested-agent
   tool entrypoints for explicit TASK launches; thread creation sets an empty
   environment list and later turn grants reject environment/policy overrides.
