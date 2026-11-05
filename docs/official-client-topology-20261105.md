@@ -146,3 +146,21 @@ Sixteen focused tests pass, including the actual Darwin process reader and
 a real accepted-socket transfer to a child whose response is refused. Finally,
 file_identity denotes path stat metadata rather than a mapped-binary content
 hash; official package/signature verification remains a separate requirement.
+
+`upgrade_dynamic_route.py` adds the protocol router for the candidate relay.
+It reserves `upgrade_collaboration` calls for the controller on one upstream
+connection; original TUI tools/approvals and notifications remain TUI traffic.
+It rejects another thread, reused request/call IDs, a TUI response to a reserved
+call, unknown response owners and retry after intended response or disconnect.
+Eight tests exercise routing, ID namespace collisions and refusal behavior.
+This is not a live relay, durable operation ledger or actor enrollment.
+
+The routing issue comes from official `bespoke_event_handling.rs:1100` and
+`outgoing_message.rs:347,578`: dynamic calls target subscribed connections, and
+exclusive callback ownership is enforced for user-verification ceremonies,
+not ordinary dynamic calls. Merely attaching another controller beside the
+TUI does not establish exclusive response ownership. Any relay integration
+must protect its only upstream socket, authenticate its exact downstream TUI,
+preserve other approval traffic, record real native invocation/completion, and
+retain original UNKNOWN attempts on failure. A sole connection and model
+arguments alone do not establish task authorization.
