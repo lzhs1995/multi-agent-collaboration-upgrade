@@ -15,15 +15,20 @@ from upgrade_rpc_peer import verify_peer
 
 
 class TaskActor:
-    def __init__(self, client, ledger, handlers, enrollment_gate, evidence_directory):
+    def __init__(self, client, ledger, handlers, enrollment_gate, evidence_directory, *, operation_scope=None):
         self.client, self.ledger = client, ledger
         self.handlers, self.gate = dict(handlers), enrollment_gate
         self.directory = checked_path(evidence_directory)
-        self.directory.mkdir(mode=0o700, exist_ok=False)
         self.closed = False
-        kinds = {spec["kind"] for spec in ledger.registration["operations"].values()}
+        operations = ledger.registration["operations"]
+        require(operation_scope is None or (isinstance(operation_scope, (list, tuple, set, frozenset))
+                and all(isinstance(name, str) for name in operation_scope)), "TASK_ACTOR_OPERATION_SCOPE_INVALID")
+        self.scope = frozenset(operations if operation_scope is None else operation_scope)
+        require(self.scope and self.scope <= set(operations), "TASK_ACTOR_OPERATION_SCOPE_INVALID")
+        kinds = {operations[name]["kind"] for name in self.scope}
         require(set(self.handlers) == kinds and all(callable(x) for x in self.handlers.values()),
                 "TASK_ACTOR_EXACT_HANDLERS_REQUIRED")
+        self.directory.mkdir(mode=0o700, exist_ok=False)
 
     def _recorded(self, message, ref):
         verify_peer(self.client.sock, self.client.server, self.client.process)
@@ -39,6 +44,9 @@ class TaskActor:
         self._recorded(message, ref)
         method = message.get("method")
         if method == "item/tool/call":
+            args = message.get("params", {}).get("arguments", {})
+            require(isinstance(args, dict) and isinstance(args.get("operation_id"), str)
+                    and args["operation_id"] in self.scope, "TASK_ACTOR_OPERATION_OUTSIDE_STAGE")
             # Gate implementation belongs to the exact enrolled topology. It
             # must freshly verify task ownership, deployment, stop, endpoints
             # and the operation's scope. No boolean env flag supplies it.

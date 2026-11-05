@@ -98,16 +98,13 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
             "STARTUP_FAILURE_REQUIRES_PRIVATE_CONTINUITY")
     if task_startup is not None:
-        from upgrade_task_operations import validate_registration
-        require(isinstance(task_startup, dict) and set(task_startup) == {"task_id", "controller_id",
-                "authority_ref", "startup_text", "base_instructions", "operations"}
+        from upgrade_task_startup import TURN_FIELDS, validate_plan_operations
+        task_fields = {"task_id", "controller_id", "authority_ref", "startup_text", "base_instructions", "operations"}
+        require(isinstance(task_startup, dict) and set(task_startup) in (task_fields, task_fields | TURN_FIELDS)
                 and pre_exec_hold and not startup_continuity and goal_startup is not None
                 and station_launchers is not None and codex_package is not None
                 and native_policy == SOCKET_POLICY, "STARTUP_TASK_EXPLICIT_TOPOLOGY_REQUIRED")
-        validate_registration(dict(schema="upgrade-task-operations-v1",
-            **{k:task_startup[k] for k in ("task_id","controller_id","authority_ref","operations")},
-            thread_id="00000000-0000-4000-8000-000000000001",
-            turn_id="00000000-0000-4000-8000-000000000002"))
+        validate_plan_operations(task_startup)
         require(task_startup["operations"].get("ready") == {"kind":"readiness","payload":{}},
                 "STARTUP_TASK_READY_OPERATION_REQUIRED")
         require(all(isinstance(task_startup[k], str) and 0 < len(task_startup[k].encode()) <= MAX_INSTRUCTION_BYTES
@@ -207,13 +204,13 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     task_plan_ref, task_plan_raw = None, None
     if task_startup is not None:
         from orchestration_common import canonical
-        from upgrade_task_startup import PLAN_SCHEMA
+        from upgrade_task_startup import PLAN_SCHEMA, MULTI_PLAN_SCHEMA, TURN_FIELDS
         from upgrade_task_readiness import readiness_text
         require(all(isinstance(codex_original.get(k), str) and codex_original[k]
                     for k in ("model", "model_provider")), "STARTUP_TASK_MODEL_CONFIGURATION_REQUIRED")
         plan = dict(task_startup)
         plan["startup_text"] = readiness_text(plan["startup_text"])
-        task_plan_raw = canonical(dict(schema=PLAN_SCHEMA, **plan,
+        task_plan_raw = canonical(dict(schema=MULTI_PLAN_SCHEMA if TURN_FIELDS <= set(plan) else PLAN_SCHEMA, **plan,
             native_root=str(roots["codex"]), work_root=str(paths["state"] / "work"),
             model=codex_original["model"], model_provider=codex_original["model_provider"]))
         task_plan_ref = dict(path=str(paths["config"] / "task-startup.json"), bytes=len(task_plan_raw),

@@ -98,6 +98,7 @@ def readiness_task_actor(runtime_ref, client):
     from upgrade_startup_contract import TASK_SCHEMA
     from upgrade_task_readiness import SCHEMA, task_startup_result
     from upgrade_task_operations import OperationLedger
+    from upgrade_task_startup import plan_value, registration_for_plan
     from upgrade_task_actor import TaskActor
     from upgrade_task_thread import observe
     import cmux_daemon_identity as identity
@@ -107,8 +108,15 @@ def readiness_task_actor(runtime_ref, client):
     external_publisher(spec)
     _, startup, anchor = task_startup_result(spec)
     registration = json_ref(startup["operations"])
-    require(registration["operations"] == {"ready":{"kind":"readiness","payload":{}}},
-            "TASK_READINESS_BUSINESS_OPERATIONS_REFUSED")
+    require(registration == registration_for_plan(plan_value(spec["task_startup"]),
+                startup["thread_id"], startup["turn_id"], anchor["server"]),
+            "TASK_READINESS_REGISTRATION_CHANGED")
+    ready = {"ready":{"kind":"readiness","payload":{}}}
+    multi = registration["schema"] == "upgrade-task-operations-v2"
+    require((not multi and registration["operations"] == ready) or
+            (multi and registration["initial_operations"] == ["ready"]
+             and registration["operations"].get("ready") == ready["ready"]
+             and registration["server"] == client.server), "TASK_READINESS_BUSINESS_OPERATIONS_REFUSED")
     control = Path(spec["adoption_path"]).parent
     binding = json_ref(file_ref(Path(spec["controller"]) / "upgrade-binding.json"))
     launched = json_ref(file_ref(Path(binding["state_root"]) / "startup/codex.json"))
@@ -136,7 +144,9 @@ def readiness_task_actor(runtime_ref, client):
 
     ledger = OperationLedger(startup["ledger"],startup["registration_sha256"])
     try:
-        return TaskActor(client,ledger,{"readiness":readiness},gate,control / "task-readiness-events")
+        require(ledger.active_turn == startup["turn_id"], "TASK_READINESS_INITIAL_TURN_CLOSED")
+        return TaskActor(client,ledger,{"readiness":readiness},gate,control / "task-readiness-events",
+                         operation_scope={"ready"})
     except BaseException:
         ledger.close()
         raise

@@ -28,6 +28,16 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   operations. v1 stays fixed to its original turn. A turn grant must reference
   the original authority, pinned RPC exchange and previous terminal turn; these
   file checks still require external live enrollment before use.
+- Explicit startup-plan-v2 now materializes and bootstraps that same operations-v2
+  ledger with the actual server pin. Only `ready` is available in the initial
+  turn; future route choices stay frozen in the same ledger. The pre-adoption
+  actor has its own operation allowlist and no business handlers, even if a
+  future operation uses the same kind. Old startup-plan-v1 remains unchanged.
+- The task inspector separately requires original automatic PreToolUse and
+  PostToolUse observations for the exact inner dynamic call, original server,
+  configuration and command. Dynamic completion and nonce consumption alone
+  cannot satisfy this requirement. The hook name follows the pinned official
+  source's namespace concatenation; live automatic execution remains unverified.
 - The task server profile denies self-connections and physical socket unlink.
   Its inspector uses that exact unlink policy; legacy writers keep their policy.
 
@@ -36,8 +46,8 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
 The actual same-surface startup sequence has not been run for this candidate.
 TaskActor still receives its business enrollment gate from its caller. The
 campaign/control/advice-chain/transport/input/callback readers do not yet accept
-typed business evidence. Operations-v2 is tested but not yet selected by the
-startup/business pipeline. Broker/remote-exec/MCP/inherited-FD and both Claude
+typed business evidence. Operations-v2 is selected by explicit v2 startup plans;
+later turn enrollment still needs the live business gate. Broker/remote-exec/MCP/inherited-FD and both Claude
 boundaries remain incomplete. No adoption or exclusive-responder claim follows
 from these modules.
 
@@ -48,7 +58,8 @@ verified. Never bypass it by invoking the underlying harness directly.
 
 ## Remaining execution order
 
-1. Original S40 reviews the frozen candidate and generated-controller closure.
+1. Original S40 accepted the bounded 83dffba component review; review subsequent
+   frozen changes once each, retaining that original result.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.

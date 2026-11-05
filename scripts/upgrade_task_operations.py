@@ -83,16 +83,21 @@ def validate_registration(registration):
         server = registration["server"]
         require(isinstance(server, dict) and set(server) == SERVER_KEYS,
                 "TASK_OPERATION_SERVER_PIN_REQUIRED")
-        _operation_subset(registration["initial_operations"], ops)
-        groups = registration["choice_groups"]
-        require(isinstance(groups, dict) and len(groups) <= len(ops), "TASK_OPERATION_CHOICE_GROUPS_INVALID")
-        selected = set()
-        for name, members in groups.items():
-            _name(name); _operation_subset(members, ops)
-            require(len(members) >= 2 and not selected.intersection(members),
-                    "TASK_OPERATION_CHOICE_GROUPS_OVERLAP")
-            selected.update(members)
+        validate_turn_scope(ops, registration["initial_operations"], registration["choice_groups"])
     return registration
+
+
+def validate_turn_scope(operations, initial_operations, choice_groups):
+    """Validate frozen scopes before a server/thread exists; this grants nothing."""
+    _operation_subset(initial_operations, operations)
+    require(isinstance(choice_groups, dict) and len(choice_groups) <= len(operations),
+            "TASK_OPERATION_CHOICE_GROUPS_INVALID")
+    selected = set()
+    for name, members in choice_groups.items():
+        _name(name); _operation_subset(members, operations)
+        require(len(members) >= 2 and not selected.intersection(members),
+                "TASK_OPERATION_CHOICE_GROUPS_OVERLAP")
+        selected.update(members)
 
 
 def _operation_subset(value, operations):

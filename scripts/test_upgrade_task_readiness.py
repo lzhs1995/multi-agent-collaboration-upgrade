@@ -19,6 +19,8 @@ class DynamicReadinessTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         f=self.fixture
+        if getattr(self,"multi_plan",False):
+            f.multi_plan()
         f.directory=f.root / "control/task-startup"
         f.directory.parent.mkdir()
         startup=json_ref(f.start())
@@ -72,6 +74,22 @@ class DynamicReadinessTests(unittest.TestCase):
         self.assertFalse(value["hooks_proven"])
         self.assertFalse(value["adoption_proven"])
         self.assertNotIn("hooks",value)
+
+    def test_v2_startup_readiness_uses_same_frozen_plan_and_ledger(self):
+        f=DynamicReadinessTests();f.multi_plan=True;f.setUp()
+        self.addCleanup(f.doCleanups)
+        self.assertEqual(f.ledger.registration["schema"],"upgrade-task-operations-v2")
+        self.assertEqual(f.evaluate()["model"],"fixture-model")
+        # Replacing both the external pin and database contents is still not
+        # permission to change the operation set frozen in the original plan.
+        from orchestration_common import canonical, object_sha
+        original=dict(f.ledger.registration)
+        original["server"]=dict(original["server"],birth=[999,0])
+        f.startup["operations"]=write_json(f.fixture.directory/"operations.json",original)
+        f.startup["registration_sha256"]=object_sha(original)
+        write_json(f.fixture.directory/"result.json",f.startup)
+        f.ledger.db.execute("UPDATE registration SET body=?",(canonical(original),))
+        with self.assertRaisesRegex(ContractError,"REGISTRATION_CHANGED"):f.evaluate()
 
     def test_visible_wrong_nonce_never_counts_as_consumption(self):
         self.extra[-1]["payload"]["content"][0]["text"]="b"*48

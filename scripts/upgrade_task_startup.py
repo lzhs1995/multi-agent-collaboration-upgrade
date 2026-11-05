@@ -22,13 +22,38 @@ from upgrade_task_operations import OperationLedger, tool_definition
 from upgrade_task_thread import journal_evidence
 
 PLAN_SCHEMA = "upgrade-task-startup-plan-v1"
+MULTI_PLAN_SCHEMA = "upgrade-task-startup-plan-v2"
+TURN_FIELDS = {"initial_operations", "choice_groups"}
+
+
+def validate_plan_operations(value):
+    """Preflight operation specs without inventing a server identity.
+
+    Dummy thread IDs below are used only by the existing pure schema validator.
+    Only bootstrap_task can bind the actual original server and thread/turn.
+    """
+    from upgrade_task_operations import validate_registration, validate_turn_scope
+    validate_registration(dict(schema="upgrade-task-operations-v1", task_id=value["task_id"],
+        controller_id=value["controller_id"], authority_ref=value["authority_ref"],
+        thread_id="00000000-0000-4000-8000-000000000001",
+        turn_id="00000000-0000-4000-8000-000000000002", operations=value["operations"]))
+    if TURN_FIELDS.intersection(value):
+        require(TURN_FIELDS <= set(value), "TASK_STARTUP_TURN_SCOPE_INCOMPLETE")
+        validate_turn_scope(value["operations"], value["initial_operations"], value["choice_groups"])
+        require(value["initial_operations"] == ["ready"]
+                and value["operations"].get("ready") == {"kind":"readiness", "payload":{}}
+                and all("ready" not in members for members in value["choice_groups"].values()),
+                "TASK_STARTUP_INITIAL_READINESS_ONLY")
 
 
 def plan_value(ref):
     value = json_ref(ref, "new task bootstrap plan")
-    require(set(value) == {"schema", "task_id", "controller_id", "authority_ref", "native_root",
-            "work_root", "model", "model_provider", "startup_text", "base_instructions", "operations"}
-            and value["schema"] == PLAN_SCHEMA, "TASK_STARTUP_PLAN_INVALID")
+    fields = {"schema", "task_id", "controller_id", "authority_ref", "native_root",
+              "work_root", "model", "model_provider", "startup_text", "base_instructions", "operations"}
+    if value.get("schema") == MULTI_PLAN_SCHEMA:
+        fields |= TURN_FIELDS
+    require(set(value) == fields and value["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA),
+            "TASK_STARTUP_PLAN_INVALID")
     read_ref(value["authority_ref"], "original new task authority")
     for key in ("task_id", "controller_id", "model", "model_provider", "startup_text", "base_instructions"):
         require(isinstance(value[key], str) and 0 < len(value[key].encode()) <= 256 * 1024,
@@ -36,12 +61,21 @@ def plan_value(ref):
     for key in ("native_root", "work_root"):
         require(checked_path(value[key]).is_dir(), "TASK_STARTUP_ROOT_MISSING")
     # Reuse the same spec validation before any thread or model turn starts.
-    from upgrade_task_operations import validate_registration
-    validate_registration(dict(schema="upgrade-task-operations-v1", task_id=value["task_id"],
-        controller_id=value["controller_id"], authority_ref=value["authority_ref"],
-        thread_id="00000000-0000-4000-8000-000000000001",
-        turn_id="00000000-0000-4000-8000-000000000002", operations=value["operations"]))
+    validate_plan_operations(value)
     return value
+
+
+def registration_for_plan(plan, thread, turn, server):
+    """One shared producer/reader shape; actual server proof remains external."""
+    from upgrade_task_operations import validate_registration
+    value = dict(schema="upgrade-task-operations-v1", task_id=plan["task_id"],
+        thread_id=thread, turn_id=turn, controller_id=plan["controller_id"],
+        authority_ref=plan["authority_ref"], operations=plan["operations"])
+    require(plan["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA), "TASK_STARTUP_PLAN_INVALID")
+    if plan["schema"] == MULTI_PLAN_SCHEMA:
+        value.update(schema="upgrade-task-operations-v2", server=server,
+            initial_operations=plan["initial_operations"], choice_groups=plan["choice_groups"])
+    return validate_registration(value)
 
 
 def _journal_anchor(client, plan, created, creation, *, timeout):
@@ -140,9 +174,7 @@ def bootstrap_task(client, plan_ref, directory, *, journal_timeout=10):
         require(str(uuid.UUID(turn)) == turn, "TASK_STARTUP_CREATED_TURN_INVALID")
         creation = write_json(directory / "creation.json", dict(schema=CREATION_SCHEMA,
             initialize=initialize, thread_start=thread_exchange, turn_start=turn_exchange), exclusive=True)
-        registration = dict(schema="upgrade-task-operations-v1", task_id=plan["task_id"],
-            thread_id=thread["id"], turn_id=turn, controller_id=plan["controller_id"],
-            authority_ref=plan["authority_ref"], operations=plan["operations"])
+        registration = registration_for_plan(plan, thread["id"], turn, client.server)
         registration_ref = write_json(directory / "operations.json", registration, exclusive=True)
         ledger = OperationLedger.create(directory / "operations.sqlite", registration)
         ledger.close()

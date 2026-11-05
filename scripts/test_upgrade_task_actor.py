@@ -117,5 +117,34 @@ class ActorTests(unittest.TestCase):
         self.assertEqual(self.actor.recover_completion(completion,ref)["phase"],"CONFLICT")
         self.assertEqual(len(self.effects),1)
 
+    def test_stage_scope_rejects_registered_business_before_gate_or_intent(self):
+        registration=dict(self.ledger.registration, operations={
+            **self.ledger.registration["operations"], "ready":dict(kind="readiness",payload={})})
+        ledger=OperationLedger.create(self.root/"stage.sqlite",registration)
+        self.addCleanup(ledger.close)
+        def readiness(payload):
+            self.effects.append(payload)
+            return self.result,write_json(self.root/"ready-receipt.json",{"fixture":True})
+        actor=TaskActor(self.client,ledger,{"readiness":readiness},self.actor.gate,
+                        self.root/"stage-events",operation_scope={"ready"})
+        self.enqueue(self.request)
+        with self.assertRaisesRegex(ContractError,"OUTSIDE_STAGE"):actor.step()
+        self.assertEqual(self.gates,[])
+        self.assertEqual(self.effects,[])
+        self.assertEqual(ledger.db.execute("SELECT count(*) FROM calls").fetchone()[0],0)
+        request=copy.deepcopy(self.request)
+        request["params"]["arguments"]={"operation_id":"ready"}
+        self.enqueue(request)
+        self.assertEqual(actor.step()["phase"],"RESPONSE_INTENDED")
+        self.assertEqual(len(self.effects),1)
+
+    def test_invalid_scope_or_extra_handler_fails_before_actor_directory(self):
+        for scope,handlers in ((set(),{}),({"foreign"},{}),("dispatch-1",{}),
+                               ({"dispatch-1"},{"dispatch":lambda _:None,"extra":lambda _:None})):
+            path=self.root/"invalid-stage"
+            with self.assertRaises(ContractError):
+                TaskActor(self.client,self.ledger,handlers,self.actor.gate,path,operation_scope=scope)
+            self.assertFalse(path.exists())
+
 
 if __name__ == "__main__":unittest.main()

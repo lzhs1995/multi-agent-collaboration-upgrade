@@ -10,7 +10,7 @@ from orchestration_common import ContractError, json_ref, write_json
 from upgrade_experiment import init_experiment
 from upgrade_live_materialize import materialize_live
 from upgrade_startup_contract import TASK_SCHEMA, validate_startup
-from upgrade_task_startup import plan_value
+from upgrade_task_startup import MULTI_PLAN_SCHEMA, plan_value
 from upgrade_socket_boundary import SOCKET_POLICY
 import upgrade_live_control as control
 
@@ -41,7 +41,10 @@ class TaskTopologyTests(unittest.TestCase):
             lane_instructions=instructions,
             task_startup={"task_id":"fixture-task","controller_id":"fixture-root","authority_ref":cls.context,
                 "startup_text":"Use the registered readiness operation once.","base_instructions":"Fixture, no effects.",
-                "operations":{"ready":{"kind":"readiness","payload":{}}}})
+                "operations":{"ready":{"kind":"readiness","payload":{}},
+                    "left":{"kind":"route","payload":{"lane":"claude_a"}},
+                    "right":{"kind":"route","payload":{"lane":"claude_b"}}},
+                "initial_operations":["ready"],"choice_groups":{"route":["left","right"]}})
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 
@@ -51,6 +54,9 @@ class TaskTopologyTests(unittest.TestCase):
     def test_new_schema_has_empty_origin_tui_and_distinct_server_boundary(self):
         self.assertEqual(self.spec["schema"],TASK_SCHEMA)
         plan=plan_value(self.spec["task_startup"])
+        self.assertEqual(plan["schema"],MULTI_PLAN_SCHEMA)
+        self.assertEqual(plan["initial_operations"],["ready"])
+        self.assertEqual(plan["choice_groups"],{"route":["left","right"]})
         self.assertEqual(plan["model"],"fixture-codex")
         from upgrade_task_readiness import READY_INSTRUCTION
         self.assertTrue(plan["startup_text"].endswith(READY_INSTRUCTION))

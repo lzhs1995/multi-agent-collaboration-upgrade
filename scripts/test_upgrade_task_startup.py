@@ -14,7 +14,7 @@ import unittest
 from orchestration_common import ContractError, json_ref, object_sha, write_json
 from upgrade_rpc_peer import server_pin
 from upgrade_task_operations import OperationLedger
-from upgrade_task_startup import PLAN_SCHEMA, bootstrap_task
+from upgrade_task_startup import PLAN_SCHEMA, MULTI_PLAN_SCHEMA, bootstrap_task
 from upgrade_task_thread import journal_evidence
 
 SID = "11111111-1111-4111-8111-111111111111"
@@ -168,6 +168,98 @@ class TaskStartupTests(unittest.TestCase):
             self.start()
         self.assertEqual(self.calls, [])
         self.assertFalse(self.directory.exists())
+
+    def multi_plan(self):
+        self.plan.update(schema=MULTI_PLAN_SCHEMA, initial_operations=["ready"],
+            choice_groups={"route":["left","right"]}, operations={
+                **self.plan["operations"], "left":dict(kind="route",payload={"lane":"claude_a"}),
+                "right":dict(kind="route",payload={"lane":"claude_b"})})
+        self.plan_ref = write_json(self.root / "multi-plan.json", self.plan)
+
+    def test_multi_turn_bootstrap_keeps_frozen_operations_and_real_server(self):
+        self.multi_plan()
+        result = json_ref(self.start())
+        registration = json_ref(result["operations"])
+        self.assertEqual(registration["schema"], "upgrade-task-operations-v2")
+        self.assertEqual(registration["server"], self.client.server)
+        self.assertEqual(registration["operations"], self.plan["operations"])
+        self.assertEqual(registration["choice_groups"], self.plan["choice_groups"])
+        ledger = OperationLedger(result["ledger"], result["registration_sha256"])
+        self.addCleanup(ledger.close)
+        request = dict(id=100,method="item/tool/call",params=dict(threadId=SID,turnId=TURN,
+            callId="ready-once",namespace="upgrade_collaboration",tool="execute",arguments={"operation_id":"left"}))
+        with self.assertRaisesRegex(ContractError,"OUTSIDE_TURN_SCOPE"):
+            ledger.receive(request)
+        request["params"]["arguments"]={"operation_id":"ready"}
+        self.assertEqual(ledger.receive(request)["kind"],"readiness")
+        ledger.stop("ready-once","UNKNOWN")
+        reopened = OperationLedger(result["ledger"], result["registration_sha256"])
+        try:
+            with self.assertRaisesRegex(ContractError,"NO_REPLAY"):
+                reopened.receive(request)
+        finally: reopened.close()
+
+    def test_multi_turn_scope_invalid_before_any_rpc(self):
+        self.multi_plan()
+        baseline = copy.deepcopy(self.plan)
+        for mutate in (lambda p:p.update(initial_operations=["ready","left"]),
+                       lambda p:p.update(choice_groups={"route":["left","missing"]}),
+                       lambda p:p.update(choice_groups={"route":["ready","left"]}),
+                       lambda p:p.update(schema=PLAN_SCHEMA),
+                       lambda p:p.pop("choice_groups")):
+            self.plan=copy.deepcopy(baseline);mutate(self.plan)
+            self.plan_ref=write_json(self.root/"invalid-multi.json",self.plan)
+            with self.assertRaises(ContractError):self.start()
+            self.assertEqual(self.calls,[])
+            self.assertFalse(self.directory.exists())
+
+    def test_bootstrapped_actor_stages_share_one_ledger_and_choice_budget(self):
+        from upgrade_task_actor import TaskActor
+        self.multi_plan()
+        startup=json_ref(self.start())
+        ledger=OperationLedger(startup["ledger"],startup["registration_sha256"])
+        self.addCleanup(ledger.close)
+        queue,sent,effects=[],[],[]
+        self.client.receive_recorded=lambda timeout:queue.pop(0)
+        self.client.respond=sent.append
+        def enqueue(message):
+            ref=write_json(self.root/f"message-{len(list(self.root.glob('message-*')))}.json",
+                dict(direction="received",message=message,peer=dict(server=self.client.server,
+                     peer={k:self.client.server[k] for k in ("pid","uid")})))
+            queue.append((message,ref))
+            return ref
+        def request(op,turn,call):
+            return dict(id=call,method="item/tool/call",params=dict(threadId=SID,turnId=turn,
+                callId=call,namespace="upgrade_collaboration",tool="execute",arguments={"operation_id":op}))
+        def handler(payload):
+            effects.append(payload)
+            return dict(success=True,contentItems=[dict(type="inputText",text="fixture-result")]), \
+                write_json(self.root/f"effect-{len(effects)}.json",payload)
+        ready=TaskActor(self.client,ledger,{"readiness":handler},lambda *args:None,
+                        self.root/"ready-stage",operation_scope={"ready"})
+        enqueue(request("ready",TURN,"call-ready"));ready.step()
+        ready.close("UNKNOWN")
+        # This fixture supplies original RPC records to the pure ledger API.
+        # Production still requires the separate live enrollment/turn gate.
+        next_turn="33333333-3333-4333-8333-333333333333"
+        prior=enqueue(dict(method="turn/completed",params=dict(threadId=SID,turn=dict(id=TURN,status="completed"))))
+        queue.clear()
+        turn_start=self.client.saved("turn/start",dict(threadId=SID,input=[dict(type="text",text="choose route")]),
+                                     dict(turn=dict(id=next_turn)))
+        grant=write_json(self.root/"next-turn.json",dict(schema="upgrade-task-operation-turn-v1",
+            registration_sha256=startup["registration_sha256"],previous_turn_id=TURN,turn_id=next_turn,
+            operation_ids=["ready","left","right"],authority_ref=self.plan["authority_ref"],
+            previous_completion=prior,turn_start=turn_start))
+        ledger.enroll_turn(grant)
+        routes=TaskActor(self.client,ledger,{"route":handler},lambda *args:None,
+                         self.root/"route-stage",operation_scope={"left","right"})
+        enqueue(request("left",next_turn,"call-left"));routes.step()
+        enqueue(request("right",next_turn,"call-right"))
+        with self.assertRaisesRegex(ContractError,"CHOICE_ALREADY_INTENDED"):routes.step()
+        with self.assertRaisesRegex(ContractError,"NO_REPLAY"):
+            ledger.receive(request("ready",next_turn,"call-ready-again"))
+        self.assertEqual(effects,[{}, {"lane":"claude_a"}])
+        self.assertEqual(len(sent),2)
 
 
 if __name__ == "__main__":

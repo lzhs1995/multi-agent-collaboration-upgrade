@@ -9,11 +9,14 @@ from pathlib import Path
 import re
 import sqlite3
 
-from orchestration_common import file_ref, json_ref, object_sha, require, strict_json
+from orchestration_common import file_ref, json_ref, object_sha, read_ref, require, strict_json
 from upgrade_task_thread import journal_evidence
 from upgrade_task_creation import validate_creation
 
 SCHEMA = "upgrade-task-dynamic-readiness-v1"
+# Official core::tools::flat_tool_name at the pinned 0.164.0 source concatenates
+# the non-default namespace and name. This is the hook name, not the JS export.
+DYNAMIC_HOOK_NAME = "upgrade_collaborationexecute"
 
 READY_CALL = 'const result = await tools.upgrade_collaboration__execute({operation_id:"ready"}); text(result);'
 READY_INSTRUCTION = (
@@ -121,12 +124,15 @@ def task_startup_result(spec):
 
 def dynamic_readiness(native, session, spec):
     from upgrade_readiness_evidence import native_records
+    from upgrade_task_startup import plan_value, registration_for_plan
     result_ref, startup, anchor = task_startup_result(spec)
     require(session["session_id"] == startup["thread_id"]
             and all(session["transcript"][k] == anchor["journal"][k] for k in ("path","device","inode")),
             "TASK_READINESS_ORIGINAL_JOURNAL_REQUIRED")
     registration = json_ref(startup["operations"])
-    require(object_sha(registration) == startup["registration_sha256"]
+    require(registration == registration_for_plan(plan_value(spec["task_startup"]),
+                startup["thread_id"], startup["turn_id"], anchor["server"])
+            and object_sha(registration) == startup["registration_sha256"]
             and registration["thread_id"] == startup["thread_id"] and registration["turn_id"] == startup["turn_id"]
             and registration["operations"].get("ready") == {"kind":"readiness","payload":{}},
             "TASK_READINESS_REGISTRATION_CHANGED")
@@ -195,3 +201,45 @@ def dynamic_readiness(native, session, spec):
     return dict(schema=SCHEMA,startup_result=result_ref,call_id=call,receipt=receipt,
         model=models[0][1],model_record=models[0][0],native_completion=completed[0],
         model_consumption=consumed[0],consumption_source=source,hooks_proven=False,adoption_proven=False)
+
+
+def task_readiness(native, session, spec, startup_ref, binding, launches):
+    """Require real original observer evidence separately from dynamic success.
+
+    The inspector supplies process-bound sessions/launches and validated config.
+    This reader performs no hook execution, model input or adoption publication.
+    A successful dynamic call alone cannot satisfy either automatic hook event.
+    """
+    from upgrade_readiness_evidence import hook_matches
+    from upgrade_startup_contract import TASK_SCHEMA
+    require(spec.get("schema") == TASK_SCHEMA and session.get("provider") == "codex",
+            "TASK_HOOK_EXPLICIT_TOPOLOGY_REQUIRED")
+    read_ref(spec["pins"]["codex/hooks.json"], "frozen automatic hooks")
+    proof = dynamic_readiness(native, session, spec)
+    call = dict(startup=startup_ref, id=proof["call_id"], name=DYNAMIC_HOOK_NAME,
+                arguments={"operation_id":"ready"})
+    directory = Path(binding["state_root"]) / "hook-observations/codex"
+    paths = sorted(directory.glob("*.json"))
+    require(len(paths) <= 4096, "TASK_HOOK_OBSERVATION_WINDOW_TOO_LARGE")
+    matched = {"PreToolUse":[], "PostToolUse":[]}
+    times = {event:[] for event in matched}
+    for path in paths:
+        ref = file_ref(path)
+        value = json_ref(ref, "original automatic dynamic hook observation")
+        payload = value.get("payload", {})
+        if (value.get("direct_client") != "codex-server"
+                or not isinstance(payload, dict)
+                or payload.get("tool_name") != DYNAMIC_HOOK_NAME
+                or payload.get("tool_input") != {"operation_id":"ready"}
+                or not hook_matches(value, call, session, "codex", spec, launches)):
+            continue
+        event = payload["hook_event_name"]
+        observed = value.get("observed_at_ns")
+        require(type(observed) is int and observed > 0, "TASK_HOOK_OBSERVATION_TIME_INVALID")
+        matched[event].append(ref)
+        times[event].append(observed)
+    require(all(matched.values()), "TASK_AUTOMATIC_PRE_POST_HOOKS_NOT_CORRELATED")
+    require(max(times["PreToolUse"]) < min(times["PostToolUse"]),
+            "TASK_AUTOMATIC_HOOK_EVENT_ORDER_CHANGED")
+    return dict(proof, hooks_proven=True, hooks=matched, hook_call_id=proof["call_id"],
+                hook_tool_name=DYNAMIC_HOOK_NAME, adoption_proven=False)

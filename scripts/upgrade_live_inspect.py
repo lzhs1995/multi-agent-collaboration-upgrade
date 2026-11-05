@@ -228,8 +228,8 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                 kernels[lane]["socket_boundary"] = verify_kernel(client["pid"], boundary, writer=lane == "codex")
             sessions[lane] = session
             if task_mode and lane == "codex":
-                from upgrade_task_readiness import dynamic_readiness
-                evidence[lane] = dynamic_readiness(native, session, spec)
+                from upgrade_task_readiness import task_readiness
+                evidence[lane] = task_readiness(native, session, spec, startup_ref, binding, launches)
             else:
                 evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches,
                                                     stage=stage)
