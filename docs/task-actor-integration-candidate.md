@@ -116,6 +116,17 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   outstanding original results. Interrupts, conflicts and partial-frame failures
   close the actor without reconnecting, repeating effects or sending more input.
   The original pending completion and deferred terminal records remain on disk.
+- That same service can explicitly continue after a normal completed turn once
+  all original operations have native completion and pending generated bindings
+  are resolved. The original live campaign gate requires the retained RPC's
+  just-returned `turn/start` exchange, rechecks the actual next task/turn and
+  deployment, then appends scope to the same ledger. Original operation/choice
+  budgets and artifact bindings survive. A transition intent is exclusive per
+  previous turn; any uncertain transition stays closed, including a failure
+  after the ledger append. Interrupted/failed/UNKNOWN paths cannot use this
+  normal continuation. It sends no input and creates no second response writer.
+  Component tests use explicit fake deployment observations; real TASK adoption
+  and the authorized next-input producer still require integration.
 - S40 found that the first service implementation could close a healthy idle
   connection after a complete WebSocket Ping. The new polling adapter tracks
   frame state explicitly: complete Ping/Pong permits idle, while partial
@@ -161,7 +172,8 @@ remains a component whose owner must supply one. Full TASK adoption is absent. T
 campaign controls and the publish/bind result legs have typed evidence branches;
 the advice-body producer/reader, transport, input attribution and callback legs
 remain incomplete. Operations-v2 is selected by explicit v2 startup plans;
-later turn enrollment still needs the live business gate. Broker/remote-exec/MCP/inherited-FD and both Claude
+later turn enrollment has a live business gate but has not run under actual
+TASK adoption. Broker/remote-exec/MCP/inherited-FD and both Claude
 boundaries remain incomplete. No adoption or exclusive-responder claim follows
 from these modules.
 
@@ -181,8 +193,8 @@ same closed actor can now reconcile a complete original artifact through its
 live gate, original completion, source, native fence and business checker. It
 appends the missing SQLite binding once, or observes an already committed one;
 it never recreates an absent artifact, sends a response or reopens the actor.
-Recovery after losing that in-memory owner and enrollment for a later turn
-remain unimplemented. Creating a second service or recreating its exclusive
+Recovery after losing that in-memory owner remains unimplemented. Normal later
+turns use only the retained service and live gate. Creating a second service or recreating its exclusive
 directories is not recovery.
 Typed `advance` and supervisor instructions remain unconnected. Status and
 read-only recovery have typed observations; finish and verify use the original

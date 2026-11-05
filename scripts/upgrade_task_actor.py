@@ -9,6 +9,7 @@ governs delivery, cancellation and read-only recovery after a disconnect.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import time
 
 from orchestration_common import checked_path, json_ref, require, write_json
@@ -179,6 +180,59 @@ class TaskService:
         self.actor=actor
         self.pending={}
         self.terminal=None
+        self.normal_completion=None
+        self.owner_pid=os.getpid()
+
+    def _complete_turn(self,record):
+        message,ref=record
+        self.actor.process_recorded(message,ref)
+        turn=message.get("params",{}).get("turn",{})
+        if turn.get("status")=="completed" and not self.pending:
+            unresolved=self.actor.ledger.db.execute(
+                "SELECT 1 FROM calls WHERE phase!='NATIVE_COMPLETED'").fetchone()
+            if unresolved is None:
+                self.normal_completion=record
+
+    def continue_turn(self,grant_ref):
+        """Resume this owner after a normal terminal and an actual new turn.
+
+        The existing gate must authenticate the same live deployment and the
+        original next turn/start. No model input or new response writer is
+        created here. A failed/unknown transition remains sealed; no retry.
+        """
+        actor=self.actor
+        require(os.getpid()==self.owner_pid and actor.service_owner is self,
+                "TASK_SERVICE_ORIGINAL_OWNER_REQUIRED")
+        require(actor.closed and self.normal_completion is not None and not self.pending,
+                "TASK_SERVICE_NORMAL_TERMINAL_REQUIRED")
+        enroll=getattr(actor.gate,"enroll_next_turn",None)
+        require(callable(enroll),"TASK_SERVICE_LIVE_TURN_GATE_REQUIRED")
+        message,previous_ref=self.normal_completion
+        actor._recorded(message,previous_ref)
+        value=json_ref(grant_ref)
+        require(value.get("previous_completion")==previous_ref
+                and value.get("previous_turn_id")==actor.ledger.active_turn
+                and message["params"]["turn"]["id"]==actor.ledger.active_turn,
+                "TASK_SERVICE_ORIGINAL_TERMINAL_CHANGED")
+        require(actor.ledger.db.execute("SELECT 1 FROM calls WHERE phase!='NATIVE_COMPLETED'").fetchone() is None,
+                "TASK_SERVICE_UNRESOLVED_PRIOR_OPERATION")
+        path=actor.directory/(actor.ledger.active_turn+"-next-turn-intent.json")
+        write_json(path,dict(grant=grant_ref,previous_completion=previous_ref,
+            owner_pid=self.owner_pid,model_inputs_sent=0),exclusive=True)
+        try:
+            enrollment=enroll(grant_ref,previous_ref)
+            require(actor.ledger.active_turn==value["turn_id"],"TASK_SERVICE_NEXT_TURN_NOT_ENROLLED")
+            write_json(path.with_name(path.name.replace("intent","result")),
+                dict(grant=grant_ref,enrollment=enrollment,turn_id=actor.ledger.active_turn,
+                    operation_budget_reset=False,model_inputs_sent=0),exclusive=True)
+        except BaseException:
+            actor.close("UNKNOWN")
+            raise
+        self.normal_completion=None
+        self.terminal=None
+        actor.closed=False
+        return dict(status="ACTIVE",turn_id=actor.ledger.active_turn,
+                    operation_budget_reset=False,model_inputs_sent=0)
 
     def _bindings(self):
         for call,(message,ref) in list(self.pending.items()):
@@ -191,13 +245,14 @@ class TaskService:
                 and type(max_messages) is int and 0 < max_messages <= 1024,
                 "TASK_SERVICE_PULSE_BUDGET_INVALID")
         require(not self.actor.closed,"TASK_SERVICE_CLOSED_NO_REPLAY")
+        require(os.getpid()==self.owner_pid,"TASK_SERVICE_ORIGINAL_OWNER_REQUIRED")
         deadline=time.monotonic()+seconds
         count=0
         try:
             while time.monotonic()<deadline and count<max_messages:
                 self._bindings()
                 if self.terminal is not None and not self.pending:
-                    self.actor.process_recorded(*self.terminal)
+                    self._complete_turn(self.terminal)
                     break
                 record=self.actor.client.poll_recorded(timeout=min(0.25,max(0,deadline-time.monotonic())))
                 if record is None:
@@ -222,10 +277,12 @@ class TaskService:
                             and turn.get("id")==self.actor.ledger.active_turn,
                             "TASK_ACTOR_FOREIGN_TURN_COMPLETION")
                     if turn.get("status")=="completed" and self.pending:
-                        write_json(self.actor.directory/"terminal-binding-wait.json",
+                        write_json(self.actor.directory/(turn["id"]+"-terminal-binding-wait.json"),
                                    dict(received=ref,original_completion=message),exclusive=True)
                         self.terminal=record
                         continue
+                    self._complete_turn(record)
+                    break
                 result=self.actor.process_recorded(message,ref)
                 require(result.get("phase")!="CONFLICT","TASK_SERVICE_NATIVE_COMPLETION_CONFLICT")
                 observation=result.get("artifact_binding_observation")

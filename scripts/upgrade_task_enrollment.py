@@ -49,7 +49,7 @@ class TaskCampaignGate:
             controller_pid=self.owner_pid,ledger=dict(path=str(ledger.path),device=ledger.identity[0],inode=ledger.identity[1]),
             foreground_authentication=False,input_operations=0),exclusive=True)
 
-    def _observe(self):
+    def _observe(self,*,expected_turn=None):
         from orchestration_campaign import (canonical_live_uuids,controller_modules,validate_campaign)
         from upgrade_live_control import external_publisher
         from upgrade_live_runtime import validate_adoption
@@ -64,7 +64,7 @@ class TaskCampaignGate:
         verify_peer(self.client.sock,self.client.server,self.client.process)
         proof=observe(self.client,self.anchor,self.client.process)
         require(proof["thread_id"]==self.registration["thread_id"]
-                and proof["latest_turn_id"]==self.ledger.active_turn,
+                and proof["latest_turn_id"]==(self.ledger.active_turn if expected_turn is None else expected_turn),
                 "TASK_ENROLLMENT_ACTIVE_THREAD_OR_TURN_CHANGED")
         st=self.ledger.path.lstat()
         require((st.st_dev,st.st_ino)==self.ledger.identity,"TASK_ENROLLMENT_LEDGER_REPLACED")
@@ -101,6 +101,39 @@ class TaskCampaignGate:
             return observed
         finally:
             sys.path.pop(0)
+
+    def enroll_next_turn(self,grant_ref,previous_ref):
+        """Authenticate this owner's just-returned turn/start, then append scope.
+
+        Called immediately after the same retained RPC's original turn/start;
+        unrelated intervening RPCs cannot replace its exchange. A grant file
+        alone or a new controller process cannot authorize this transition.
+        """
+        require(_active.get() is None,"TASK_ENROLLMENT_TURN_DURING_OPERATION")
+        self.pending=None
+        read_ref(self.proof,"original actor enrollment")
+        value=json_ref(grant_ref)
+        previous=json_ref(previous_ref)
+        require(value.get("previous_completion")==previous_ref
+                and value.get("previous_turn_id")==self.ledger.active_turn
+                and previous.get("message",{}).get("params",{}).get("turn",{}).get("status")=="completed",
+                "TASK_ENROLLMENT_NORMAL_PREVIOUS_TURN_REQUIRED")
+        require(self.client.last_exchange is not None
+                and self.client.last_exchange==value.get("turn_start"),
+                "TASK_ENROLLMENT_ORIGINAL_NEXT_TURN_EXCHANGE_REQUIRED")
+        require(self.ledger.db.execute("SELECT 1 FROM calls WHERE phase!='NATIVE_COMPLETED'").fetchone() is None,
+                "TASK_ENROLLMENT_PRIOR_OPERATION_UNRESOLVED")
+        # Ledger validates the original authority, exact start params/response
+        # and append-only scope; live observation separately verifies the actual
+        # latest turn plus original server, TUI, both Claude lanes and adoption.
+        self._observe(expected_turn=value.get("turn_id"))
+        result=self.ledger.enroll_turn(grant_ref)
+        sessions=self._observe()
+        return write_json(self.proof_path.with_name(result["turn_id"]+"-campaign-enrollment.json"),
+            dict(schema="upgrade-task-campaign-turn-enrollment-v1",enrollment=self.proof,
+                grant=grant_ref,previous_completion=previous_ref,turn_id=result["turn_id"],
+                sessions=sessions,controller_pid=self.owner_pid,operation_budget_reset=False,
+                input_operations=0),exclusive=True)
 
     def __call__(self,registration,message,record):
         self.pending=None

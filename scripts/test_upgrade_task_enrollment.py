@@ -3,9 +3,10 @@ import copy
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import uuid
 from unittest.mock import patch
 
-from orchestration_common import ContractError,write_json
+from orchestration_common import ContractError,json_ref,object_sha,write_json
 from orchestration_campaign import require_live_identity
 from upgrade_task_enrollment import TaskCampaignGate,current_identity
 import test_upgrade_task_campaign as fixtures
@@ -59,6 +60,61 @@ class EnrollmentTests(unittest.TestCase):
         ref=self.f.enqueue(message)
         self.f.queue.clear()
         return message,ref
+
+    def next_grant(self):
+        f=self.f;turn=str(uuid.uuid4())
+        peer=dict(schema='upgrade-task-rpc-peer-v1',server=self.client.server,
+            peer={k:self.client.server[k] for k in ('pid','uid')})
+        def record(direction,name,message):
+            return write_json(f.control/(turn+'-'+name+'.json'),dict(direction=direction,message=message,peer=peer))
+        previous=record('received','terminal',dict(method='turn/completed',params=dict(
+            threadId=self.registration['thread_id'],turn=dict(id=f.ledger.active_turn,status='completed'))))
+        exchange=dict(intent=record('send_intent','start',dict(id=991,method='turn/start',params=dict(
+            threadId=self.registration['thread_id'],input=[dict(type='text',text='Next exact task operation')]))),
+            response=record('received','result',dict(id=991,result=dict(turn=dict(id=turn)))))
+        grant=write_json(f.control/(turn+'-grant.json'),dict(schema='upgrade-task-operation-turn-v1',
+            registration_sha256=object_sha(self.registration),authority_ref=self.registration['authority_ref'],
+            previous_turn_id=f.ledger.active_turn,turn_id=turn,operation_ids=['claim'],
+            previous_completion=previous,turn_start=exchange))
+        return grant,previous,turn,exchange
+
+    def test_next_turn_requires_live_observation_and_original_same_connection_exchange(self):
+        gate=self.gate();grant,previous,turn,exchange=self.next_grant()
+        self.client.last_exchange=exchange
+        self.observed['latest_turn_id']=turn
+        receipt=gate.enroll_next_turn(grant,previous)
+        self.assertEqual(self.f.ledger.active_turn,turn)
+        self.assertEqual(json_ref(receipt)['enrollment'],gate.proof)
+        self.assertEqual(json_ref(receipt)['grant'],grant)
+        self.assertFalse(json_ref(receipt)['operation_budget_reset'])
+        message,ref=self.record('claim');gate(self.registration,message,ref)
+        with self.assertRaisesRegex(ContractError,'NORMAL_PREVIOUS_TURN_REQUIRED'):
+            gate.enroll_next_turn(grant,previous)
+
+    def test_file_grant_stale_turn_and_stop_cannot_append_scope(self):
+        gate=self.gate();grant,previous,turn,exchange=self.next_grant()
+        old=self.f.ledger.active_turn
+        self.client.last_exchange=None
+        with self.assertRaisesRegex(ContractError,'ORIGINAL_NEXT_TURN_EXCHANGE_REQUIRED'):
+            gate.enroll_next_turn(grant,previous)
+        self.client.last_exchange=exchange
+        with self.assertRaisesRegex(ContractError,'ACTIVE_THREAD_OR_TURN_CHANGED'):
+            gate.enroll_next_turn(grant,previous)
+        self.observed['latest_turn_id']=turn
+        Path(self.spec['stop_path']).write_text('stop')
+        with self.assertRaisesRegex(ContractError,'STOP_REQUESTED'):gate.enroll_next_turn(grant,previous)
+        self.assertEqual(self.f.ledger.active_turn,old)
+        self.assertEqual(self.f.ledger.db.execute('SELECT count(*) FROM turns').fetchone()[0],1)
+
+    def test_post_append_live_failure_does_not_recreate_a_turn(self):
+        gate=self.gate();grant,previous,turn,exchange=self.next_grant()
+        self.client.last_exchange=exchange;self.observed['latest_turn_id']=turn
+        with patch.object(gate,'_observe',side_effect=[self.campaign['sessions'],ContractError('fixture live change')]):
+            with self.assertRaisesRegex(ContractError,'fixture live change'):gate.enroll_next_turn(grant,previous)
+        self.assertEqual(self.f.ledger.active_turn,turn)
+        self.assertFalse((self.f.control/(turn+'-campaign-enrollment.json')).exists())
+        with self.assertRaisesRegex(ContractError,'NORMAL_PREVIOUS_TURN_REQUIRED'):
+            gate.enroll_next_turn(grant,previous)
 
     def test_original_production_entry_requires_adoption_and_scoped_context(self):
         gate=self.gate();message,ref=self.record()
