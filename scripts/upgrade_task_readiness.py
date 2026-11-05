@@ -221,12 +221,14 @@ def task_readiness(native, session, spec, startup_ref, binding, launches):
     proof = dynamic_readiness(native, session, spec)
     call = dict(startup=startup_ref, id=proof["call_id"], name=DYNAMIC_HOOK_NAME,
                 arguments={"operation_id":"ready"})
-    directory = Path(binding["state_root"]) / "hook-observations/codex"
-    paths = sorted(directory.glob("*.json"))
-    require(len(paths) <= 4096, "TASK_HOOK_OBSERVATION_WINDOW_TOO_LARGE")
+    from upgrade_hook_observer import task_call_directory
+    directory = task_call_directory(binding,startup_ref,session["session_id"],proof["call_id"])
     matched = {"PreToolUse":[], "PostToolUse":[]}
     times = {event:[] for event in matched}
-    for path in paths:
+    # Bound this exact startup/session/call. Old or unrelated calls can grow
+    # indefinitely without changing its lookup or requiring a global scan.
+    for index,path in enumerate(directory.glob("*.json")):
+        require(index<4096, "TASK_HOOK_OBSERVATION_WINDOW_TOO_LARGE")
         ref = file_ref(path)
         value = json_ref(ref, "original automatic dynamic hook observation")
         payload = value.get("payload", {})

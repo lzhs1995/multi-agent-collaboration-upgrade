@@ -88,6 +88,13 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   scanning is bounded and starts with 4 KiB; an oversized partial tail refuses.
   Consumer order is checked against the producer's actual result record, rather
   than a later observation fence that may also contain the consumer's call.
+- New TASK Codex hook observations have an explicit schema and a directory keyed
+  by the exact startup pin, session and inner call. The producer and readiness
+  reader share that key. Unrelated history no longer consumes the 4096-file
+  bound; the bound still applies to the exact call. Directory selection grants
+  no proof: original process ancestry, configuration, call arguments, session,
+  startup, event order and nonce-source checks remain necessary. Existing
+  non-TASK and Claude observations keep their original layout and schema.
 - Offline candidate generation, deferred binding, model-shaped operation choice,
   acceptance and original ledger evidence now run through the actual components.
   This fixture does not prove a real model reviewed the candidate. Concurrent

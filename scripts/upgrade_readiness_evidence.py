@@ -130,7 +130,10 @@ def completed_probe(value, lane, spec):
 
 
 def hook_matches(value, call, session, lane, spec, launches):
-    if (value.get("schema") != "upgrade-automatic-hook-observation-v2"
+    from upgrade_startup_contract import TASK_SCHEMA
+    schema=("upgrade-automatic-task-hook-observation-v1" if spec.get("schema")==TASK_SCHEMA and lane=="codex"
+            else "upgrade-automatic-hook-observation-v2")
+    if (value.get("schema") != schema
             or value.get("lane") != lane or value.get("startup") != call["startup"]
             or value.get("adoption_proven") is not False
             or value.get("direct_client") not in ((lane, "codex-server") if lane == "codex" else (lane,))):
