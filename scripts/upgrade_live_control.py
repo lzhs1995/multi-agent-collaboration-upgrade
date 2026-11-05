@@ -196,7 +196,7 @@ def publish_bootstrap(runtime_ref, campaign_ref, instructions_ref):
                 bootstrap=ref, input_operations=0, native_reception_verified=False)
 
 
-def campaign_task_service(runtime_ref, campaign_ref, client, ledger):
+def campaign_task_service(runtime_ref, campaign_ref, client, ledger, *, advice_connections=None):
     """Attach the original post-adoption business actor; never launch a task.
 
     TASK adoption is not yet implemented and therefore still refuses here.
@@ -219,7 +219,20 @@ def campaign_task_service(runtime_ref, campaign_ref, client, ledger):
     runner=Runner(campaign_ref)
     require(runner.campaign["runtime"]==runtime_ref and runner.campaign["client_isolation"]==adoption,
             "TASK_SERVICE_CAMPAIGN_ADOPTION_CHANGED")
-    return attach(runner,client,ledger,TaskCampaignGate(runner,client,ledger))
+    return attach(runner,client,ledger,TaskCampaignGate(runner,client,ledger),
+                  advice_connections=advice_connections)
+
+
+def campaign_task_runtime(runtime_ref,campaign_ref,client,ledger,*,advice_connections=None):
+    """Attach one retained owner after the original complete adoption gates.
+
+    The returned runtime drives its original service in bounded run() calls.
+    Construction sends no model input and cannot replace an existing owner.
+    """
+    service=campaign_task_service(runtime_ref,campaign_ref,client,ledger,
+                                  advice_connections=advice_connections)
+    from upgrade_task_runtime import CampaignRuntime
+    return CampaignRuntime(service)
 
 
 def invocation(runtime_ref, runtime, spec, command, *, spawn=False, persist=True):

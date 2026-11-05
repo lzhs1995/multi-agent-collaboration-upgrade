@@ -240,7 +240,14 @@ groups and publishes one exclusive plan after normal completion/live idle. The
 original service re-renders that whole plan before its one-shot input; edits,
 omitted choices and foreign campaign references refuse. v1 plans retain their
 original contract. Publication sends no input and consumes no operation. The
-runtime owner loop and actual deployment are still incomplete. Status and
+runtime owner now drives the same service in bounded invocations, retaining the
+original RPC, ledger, scope and response writer. One invocation may send at most
+one v2 continuation after verified normal completion; idle yields retain the
+owner and UNKNOWN/interruption seals it. Its exclusive owner directory prevents
+construction as process recovery. Scope exhaustion reports no business
+acceptance. The production attach entry retains full adoption and can pass the
+original in-memory advice capability through to its handler. Actual deployment
+and process-death recovery remain incomplete. Status and
 read-only recovery have typed observations; finish and verify use the original
 full-run checker. Process-owner recovery and broader transport are still
 explicit pending work, not a complete campaign registration interface.
