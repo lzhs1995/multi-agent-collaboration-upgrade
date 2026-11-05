@@ -256,3 +256,34 @@ must protect its only upstream socket, authenticate its exact downstream TUI,
 preserve other approval traffic, record real native invocation/completion, and
 retain original UNKNOWN attempts on failure. A sole connection and model
 arguments alone do not establish task authorization.
+
+## Generated idle callback integration (2026-11-06)
+
+New generation from the immutable original .84 controller wraps only its fresh
+callback submission. The original journal retains its delivery, pane and target
+locks. A TASK callback observed at idle adds the exact pack, original attempt
+and enrolled ingress descriptor to its native request, persists one original
+input intent/fence, then calls the retained campaign service through the bounded
+Unix ingress. It never directly calls TASK `turn/start`. Active `turn/steer` and
+legacy submission retain their original paths. Transport errors consume the
+original attempt; neither a retry nor terminal fallback is enabled.
+
+Historical readers resolve the static descriptor from the original startup.
+They join the sender's immutable pre-send attempt, exact callback text/request,
+original Claude process ancestry, retained service exchange, enrollment result
+and the original SQLite turn with its preceding turn. The generated .84 native
+reader, original callback publisher and campaign delivery verifier all require
+this provenance for idle input. Missing provenance remains unconfirmed even if
+the transport returned successfully. Native user reception and model body
+consumption remain separate evidence.
+
+The sender tests execute the generated original journal/input code with real
+file locks and native fences. Separate route tests execute the retained service
+and SQLite ledger. Transport/model returns, deployment observations and receiver
+authorization are explicit fixtures; reader wiring tests spy on the separately
+tested route verifier. These checks establish component behavior, not one live
+end-to-end callback, automatic adoption, recurring 60-second requests or formal
+business acceptance. Process ancestry authenticates a process tree, not one
+model invocation. The full actor-aware deployment and sender attribution still
+need their own integration and live checks. No existing controller, attempt,
+session or terminal experiment is migrated by generating this candidate.

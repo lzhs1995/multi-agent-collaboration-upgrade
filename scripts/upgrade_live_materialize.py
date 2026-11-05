@@ -46,7 +46,9 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
            "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
            "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py", "upgrade_task_network.py",
-           "upgrade_task_descriptors.py", "upgrade_task_target.py", "upgrade_task_target_contract.py")
+           "upgrade_task_descriptors.py", "upgrade_task_target.py", "upgrade_task_target_contract.py",
+           "upgrade_task_callback_client.py", "upgrade_task_callback_sender.py", "upgrade_task_callback_route.py",
+           "upgrade_task_callback_contract.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):

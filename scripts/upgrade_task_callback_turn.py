@@ -42,8 +42,13 @@ def idle_intent(attempt, binding, text, receiver, sender, previous_turn, socket_
                 'QUEUE_TAB_INTENT','KEY_SENT','NATIVE_INPUT_SENT','NATIVE_INPUT_UNKNOWN') for e in events),
             'TASK_CALLBACK_FRESH_CONSUMED_INTENT_REQUIRED')
     event = inputs[0]; request = event.get('native_request', {})
-    require(set(request) == {'transport','method','params','socket','observed_status',
-                'observed_turn_id','observed_at_epoch','native_metadata'}
+    fields={'transport','method','params','socket','observed_status',
+            'observed_turn_id','observed_at_epoch','native_metadata'}
+    if 'task_callback_route' in request:
+        from upgrade_task_callback_route import proposed
+        proposed(binding,request)
+        fields.add('task_callback_route')
+    require(set(request) == fields
             and request['transport'] == 'codex-native-input-v1'
             and request['method'] == 'turn/start' and request['observed_status'] == 'idle'
             and request['observed_turn_id'] == previous_turn and request['socket'] == socket_pin
@@ -180,6 +185,10 @@ class CallbackInput:
                 'TASK_CALLBACK_ORIGINAL_PACK_CHANGED')
         request = idle_intent(attempt, bound, pack['completion_callback'], receiver, sender,
                               gate.ledger.active_turn, gate.anchor['socket'])
+        if 'task_callback_route' in request:
+            route=request['task_callback_route']
+            require(route['pack']==self.request['pack'] and route['attempt']==self.request['attempt']['path'],
+                    'TASK_CALLBACK_ORIGINAL_INGRESS_ROUTE_CHANGED')
         original = attempt['binding']
         report = file_ref(pack['report'])
         require(original['task_pack_sha256'] == self.request['pack']['sha256']

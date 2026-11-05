@@ -704,8 +704,13 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
             require(req.get("observed_status") == "idle", "idle turn observation missing")
         require(req.get("transport") == "codex-native-input-v1" and req.get("params") == params, "native input request/overrides changed")
         if b["schema"] == "native-delivery-task-v1":
-            require(req.get("method") == "turn/steer" and req.get("socket") == b["task_target"]["socket"],
+            require(req.get("socket") == b["task_target"]["socket"],
                     "TASK_TARGET_ORIGINAL_INPUT_CHANGED")
+            if req.get("method")=="turn/start":
+                from upgrade_task_callback_route import verify_input
+                verify_input(b,req,attempt)
+            else:
+                require("task_callback_route" not in req,"TASK_TARGET_ORIGINAL_INPUT_CHANGED")
         require(fence.get("native_request_sha256") == digest(json.dumps(req, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()), "native request hash mismatch")
         peer = req.get("socket", {})
         for name in ("uid", "peer_uid", "mode", "device", "inode"):

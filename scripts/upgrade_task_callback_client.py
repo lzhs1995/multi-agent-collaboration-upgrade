@@ -1,7 +1,7 @@
 """One-shot client for the original retained callback ingress.
 
-This module is not wired into generated native senders yet. Callers must hold
-the original callback delivery/pane/target locks and persist NATIVE_INPUT_INTENT
+Generated native callback senders hold the original delivery/pane/target locks
+and persist NATIVE_INPUT_INTENT
 before submit_once. The server remains responsible for original sender ancestry,
 pack/attempt validation, input and ledger enrollment.
 """
@@ -22,27 +22,9 @@ LIMIT=32768
 def descriptor(binding):
     """Resolve from original startup operations, never a caller-chosen path."""
     from upgrade_task_target import validate_saved
-    _, anchor=validate_saved(binding)
-    startup=json_ref(binding['task_target']['startup_result'])
-    parent=Path(startup['operations']['path']).parent
-    ref=file_ref(parent/'callback-ingress/descriptor.json');value=json_ref(ref)
-    enrollment_ref=file_ref(parent/'campaign-enrollment.json')
-    enrollment=json_ref(enrollment_ref)
-    owner=json_ref(value['runtime_owner'])
-    require(value.get('schema')==SCHEMA and value['enrollment']==enrollment_ref
-            and value['registration']==startup['operations']==enrollment['registration']
-            and value['campaign']==enrollment['campaign']==owner['campaign']
-            and value['task_thread_id']==anchor['thread_id']
-            and value['allowed_request']==REQUEST_SCHEMA and value['reconnect_allowed'] is False
-            and value['owner']['pid']==enrollment['controller_pid']==owner['owner_pid']
-            and owner['schema']=='upgrade-task-runtime-owner-v1'
-            and owner['enrollment']==enrollment_ref and owner['ledger']==enrollment['ledger']
-            and owner['reconnect_allowed'] is False and owner['operation_budget_reset'] is False
-            and enrollment['server']==anchor['server'] and enrollment['journal']==anchor['journal']
-            and enrollment['startup']==binding['task_target']['startup']
-            and value['socket']['path']==str(parent/'callback-ingress/s'),
-            'TASK_CALLBACK_CLIENT_ORIGINAL_DESCRIPTOR_REQUIRED')
-    return ref,value
+    from upgrade_task_callback_contract import descriptor_value
+    _,anchor=validate_saved(binding)
+    return descriptor_value(binding,anchor)
 
 
 def _peer(connection,value,process):

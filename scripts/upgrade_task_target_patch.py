@@ -36,6 +36,12 @@ def task_target_paths(name, text):
             '        task_target.require_live(b, p)\n'
             '    elif _live_session(p, b["provider"]) != b["session_id"]:\n'
             '        raise NativeDeliveryError("NATIVE_PROCESS_SESSION_CHANGED")')
+        if '    event, fence = original_input_event(attempt.get("events"), binding, text)' in text:
+            text = replace_once(text,'    event, fence = original_input_event(attempt.get("events"), binding, text)',
+                '    event, fence = original_input_event(attempt.get("events"), binding, text)\n'
+                '    if binding.get("schema") == task_target.SCHEMA and event.get("native_request", {}).get("method") == "turn/start":\n'
+                '        from upgrade_task_callback_route import verify_input\n'
+                '        verify_input(binding,event["native_request"],attempt)')
     elif name == "cmux_codex_input.py":
         text = replace_once(text, 'import cmux_native_delivery as native',
             'import cmux_native_delivery as native\nimport upgrade_task_target as task_target')
@@ -72,4 +78,17 @@ def task_target_paths(name, text):
         if text.count("client.request(") not in (3, 5):
             raise ValueError("task target response request source shape changed")
         text = text.replace("client.request(", "task_target.checked_request(client, binding, ")
+        if 'def _send_native_once(' in text:
+            text = replace_once(text,'        request = prepare(client, binding, text)',
+                '        request = prepare(client, binding, text)\n'
+                '        if binding.get("schema") == task_target.SCHEMA and request["method"] == "turn/start":\n'
+                '            from upgrade_task_callback_sender import route_request, send_idle_once\n'
+                '            request = route_request(binding,request,text)\n'
+                '            return send_idle_once(binding,request,text,recheck=recheck,emit=emit,\n'
+                '                                  observe=observe,wait_seconds=seconds)')
+    elif name == "cmux_callback_journal.py" and 'recover_stranded=False' in text:
+        text = replace_once(text,'                result = bridge.submit_text(\n',
+            '                from upgrade_task_callback_sender import submit_callback\n'
+            '                result = submit_callback(bridge,task_pack_path,attempt_path,\n'
+            '                    ((lock,lock_path),(pane_lock,pane_lock_path),(target_lock,target_lock_path)),\n')
     return text

@@ -98,10 +98,13 @@ def require_request(request, binding):
         return
     _, anchor = validate_saved(binding)
     require(request.get("socket") == anchor["socket"], "TASK_TARGET_REQUEST_SOCKET_CHANGED")
-    # A third-party turn/start would be outside the retained service's enrolled
-    # turn ledger. Keep it closed until original external-turn enrollment is
-    # implemented; never replace it with terminal input or a new task.
-    require(request.get("method") == "turn/steer", "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
+    if request.get("method") == "turn/start":
+        from upgrade_task_callback_route import proposed
+        require("task_callback_route" in request, "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
+        proposed(binding,request)
+    else:
+        require(request.get("method") == "turn/steer" and "task_callback_route" not in request,
+                "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
 
 
 def checked_request(client, binding, method, params):
@@ -111,6 +114,8 @@ def checked_request(client, binding, method, params):
     No retry, replacement connection, subscription or terminal fallback.
     """
     require_client(client, binding)
+    require(not (binding.get("schema")==SCHEMA and method=="turn/start"),
+            "TASK_TARGET_IDLE_INPUT_REQUIRES_ORIGINAL_SERVICE")
     result = client.request(method, params)
     require_client(client, binding)
     return result
