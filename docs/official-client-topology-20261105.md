@@ -104,3 +104,34 @@ The overall deliverable remains cmux external coordination plus Herdr internal
 collaboration, pure-cmux compatibility, both existing skills, three-state
 Codex/Claude continuity, 60-second requests, child result return, real thesis
 work and measured efficiency. Infrastructure checks do not satisfy it.
+
+## Exact thread reader and remaining actor gap
+
+`upgrade_task_thread.py` now reads a controller-supplied exact thread anchor.
+It checks the kernel socket peer on the same RPC connection, socket identity,
+server's writable descriptor for the named journal, original metadata and exact
+startup user record, and real `thread/read` / `thread/turns/list`. Extra open
+journals do not select a different thread; duplicate descriptors for this journal,
+file replacement, record changes, a changed server and missing input capability
+are refused. The result explicitly grants no caller, foreground or enrollment
+authority. Startup probe/hook completion and task authority remain separate.
+
+Fourteen local tests cover actual sockets/files with fixture RPC/process data.
+A separate read-only invocation against original j7 server 46405 succeeded with
+the original thread and startup record. No input or j7 state change occurred.
+The first live diagnostic refused because remote TUI metadata says
+`source=vscode`, `thread_source=user`; the new reader now accepts both official
+`cli` and `vscode` source labels while still requiring a user thread. Official
+`protocol.rs:2959` defines VSCode as the session-source default. Source labels
+alone never authenticate a caller. The first failure remains preserved.
+
+S40's independent review found no blocking defect in the isolated peer primitive,
+but confirmed that synchronous PreToolUse rewrites race by completion order and
+hook failures can leave the original command unchanged. A copyable one-use
+token therefore cannot serve as complete actor proof. A subsequent real negative
+control also ruled out authenticating a hook merely from a direct native parent
+and buffered stdin pipe: the official writer closes immediately, and a normal
+tool can reproduce that process/pipe shape. Neither proposed hook actor is
+installed. The next investigation is the official server-origin dynamic-tool
+request on a kernel-authenticated connection, with explicitly registered task
+operations and separate controller ownership; it is not yet an implementation.
