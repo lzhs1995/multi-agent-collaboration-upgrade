@@ -260,3 +260,14 @@ explicit pending work, not a complete campaign registration interface.
    and real Word/NotebookLM thesis artifacts with the original efficiency criteria.
 
 Tests are evidence about these local components, not completed model runs.
+
+S40's first bounded advice review found caller-owned capability substitution:
+changing the held connection after factory validation sent the first request to
+the replacement. The correction retains the original holder and connection
+identity plus a credential digest, refusing substitution before entering the
+worker. It keeps no second plaintext credential in the closure. Auth refusal
+clears the original holders even if their caller mapping changed during the
+request and releases the retained connection references; it cannot be reopened
+by supplying another holder. Five new regressions plus the affected advice
+suite pass (19 total). This is a same-process capability retention contract,
+not isolation from arbitrary memory mutation or a live deployment result.

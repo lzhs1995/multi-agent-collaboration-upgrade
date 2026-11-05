@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from orchestration_common import ContractError,file_ref,json_ref,parse_time,tree_manifest,utc_now,write_json
 from orchestration_campaign import NO_ADVICE
@@ -177,6 +178,51 @@ class AdviceTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError,'STOP_AFFECTED'):self.call('advice')
         self.assertIsNone(self.held['advice']['connection']);self.assertIsNone(self.held['advice']['credential'])
         self.assertEqual(len(self.calls),1)
+
+    def assert_substitution_refused_before_worker(self):
+        with patch('jev_advice_run.record_advice') as worker:
+            with self.assertRaisesRegex(ContractError,'HELD_CAPABILITY_SUBSTITUTED'):
+                self.call('advice')
+            worker.assert_not_called()
+        self.assertFalse(self.calls)
+        self.assertFalse((self.control/'campaign-results/advice.json').exists())
+
+    def test_connection_substitution_after_factory_never_enters_worker(self):
+        substituted=[]
+        self.held['advice']['connection']=lambda request:substituted.append(request)
+        self.assert_substitution_refused_before_worker()
+        self.assertFalse(substituted)
+
+    def test_credential_substitution_after_factory_never_enters_worker(self):
+        self.held['advice']['credential']='different-fixture-only'
+        self.assert_substitution_refused_before_worker()
+
+    def test_capability_holder_replacement_never_enters_worker(self):
+        self.held['advice']=dict(self.held['advice'])
+        self.assert_substitution_refused_before_worker()
+
+    def test_equal_connection_cannot_replace_original_identity(self):
+        class EqualConnection:
+            def __eq__(self,other):return True
+            def __call__(self,request):raise AssertionError('replacement invoked')
+        self.held['advice']['connection']=EqualConnection()
+        self.assert_substitution_refused_before_worker()
+
+    def test_auth_refusal_clears_original_holder_even_after_mapping_replacement(self):
+        from upgrade_task_advice import advice_handler
+        original=self.held['advice'];handler=advice_handler(self.runner,self.registration,self.held)
+        from jev_advice_run import STOP_REASON
+        def refused(*args,**kwargs):
+            self.assertIs(kwargs['connection'],original['connection'])
+            self.held.clear()
+            raise ContractError(STOP_REASON)
+        with patch('jev_advice_run.record_advice',side_effect=refused) as worker:
+            payload=self.registration['operations']['advice']['payload']
+            with self.assertRaisesRegex(ContractError,'STOP_AFFECTED'):handler(payload)
+            self.assertIsNone(original['connection']);self.assertIsNone(original['credential'])
+            self.held['advice']=dict(registration=self.jev,connection=self.transport,credential='fixture-only')
+            with self.assertRaisesRegex(ContractError,'HELD_CAPABILITY_UNAVAILABLE'):handler(payload)
+            self.assertEqual(worker.call_count,1)
 
     def test_off_zero_requests_no_body_and_native_decision_binding(self):
         self.call('advice');self.complete('advice')

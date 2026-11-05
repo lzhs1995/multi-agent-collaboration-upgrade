@@ -7,6 +7,8 @@ worker to the new adapter's frozen dependency closure. Old frozen adapters and
 their separately owned worker processes are never migrated.
 """
 from pathlib import Path
+from copy import deepcopy
+from hashlib import sha256
 
 from orchestration_common import file_ref,json_ref,parse_time,require
 from upgrade_task_control import control_request,native_result
@@ -91,7 +93,7 @@ def advice_handler(runner,registration,connections):
         run_id=p["run_id"],node_id=p["node_id"])["arm"]=="advisory-on"}
     held={} if connections is None else connections
     require(isinstance(held,dict) and set(held)==on,"TASK_ADVICE_EXACT_HELD_CONNECTIONS_REQUIRED")
-    run_owners={}
+    run_owners={};retained={}
     for name,value in held.items():
         require(isinstance(value,dict) and set(value)=={"registration","connection","credential"}
                 and value["registration"]==producers[name]["advisory_registration"]
@@ -102,6 +104,30 @@ def advice_handler(runner,registration,connections):
         owner=(value["connection"],value["credential"],reg["transport_source"],reg["provider"],reg["model"])
         prior=run_owners.setdefault(producer["run_id"],owner)
         require(prior[0] is owner[0] and prior[1:]==owner[1:],"TASK_ADVICE_ORIGINAL_RUN_CONNECTION_REQUIRED")
+        # Keep the original holder/connection, but no second plaintext key in
+        # the closure. Later owner mutation must fail before worker loading or
+        # request intent; equality alone cannot pin a connection's identity.
+        retained[name]=(value,value["connection"],sha256(value["credential"].encode()).digest(),
+                        deepcopy(value["registration"]))
+
+    def capability_for(name):
+        if name not in on:return None,None
+        require(name in retained,"TASK_ADVICE_HELD_CAPABILITY_UNAVAILABLE")
+        original,connection,key_digest,registration_ref=retained[name]
+        capability=held.get(name)
+        require(capability is original and set(capability)=={"registration","connection","credential"},
+                "TASK_ADVICE_HELD_CAPABILITY_SUBSTITUTED")
+        credential=capability["credential"]
+        require(capability["registration"]==registration_ref and capability["connection"] is connection
+                and isinstance(credential,str) and sha256(credential.encode()).digest()==key_digest,
+                "TASK_ADVICE_HELD_CAPABILITY_SUBSTITUTED")
+        return connection,credential
+
+    def release_capabilities():
+        # Clear the original holders even if the caller replaced its mapping
+        # while a request was in flight. Then release retained connection refs.
+        for original,_,_,_ in retained.values():original.update(connection=None,credential=None)
+        retained.clear()
 
     def handle(payload):
         from orchestration_native import NativeReader
@@ -113,16 +139,13 @@ def advice_handler(runner,registration,connections):
             # Credentials never enter registration, operation or result files.
             from jev_advice_run import record_advice,STOP_REASON
             from orchestration_common import ContractError
-            capability=held.get(name,{})
-            require(name not in on or (capability.get("registration")==producer["advisory_registration"]
-                    and capability.get("connection") is not None and capability.get("credential")),
-                    "TASK_ADVICE_HELD_CAPABILITY_UNAVAILABLE")
+            connection,credential=capability_for(name)
             try:
                 return record_advice(co,node,registration=producer["advisory_registration"],
-                    connection=capability.get("connection"),credential=capability.get("credential"))
+                    connection=connection,credential=credential)
             except ContractError as exc:
                 if str(exc)==STOP_REASON:
-                    for owner in held.values():owner.update(connection=None,credential=None)
+                    release_capabilities()
                 raise
         require(payload["action"]=="read-advice","TASK_ADVICE_UNKNOWN_HANDLER_ACTION")
         from jev_registration import registered_arm
