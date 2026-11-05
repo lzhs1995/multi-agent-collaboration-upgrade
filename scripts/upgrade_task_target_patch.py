@@ -67,4 +67,9 @@ def task_target_paths(name, text):
                 '    fallback = task_target.native_fallback(binding, fallback)\n    intended = False\n')
         elif 'def send_once(binding, text, *, recheck, emit, observe, wait_seconds=3):' not in text:
             raise ValueError("task target input fallback source shape changed")
+        # Wrap the call itself so validation precedes indexing even thread/data
+        # fields. Original .34/.58 have three calls; .84 adds two outcome reads.
+        if text.count("client.request(") not in (3, 5):
+            raise ValueError("task target response request source shape changed")
+        text = text.replace("client.request(", "task_target.checked_request(client, binding, ")
     return text

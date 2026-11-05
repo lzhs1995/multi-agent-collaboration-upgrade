@@ -104,6 +104,18 @@ def require_request(request, binding):
     require(request.get("method") == "turn/steer", "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
 
 
+def checked_request(client, binding, method, params):
+    """Verify the responding original peer before interpreting any response.
+
+    Mutation errors propagate into the original consumed-intent UNKNOWN path.
+    No retry, replacement connection, subscription or terminal fallback.
+    """
+    require_client(client, binding)
+    result = client.request(method, params)
+    require_client(client, binding)
+    return result
+
+
 def native_fallback(binding, fallback):
     """TASK delivery never types into the display TUI as a recovery route."""
     if binding.get("schema") == SCHEMA:
