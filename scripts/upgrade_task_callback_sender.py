@@ -120,6 +120,9 @@ def send_idle_once(binding,request,text,*,recheck,emit,observe,wait_seconds):
     def check():
         recheck();owner.check()
         require(file_ref(owner.attempt_path)==attempt,'TASK_CALLBACK_SENDER_INTENT_CHANGED')
+        # Preserve the original second gate after the durable intent, and keep
+        # it fresh at the ingress client's own pre-send recheck boundaries.
+        check_input(binding['identity'],native_binding=binding)
     began=time.monotonic();outcome='RPC_ERROR_OR_UNKNOWN';turn=None;result_ref=None
     try:
         check()

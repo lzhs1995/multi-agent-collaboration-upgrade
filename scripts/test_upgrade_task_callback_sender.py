@@ -125,6 +125,26 @@ class SenderTests(unittest.TestCase):
         self.assertFalse(self.ingress_calls);self.assertFalse(self.f.inputs)
         self.assertIsNone(sender._current.get())
 
+    def test_stop_after_durable_intent_refuses_ingress_and_keeps_attempt_consumed(self):
+        import upgrade_input_gate
+        phases=[]
+        def gate(identity,*,native_binding):
+            attempt=json_ref(file_ref(self.journal/'attempt-0001.json'))
+            phases.append(attempt['phase'])
+            if attempt['phase']=='NATIVE_INPUT_INTENT':
+                raise ContractError('EXPERIMENT_STOP_REQUESTED')
+        with patch.object(upgrade_input_gate,'check_input',side_effect=gate):
+            attempt=self.deliver_unconfirmed()
+        self.assertEqual(phases,['PREPARED','NATIVE_INPUT_INTENT'])
+        self.assertFalse(self.ingress_calls);self.assertFalse(self.f.inputs)
+        self.assertEqual([event['phase'] for event in attempt['events']],
+                         ['NATIVE_INPUT_INTENT','NATIVE_INPUT_RESULT'])
+        self.assertIn('EXPERIMENT_STOP_REQUESTED',str(attempt['events'][1]['native_result']))
+        before=file_ref(self.journal/'attempt-0001.json')
+        with self.assertRaisesRegex(self.bridge.TaskPackContractError,'CALLBACK_ATTEMPT_EXISTS'):
+            self.module.deliver(self.bridge,self.pack_path,wait_seconds=0)
+        self.assertEqual(file_ref(before['path']),before)
+
     def test_unknown_ingress_keeps_original_attempt_and_refuses_replay(self):
         self.mode='unknown';attempt=self.deliver_unconfirmed()
         before=file_ref(self.journal/'attempt-0001.json')
