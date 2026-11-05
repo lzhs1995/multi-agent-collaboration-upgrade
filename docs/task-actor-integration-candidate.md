@@ -126,7 +126,22 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   after the ledger append. Interrupted/failed/UNKNOWN paths cannot use this
   normal continuation. It sends no input and creates no second response writer.
   Component tests use explicit fake deployment observations; real TASK adoption
-  and the authorized next-input producer still require integration.
+  remains unverified.
+- `TaskService.start_next_turn` now owns one explicit normal next-input path.
+  It uses the same retained service, production gate, peer and ledger. A pinned
+  plan binds the previous terminal, authority, exact text and finite operations;
+  all alternatives in a selected choice group remain visible and consumed
+  operations cannot be renewed. Full adoption, STOP, original lanes and a
+  normally completed idle thread are checked before sending. One exclusive
+  transition intent is shared with `continue_turn`, and a second input intent
+  precedes the original RPC. The exact returned exchange creates the existing
+  append-only turn grant, immediately enrolled by the same gate. Unknown sends
+  and post-append failures stay closed with no retry, new socket or writer.
+  Idle observation and send are not atomic against another client. A successful
+  RPC does not establish native user landing, body consumption or input
+  attribution. Production remains blocked by missing adoption; the frozen plan
+  producer, typed business instructions and native input provenance still need
+  integration. Component tests mock deployment and the RPC sender explicitly.
 - S40 found that the first service implementation could close a healthy idle
   connection after a complete WebSocket Ping. The new polling adapter tracks
   frame state explicitly: complete Ping/Pong permits idle, while partial

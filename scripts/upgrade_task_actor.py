@@ -193,38 +193,32 @@ class TaskService:
             if unresolved is None:
                 self.normal_completion=record
 
-    def continue_turn(self,grant_ref):
-        """Resume this owner after a normal terminal and an actual new turn.
-
-        The existing gate must authenticate the same live deployment and the
-        original next turn/start. No model input or new response writer is
-        created here. A failed/unknown transition remains sealed; no retry.
-        """
+    def _normal_terminal(self):
         actor=self.actor
         require(os.getpid()==self.owner_pid and actor.service_owner is self,
                 "TASK_SERVICE_ORIGINAL_OWNER_REQUIRED")
         require(actor.closed and self.normal_completion is not None and not self.pending,
                 "TASK_SERVICE_NORMAL_TERMINAL_REQUIRED")
-        enroll=getattr(actor.gate,"enroll_next_turn",None)
-        require(callable(enroll),"TASK_SERVICE_LIVE_TURN_GATE_REQUIRED")
         message,previous_ref=self.normal_completion
         actor._recorded(message,previous_ref)
-        value=json_ref(grant_ref)
-        require(value.get("previous_completion")==previous_ref
-                and value.get("previous_turn_id")==actor.ledger.active_turn
-                and message["params"]["turn"]["id"]==actor.ledger.active_turn,
+        require(message["params"]["turn"]["id"]==actor.ledger.active_turn,
                 "TASK_SERVICE_ORIGINAL_TERMINAL_CHANGED")
         require(actor.ledger.db.execute("SELECT 1 FROM calls WHERE phase!='NATIVE_COMPLETED'").fetchone() is None,
                 "TASK_SERVICE_UNRESOLVED_PRIOR_OPERATION")
-        path=actor.directory/(actor.ledger.active_turn+"-next-turn-intent.json")
-        write_json(path,dict(grant=grant_ref,previous_completion=previous_ref,
-            owner_pid=self.owner_pid,model_inputs_sent=0),exclusive=True)
+        return previous_ref
+
+    def _enroll_next_turn(self,grant_ref,previous_ref,path,*,model_inputs_sent):
+        actor=self.actor
+        value=json_ref(grant_ref)
+        require(value.get("previous_completion")==previous_ref
+                and value.get("previous_turn_id")==actor.ledger.active_turn,
+                "TASK_SERVICE_ORIGINAL_TERMINAL_CHANGED")
         try:
-            enrollment=enroll(grant_ref,previous_ref)
+            enrollment=actor.gate.enroll_next_turn(grant_ref,previous_ref)
             require(actor.ledger.active_turn==value["turn_id"],"TASK_SERVICE_NEXT_TURN_NOT_ENROLLED")
             write_json(path.with_name(path.name.replace("intent","result")),
                 dict(grant=grant_ref,enrollment=enrollment,turn_id=actor.ledger.active_turn,
-                    operation_budget_reset=False,model_inputs_sent=0),exclusive=True)
+                    operation_budget_reset=False,model_inputs_sent=model_inputs_sent),exclusive=True)
         except BaseException:
             actor.close("UNKNOWN")
             raise
@@ -232,7 +226,47 @@ class TaskService:
         self.terminal=None
         actor.closed=False
         return dict(status="ACTIVE",turn_id=actor.ledger.active_turn,
-                    operation_budget_reset=False,model_inputs_sent=0)
+                    operation_budget_reset=False,model_inputs_sent=model_inputs_sent)
+
+    def continue_turn(self,grant_ref):
+        """Enroll an already-created turn; sends no model input. No replay."""
+        previous_ref=self._normal_terminal()
+        actor=self.actor
+        require(callable(getattr(actor.gate,"enroll_next_turn",None)),
+                "TASK_SERVICE_LIVE_TURN_GATE_REQUIRED")
+        value=json_ref(grant_ref)
+        require(value.get("previous_completion")==previous_ref
+                and value.get("previous_turn_id")==actor.ledger.active_turn,
+                "TASK_SERVICE_ORIGINAL_TERMINAL_CHANGED")
+        path=actor.directory/(actor.ledger.active_turn+"-next-turn-intent.json")
+        write_json(path,dict(grant=grant_ref,previous_completion=previous_ref,
+            owner_pid=self.owner_pid,model_inputs_sent=0),exclusive=True)
+        return self._enroll_next_turn(grant_ref,previous_ref,path,model_inputs_sent=0)
+
+    def start_next_turn(self,plan_ref):
+        """One planned input through the original live gate and retained RPC.
+
+        Shares the transition budget with continue_turn. An uncertain send or
+        failed enrollment keeps that budget consumed and the actor closed.
+        This is neither a reconnect nor process-death recovery.
+        """
+        previous_ref=self._normal_terminal()
+        actor=self.actor
+        from upgrade_task_enrollment import TaskCampaignGate
+        require(type(actor.gate) is TaskCampaignGate,"TASK_SERVICE_PRODUCTION_INPUT_GATE_REQUIRED")
+        actor.gate.validate_next_input(self,plan_ref,previous_ref)
+        path=actor.directory/(actor.ledger.active_turn+"-next-turn-intent.json")
+        intent=write_json(path,dict(plan=plan_ref,previous_completion=previous_ref,
+            owner_pid=self.owner_pid,max_model_inputs=1),exclusive=True)
+        try:
+            grant=actor.gate.start_next_input(self,plan_ref,previous_ref,intent)
+            return self._enroll_next_turn(grant,previous_ref,path,model_inputs_sent=1)
+        except BaseException as exc:
+            actor.close("UNKNOWN")
+            write_json(path.with_name(path.name.replace("intent","unknown")),dict(
+                status="UNKNOWN_NO_REPLAY",intent=intent,error_type=type(exc).__name__,
+                error=str(exc),retry_allowed=False),exclusive=True)
+            raise
 
     def _bindings(self):
         for call,(message,ref) in list(self.pending.items()):
