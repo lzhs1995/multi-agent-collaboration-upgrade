@@ -196,7 +196,7 @@ def publish_bootstrap(runtime_ref, campaign_ref, instructions_ref):
                 bootstrap=ref, input_operations=0, native_reception_verified=False)
 
 
-def campaign_task_service(runtime_ref, campaign_ref, client, ledger, enrollment_gate):
+def campaign_task_service(runtime_ref, campaign_ref, client, ledger):
     """Attach the original post-adoption business actor; never launch a task.
 
     TASK adoption is not yet implemented and therefore still refuses here.
@@ -214,11 +214,12 @@ def campaign_task_service(runtime_ref, campaign_ref, client, ledger, enrollment_
     # This entry belongs to the orchestration adapter, not the private startup
     # support import closure. Resolve its owner only after actual adoption.
     from upgrade_task_campaign import campaign_task_service as attach
+    from upgrade_task_enrollment import TaskCampaignGate
     from orchestration_run import Runner
     runner=Runner(campaign_ref)
     require(runner.campaign["runtime"]==runtime_ref and runner.campaign["client_isolation"]==adoption,
             "TASK_SERVICE_CAMPAIGN_ADOPTION_CHANGED")
-    return attach(runner,client,ledger,enrollment_gate)
+    return attach(runner,client,ledger,TaskCampaignGate(runner,client,ledger))
 
 
 def invocation(runtime_ref, runtime, spec, command, *, spawn=False, persist=True):

@@ -323,12 +323,28 @@ def campaign_task_service(runner, client, ledger, enrollment_gate):
                 "TASK_CAMPAIGN_SERVICE_ORIGINAL_STARTUP_REQUIRED")
     require(callable(getattr(client,"poll_recorded",None)), "TASK_CAMPAIGN_SERVICE_POLL_REQUIRED")
     verify_peer(client.sock,client.server,client.process)
+    if not runner.fixtures:
+        from upgrade_task_enrollment import TaskCampaignGate
+        require(type(enrollment_gate) is TaskCampaignGate and enrollment_gate.runner is runner
+                and enrollment_gate.client is client and enrollment_gate.ledger is ledger,
+                "TASK_CAMPAIGN_LIVE_GATE_REQUIRED")
     reader=NativeReader(runner.campaign["sessions"]["codex"],fixtures=runner.fixtures)
     directory=Path(controls["evidence_directory"])
     directory.mkdir(mode=0o700,exist_ok=False)
     handler=campaign_handler(runner,controls["registration"],parent/"campaign-results")
     completion=(campaign_completion_binder(runner,ledger,controls["registration"])
                 if registration["schema"]=="upgrade-task-operations-v3" else None)
+    if not runner.fixtures:
+        original_handler=handler
+        def handler(payload):
+            with enrollment_gate.activate():return original_handler(payload)
+        if completion is not None:
+            original_completion=completion
+            def completion(message,record):
+                with enrollment_gate.activate():return original_completion(message,record)
+            def reconcile(message,record):
+                with enrollment_gate.activate():return original_completion.reconcile(message,record)
+            completion.reconcile=reconcile
     actor=TaskActor(client,ledger,{KIND:handler},enrollment_gate,parent/"campaign-actor-events",
         operation_scope=set(operations),invocation_recorder=invocation_recorder(reader,controls["registration"],directory,
             after=runner.campaign["sessions"]["codex"]["freeze_fence"]["offset"]),completion_observer=completion)

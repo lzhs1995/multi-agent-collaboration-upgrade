@@ -85,6 +85,15 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   headers/payloads and unfinished fragmented JSON still fail closed. Ping gets
   only its protocol Pong; no model response or operation is replayed. The
   original frozen RPC implementation remains unchanged.
+- A production campaign service now constructs its own `TaskCampaignGate`.
+  It requires full original adoption, the same ledger and retained server peer,
+  current task/turn, exact TUI and both original Claude endpoints. Only a scoped
+  in-memory actor context can select the new Runner identity branch; ordinary
+  JSON or environment values cannot substitute. Claim production and replay
+  have an explicit task-RPC identity type and bind the original enrollment,
+  ledger and invocation to the exact run/node. Existing foreground claims keep
+  their original meaning. Deployment checks in local tests are explicit mocks;
+  full TASK adoption is still missing, so the production entry remains refused.
 - The campaign service factory connects the actual Runner, ledger, invocation
   recorder and completion binder. Its public live entry still requires real
   adoption; TASK adoption remains unavailable, so this is not a deployed service.
@@ -110,7 +119,8 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
 ## Deliberately unclaimed capabilities
 
 The actual same-surface startup sequence has not been run for this candidate.
-TaskActor still receives its business enrollment gate from its caller. The
+The production campaign factory owns its enrollment gate; standalone TaskActor
+remains a component whose owner must supply one. Full TASK adoption is absent. The
 campaign controls and the publish/bind result legs have typed evidence branches;
 the advice-body producer/reader, transport, input attribution and callback legs
 remain incomplete. Operations-v2 is selected by explicit v2 startup plans;
@@ -142,9 +152,10 @@ explicit pending work, not a complete campaign registration interface.
 
 ## Remaining execution order
 
-1. Original S40 accepted the bounded 01bbb7b generated-binding increment (25
-   unique local cases). ROOT verified its 188 referenced artifacts. Review only
-   the new service increment, preserving those earlier tests and recovery limits.
+1. Original S40 accepted bounded generated bindings, scoped hook discovery,
+   service Ping correction round 1 and same-closed-actor recovery. ROOT verified
+   the respective 188/179/187 artifact references. Review only the new explicit
+   campaign identity increment, preserving earlier tests and recovery limits.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.

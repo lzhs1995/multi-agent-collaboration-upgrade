@@ -447,6 +447,9 @@ def canonical_live_uuids(session):
 
 
 def require_live_identity(campaign):
+    if "task_controls" in campaign:
+        from upgrade_task_enrollment import current_identity
+        return current_identity(campaign)
     observed = collect_live_sessions(campaign)
     require(set(observed) == set(campaign["sessions"]), "original live session lanes missing")
     for lane, actual in observed.items():
