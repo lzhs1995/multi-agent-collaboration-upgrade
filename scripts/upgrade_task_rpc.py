@@ -6,7 +6,9 @@ them. This factory changes neither that original source nor existing attempts.
 The caller journals each input and response intent before requesting a send.
 """
 from collections import deque
+import json
 import select
+import struct
 import time
 
 from orchestration_common import canonical, require
@@ -32,7 +34,10 @@ def task_rpc_type(base):
             verify_peer(self.sock, self.server, self.process)
 
         def _receive_json(self):
-            message = envelope(super()._receive_json())
+            return self._record_message(super()._receive_json())
+
+        def _record_message(self,value):
+            message = envelope(value)
             peer = verify_peer(self.sock, self.server, self.process)
             self.last_received_record = self.record("received", message, peer)
             return message
@@ -85,9 +90,10 @@ def task_rpc_type(base):
         def poll_recorded(self, *, timeout=1, frame_timeout=20):
             """Wait before consuming a frame; an idle wait leaves the stream intact.
 
-            Once frame parsing starts, its timeout is a real protocol failure:
-            the base parser can have consumed a partial frame and cannot be
-            restarted. Callers must not catch that failure as an idle poll.
+            A complete Ping/Pong without JSON is safe idle. A partial header,
+            payload or fragmented data message remains a protocol failure;
+            consumed frame state is never discarded and silently retried.
+            The original base parser remains unchanged for request/reply calls.
             """
             require(type(timeout) in (int,float) and 0 <= timeout <= 1,
                     "TASK_RPC_POLL_TIMEOUT_INVALID")
@@ -96,12 +102,51 @@ def task_rpc_type(base):
             verify_peer(self.sock,self.server,self.process)
             if self.pending:
                 return self.pending.popleft()
-            if not getattr(self,"_buffer",b""):
-                ready,_,_=select.select([self.sock],[],[],timeout)
+            idle_deadline=time.monotonic()+timeout
+            frame_deadline=None
+            message=bytearray()
+            started=False
+            controls=0
+            while True:
+                if not getattr(self,"_buffer",b""):
+                    limit=frame_deadline if started else idle_deadline
+                    ready,_,_=select.select([self.sock],[],[],max(0,limit-time.monotonic()))
+                    verify_peer(self.sock,self.server,self.process)
+                    if not ready:
+                        if started:
+                            raise TimeoutError("TASK_RPC_INCOMPLETE_FRAGMENTED_MESSAGE")
+                        return None
+                if frame_deadline is None:
+                    frame_deadline=time.monotonic()+frame_timeout
+                self._deadline=frame_deadline
+                first,second=self._read(2)
+                final,opcode=bool(first&0x80),first&0x0f
+                require(not first&0x70 and not second&0x80,"TASK_RPC_INVALID_SERVER_FRAME")
+                length=second&0x7f
+                if length==126:length=struct.unpack('!H',self._read(2))[0]
+                elif length==127:length=struct.unpack('!Q',self._read(8))[0]
+                require(length<=16*1024*1024 and len(message)+length<=16*1024*1024,
+                        "TASK_RPC_MESSAGE_TOO_LARGE")
+                if opcode in (8,9,10):
+                    require(final and length<=125,"TASK_RPC_INVALID_CONTROL_FRAME")
+                payload=self._read(length)
                 verify_peer(self.sock,self.server,self.process)
-                if not ready:
-                    return None
-            return self.receive_recorded(frame_timeout)
+                if opcode==8:raise ConnectionError("Codex sent WebSocket close")
+                if opcode in (9,10):
+                    if opcode==9:self._send_frame(payload,10)
+                    controls+=1
+                    if not started:frame_deadline=None
+                    if controls>=64:
+                        require(not started,"TASK_RPC_FRAGMENT_CONTROL_LIMIT")
+                        return None
+                    continue
+                require(opcode in (0,1) and ((opcode==0)==started),
+                        "TASK_RPC_UNEXPECTED_MESSAGE_SEQUENCE")
+                started=True
+                message.extend(payload)
+                if final:
+                    msg=self._record_message(json.loads(message.decode('utf-8')))
+                    return msg,self.last_received_record
 
         def respond(self, intended_response):
             response = envelope(intended_response)

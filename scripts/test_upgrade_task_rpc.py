@@ -86,7 +86,7 @@ class RPCTests(unittest.TestCase):
         with patch('upgrade_task_rpc.select.select',side_effect=AssertionError('buffered')):
             self.assertEqual(self.client.poll_recorded(),record)
         self.client._buffer=bytearray(b'partial')
-        with patch.object(self.client,'receive_recorded',side_effect=TimeoutError('partial frame')):
+        with patch.object(self.client,'_read',side_effect=TimeoutError('partial frame'),create=True):
             with self.assertRaisesRegex(TimeoutError,'partial frame'):self.client.poll_recorded()
 
 

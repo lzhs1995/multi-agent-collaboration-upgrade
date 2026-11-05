@@ -79,6 +79,12 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   outstanding original results. Interrupts, conflicts and partial-frame failures
   close the actor without reconnecting, repeating effects or sending more input.
   The original pending completion and deferred terminal records remain on disk.
+- S40 found that the first service implementation could close a healthy idle
+  connection after a complete WebSocket Ping. The new polling adapter tracks
+  frame state explicitly: complete Ping/Pong permits idle, while partial
+  headers/payloads and unfinished fragmented JSON still fail closed. Ping gets
+  only its protocol Pong; no model response or operation is replayed. The
+  original frozen RPC implementation remains unchanged.
 - The campaign service factory connects the actual Runner, ledger, invocation
   recorder and completion binder. Its public live entry still requires real
   adoption; TASK adoption remains unavailable, so this is not a deployed service.
