@@ -121,6 +121,11 @@ def start_server(ref, spec, binding, env):
     # With station launchers mg execs the pinned binary in place (same PID);
     # spec["rpc"]["argv"] is then the final native argv the verifier compares.
     launch_argv = spec["rpc"].get("launch_argv", spec["rpc"]["argv"])
+    if "task_startup" in binding:
+        # The remote TUI can connect; its app-server and descendants cannot
+        # connect back to the protected task RPC endpoint. This direct socket
+        # policy does not yet establish the complete broker/FD boundary.
+        launch_argv = [str(SANDBOX), "-f", spec["pins"]["codex_server_sandbox"]["path"], *launch_argv]
     env = dict(env, **spec["rpc"].get("launch_environment", {}))
     write_json(control / "codex-server-intent.json", dict(
         schema="upgrade-server-intent-v2", startup=ref, created_at=utc_now(),
@@ -487,7 +492,11 @@ def start_client(ref, spec, binding, lane):
     require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
     # Native CLI positional input is the pinned initial readiness instruction,
     # not an existing-session sender or an invented receipt.
-    os.execve(client["argv"][0], client["argv"], env)
+    argv = client["argv"]
+    if lane == "codex" and "task_startup" in binding:
+        from upgrade_task_tui import task_tui_argv
+        argv = task_tui_argv(ref, spec, binding, env)
+    os.execve(argv[0], argv, env)
 
 
 def main(argv=None):

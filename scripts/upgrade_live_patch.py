@@ -16,7 +16,10 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_body_read", "upgrade_toml", "upgrade_toml_re",
     "upgrade_child_hook", "upgrade_child_budget_protocol", "upgrade_native_outcomes", "upgrade_startup_continuity",
     "upgrade_readiness_evidence", "upgrade_stage_fence", "upgrade_existing_workspace",
-    "upgrade_codex_package")}
+    "upgrade_codex_package", "upgrade_rpc_peer", "upgrade_dynamic_route", "upgrade_task_rpc",
+    "upgrade_task_operations", "upgrade_task_creation", "upgrade_task_thread",
+    "upgrade_task_startup", "upgrade_task_actor", "upgrade_task_socket_policy", "upgrade_task_tui",
+    "upgrade_task_readiness")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 

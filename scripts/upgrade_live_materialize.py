@@ -21,11 +21,11 @@ from upgrade_live_integrity import artifact_ref
 from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_live_runtime import RELEASE_MANIFEST_SCHEMA, release_members
 from upgrade_materialize import hook_config, rendered_helper
-from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
     CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY, PRE_EXEC_HOLD,
     bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
-    pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup)
+    pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup, task_lane_document)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
@@ -41,7 +41,11 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_toml.py", "upgrade_toml_re.py",
            "upgrade_child_hook.py", "upgrade_child_budget_protocol.py",
            "upgrade_native_outcomes.py", "upgrade_startup_continuity.py", "upgrade_readiness_evidence.py",
-           "upgrade_stage_fence.py", "upgrade_codex_package.py")
+           "upgrade_stage_fence.py", "upgrade_codex_package.py",
+           "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
+           "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
+           "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
+           "upgrade_task_readiness.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -82,7 +86,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
-                     codex_package=None):
+                     codex_package=None, task_startup=None):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -93,6 +97,21 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
             "STARTUP_FAILURE_REQUIRES_PRIVATE_CONTINUITY")
+    if task_startup is not None:
+        from upgrade_task_operations import validate_registration
+        require(isinstance(task_startup, dict) and set(task_startup) == {"task_id", "controller_id",
+                "authority_ref", "startup_text", "base_instructions", "operations"}
+                and pre_exec_hold and not startup_continuity and goal_startup is not None
+                and station_launchers is not None and codex_package is not None
+                and native_policy == SOCKET_POLICY, "STARTUP_TASK_EXPLICIT_TOPOLOGY_REQUIRED")
+        validate_registration(dict(schema="upgrade-task-operations-v1",
+            **{k:task_startup[k] for k in ("task_id","controller_id","authority_ref","operations")},
+            thread_id="00000000-0000-4000-8000-000000000001",
+            turn_id="00000000-0000-4000-8000-000000000002"))
+        require(task_startup["operations"].get("ready") == {"kind":"readiness","payload":{}},
+                "STARTUP_TASK_READY_OPERATION_REQUIRED")
+        require(all(isinstance(task_startup[k], str) and 0 < len(task_startup[k].encode()) <= MAX_INSTRUCTION_BYTES
+                    for k in ("startup_text", "base_instructions")), "STARTUP_TASK_INSTRUCTIONS_REQUIRED")
     require(existing_split_targets is None or existing_tab_targets is None,
             'ONE_EXISTING_TARGET_MODE_REQUIRED')
     for target_name, targets in (('split', existing_split_targets), ('tab', existing_tab_targets)):
@@ -173,16 +192,32 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                     and 0 < incoming["bytes"] <= MAX_INSTRUCTION_BYTES,
                     "STARTUP_INSTRUCTIONS_INVALID")
             raw = read_ref(incoming, "pressure lane instructions").decode("utf-8")
-            document = pressure_lane_document(controller, context["python"]["path"],
-                executable_pins["rtk"]["path"], lane, raw).encode()
+            document = (task_lane_document(raw) if task_startup is not None and lane == "codex" else
+                pressure_lane_document(controller, context["python"]["path"],
+                    executable_pins["rtk"]["path"], lane, raw)).encode()
             path = paths["config"] / (lane + "-instructions.md")
             instruction_buffers[lane] = document
             refs[lane] = dict(path=str(path), bytes=len(document), sha256=digest(document), mode=0o444)
             if lane in GOAL_LANES:
                 conditions[lane] = native_goal_condition(goal_startup[lane], path)
-        goal_contract = dict(schema=GOAL_SCHEMA, goal_startup=conditions, lane_instructions=refs)
+        goal_contract = dict(schema=TASK_SCHEMA if task_startup is not None else GOAL_SCHEMA,
+                             goal_startup=conditions, lane_instructions=refs)
     codex_original, claude_original = (read_provider_configuration()
         if provider_configuration is None else provider_configuration)
+    task_plan_ref, task_plan_raw = None, None
+    if task_startup is not None:
+        from orchestration_common import canonical
+        from upgrade_task_startup import PLAN_SCHEMA
+        from upgrade_task_readiness import readiness_text
+        require(all(isinstance(codex_original.get(k), str) and codex_original[k]
+                    for k in ("model", "model_provider")), "STARTUP_TASK_MODEL_CONFIGURATION_REQUIRED")
+        plan = dict(task_startup)
+        plan["startup_text"] = readiness_text(plan["startup_text"])
+        task_plan_raw = canonical(dict(schema=PLAN_SCHEMA, **plan,
+            native_root=str(roots["codex"]), work_root=str(paths["state"] / "work"),
+            model=codex_original["model"], model_provider=codex_original["model_provider"]))
+        task_plan_ref = dict(path=str(paths["config"] / "task-startup.json"), bytes=len(task_plan_raw),
+                             sha256=digest(task_plan_raw), mode=0o444)
     credential_files = {} if credential_files is None else credential_files
     require(set(credential_files) <= {"codex", "claude"}, "unknown credential source")
     secrets = {name: read_regular(checked_path(path)) for name, path in credential_files.items()}
@@ -282,6 +317,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["station_launchers"] = station
     if package is not None:
         binding["codex_package"] = package
+    if task_plan_ref is not None:
+        binding["task_startup"] = task_plan_ref
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -298,6 +335,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
+    if task_plan_ref is not None:
+        pins["task_startup"] = immutable_bytes(Path(task_plan_ref["path"]), task_plan_raw)
+        require(pins["task_startup"] == task_plan_ref, "STARTUP_TASK_PLAN_WRITE_CHANGED")
     if continuity_registration:
         # This is the original scheduler/guardian CURRENT contract, scoped to
         # this immutable private release. It neither installs shared hooks nor
@@ -348,6 +388,11 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                    "This first opt-in protocol supports non-fork foreground children only; no background launch or handback note. "
                    "The original parent must read the full pinned body and consume the exact SHA. "
                    "Missing service or uncertain proof means preserve the slot and continue original bounded work.\n")
+    if task_startup is not None:
+        policy += ("\nThis topology uses an externally controlled Codex task thread. "
+                   "For Codex, the registered dynamic operation_ids are the collaboration interface. "
+                   "Do not invoke raw cmux/Herdr/shell senders or infer caller authority from threadSource. "
+                   "Both original Claude lanes retain their own actual hook and Goal checks.\n")
     if semantic_sender:
         # R545 P1: S2 only. The commands carry the campaign pin, so they stay in
         # the campaign's frozen sender-duties file; this clause only names it.
@@ -412,10 +457,11 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                            socket_boundary=socket_boundary if provider == "codex" else None,
                            station=station_client(station, lane, context["python"]["path"],
                                                   executable_pins["mg"]["path"] if station is not None else None))
-        argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
-                                           goal_contract["goal_startup"])
-                    if goal_contract is not None else
-                    readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
+        if not (task_startup is not None and lane == "codex"):
+            argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
+                                               goal_contract["goal_startup"])
+                        if goal_contract is not None else
+                        readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
         env = client_environment(roots, paths, lane, binaries["rtk"],
                                  response_observation=response_observation, child_budget=child_budget,
                                  station=station is not None)
@@ -430,6 +476,10 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         if lane == "codex" and socket_boundary is not None:
             profile = extend_profile(profile, socket_boundary)
         pins[lane + "_sandbox"] = immutable_bytes(paths["config"] / (lane + ".sb"), profile)
+        if lane == "codex" and task_startup is not None:
+            from upgrade_task_socket_policy import restrict_agent_connections
+            server_profile = restrict_agent_connections(profile, socket_boundary["physical"], socket_boundary["advertised"])
+            pins["codex_server_sandbox"] = immutable_bytes(paths["config"] / "codex-server.sb", server_profile)
     patch_ref = write_json(paths["controllers"] / "patches-v2.json", dict(version=2,
         source=source_pin, changes=changes, compatibility_fixes=["original_gate_canonical_ack"],
         live_adoption=False, native_reception=False, measured_efficiency=False), exclusive=True)
@@ -449,6 +499,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         startup["socket_boundary"] = socket_boundary
     if goal_contract is not None:
         startup.update(goal_contract)
+    if task_plan_ref is not None:
+        startup["task_startup"] = task_plan_ref
     if existing_workspace_uuid is not None:
         # R511: allocate side panes in this existing workspace; launch never creates one.
         startup["existing_workspace_uuid"] = str(uuid.UUID(existing_workspace_uuid))

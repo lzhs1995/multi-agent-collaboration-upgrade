@@ -1,0 +1,91 @@
+"""New materialization and old-mode refusal; no native clients are launched."""
+import copy
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from orchestration_common import ContractError, json_ref, write_json
+from upgrade_experiment import init_experiment
+from upgrade_live_materialize import materialize_live
+from upgrade_startup_contract import TASK_SCHEMA, validate_startup
+from upgrade_task_startup import plan_value
+from upgrade_socket_boundary import SOCKET_POLICY
+import upgrade_live_control as control
+
+SOURCE=Path.home()/".local/share/multi-agent-collaboration/releases/0.4.34-d333557fb498/source"
+WRAPPERS=Path("/Applications/cmux.app/Contents/Resources/bin")
+PACKAGE=Path("/Users/lzhs/Developer/codex-releases/0.164.0")
+
+
+@unittest.skipUnless(SOURCE.is_dir() and WRAPPERS.is_dir() and PACKAGE.is_dir(), "local frozen packages required")
+class TaskTopologyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp=tempfile.TemporaryDirectory(prefix="",dir="/tmp")
+        cls.root=Path(cls.tmp.name).resolve()
+        cls.context=init_experiment(cls.root/"l","task-topology-fixture",SOURCE)
+        instructions={lane:write_json(cls.root/(lane+".json"),{"fixture":lane})
+                      for lane in ("codex","claude_a","claude_b")}
+        binaries={k:Path("/usr/bin/true") for k in ("claude","cmux","rtk","node")}
+        binaries["codex"]=PACKAGE/"codex-aarch64-apple-darwin"
+        binaries.update({p+"_wrapper":WRAPPERS/("cmux-"+p+"-wrapper") for p in ("codex","claude")})
+        cls.runtime_ref=materialize_live(cls.context,"B",binaries=binaries,
+            native_policy=SOCKET_POLICY,codex_package=PACKAGE,pre_exec_hold=True,
+            provider_configuration=({"model":"fixture-codex","model_provider":"custom"},{"model":"fixture-claude","env":{}}),
+            station_launchers={"mg":"/usr/bin/true","magpie":"/usr/bin/true",
+                "codex":{"station":"agentrouter-a","base_url":"http://127.0.0.1:3465"},
+                "claude":{"station":"linxi","key":"linxi-s1"}},
+            goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
+            lane_instructions=instructions,
+            task_startup={"task_id":"fixture-task","controller_id":"fixture-root","authority_ref":cls.context,
+                "startup_text":"Use the registered readiness operation once.","base_instructions":"Fixture, no effects.",
+                "operations":{"ready":{"kind":"readiness","payload":{}}}})
+        cls.runtime=json_ref(cls.runtime_ref)
+        cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
+
+    @classmethod
+    def tearDownClass(cls):cls.tmp.cleanup()
+
+    def test_new_schema_has_empty_origin_tui_and_distinct_server_boundary(self):
+        self.assertEqual(self.spec["schema"],TASK_SCHEMA)
+        plan=plan_value(self.spec["task_startup"])
+        self.assertEqual(plan["model"],"fixture-codex")
+        from upgrade_task_readiness import READY_INSTRUCTION
+        self.assertTrue(plan["startup_text"].endswith(READY_INSTRUCTION))
+        self.assertNotIn(plan["startup_text"],self.spec["clients"]["codex"]["argv"])
+        self.assertEqual(self.spec["clients"]["codex"]["argv"][-1],"--dangerously-bypass-hook-trust")
+        self.assertIn("/goal",self.spec["clients"]["claude_a"]["argv"][-1])
+        server=Path(self.spec["pins"]["codex_server_sandbox"]["path"]).read_text()
+        tui=Path(self.spec["pins"]["codex_sandbox"]["path"]).read_text()
+        self.assertIn("deny network-outbound",server)
+        self.assertNotIn("deny network-outbound",tui)
+        self.assertEqual(self.binding["codex_package"]["root"],str(PACKAGE))
+        self.assertFalse((Path(self.binding["state_root"])/"startup").exists())
+
+    def test_support_modules_are_reachable_in_frozen_private_controller(self):
+        root=Path(self.spec["controller"])/"scripts"
+        self.assertIn("from mac_upgrade_task_tui import task_tui_argv",(root/"mac_upgrade_live_entry.py").read_text())
+        self.assertIn("mac_upgrade_task_operations",(root/"mac_upgrade_task_startup.py").read_text())
+        self.assertTrue((root/"mac_upgrade_task_creation.py").is_file())
+
+    def test_old_runtime_cannot_use_new_bootstrap(self):
+        with patch.object(control,"validate_live_runtime",return_value=({},self.runtime)), \
+             patch.object(control,"json_ref",return_value={"schema":"upgrade-startup-v3"}), \
+             patch.object(control,"external_publisher") as publisher:
+            with self.assertRaisesRegex(ContractError,"EXPLICIT_NEW_TOPOLOGY"):
+                control.bootstrap_task_thread(self.runtime_ref,object())
+            publisher.assert_not_called()
+
+    def test_incomplete_business_chain_cannot_launch_or_hold(self):
+        with patch.object(control,"invocation") as invoke:
+            for command in ("launch","hold"):
+                with self.subTest(command=command),self.assertRaisesRegex(ContractError,"BUSINESS_INTEGRATION_INCOMPLETE"):
+                    control.control(self.runtime_ref,command)
+            invoke.assert_not_called()
+        self.assertFalse((Path(self.spec["adoption_path"]).parent/"launch-request.json").exists())
+        self.assertFalse((Path(self.spec["adoption_path"]).parent/"held-request.json").exists())
+
+
+if __name__=="__main__":unittest.main()

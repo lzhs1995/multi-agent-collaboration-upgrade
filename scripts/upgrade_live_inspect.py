@@ -19,7 +19,7 @@ from orchestration_common import (ContractError, digest, file_ref, json_ref, par
                                   require, strict_json, utc_now)
 from upgrade_client_isolation import LANES, require_kernel_boundary
 from upgrade_native_roots import process_root
-from upgrade_startup_contract import (GOAL_SCHEMA, pressure_startup_prompt,
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, pressure_startup_prompt,
                                      readiness_command, readiness_prompt, startup_continuity_enabled)
 from upgrade_socket_boundary import binding_boundary, verify_kernel
 
@@ -147,6 +147,8 @@ def inspect(startup_ref, spec, binding, *, stage=None):
     import cmux_daemon_identity as identity
     import cmux_native_delivery as native
     from cmux_codex_rpc import DaemonRPC
+    task_mode = spec.get("schema") == TASK_SCHEMA
+    require(not task_mode or stage is None, "TASK_INSPECTION_LEGACY_STAGE_REFUSED")
     control = Path(binding["state_root"]) / "startup"
     intent_ref, result_ref = file_ref(control / "intent.json"), file_ref(control / "result.json")
     intent, result = json_ref(intent_ref), json_ref(result_ref)
@@ -201,13 +203,20 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             require(native._provider(client) == provider
                     and str(process_root(provider, client)) == spec["clients"][lane]["native_root"],
                     "CLIENT_PROVIDER_OR_NATIVE_ROOT_CHANGED")
-            sid = native._live_session(client, provider)
+            if task_mode and lane == "codex":
+                from upgrade_task_readiness import task_startup_result
+                _, task_result, task_anchor = task_startup_result(spec)
+                sid = task_result["thread_id"]
+                require(client["argv"][-2:] == ["resume", sid], "TASK_INSPECTION_TUI_NOT_ATTACHED")
+            else:
+                sid = native._live_session(client, provider)
             if provider == "claude":
                 require(sid == spec["clients"][lane]["session_id"], "ORIGINAL_CLAUDE_SESSION_CHANGED")
             if recovery_ref is not None:
                 require(sid == launch["session_id"] == stage["recovery"]["sessions"][lane],
                         "RECOVERED_SESSION_CHANGED")
-            path = native._transcript_path(provider, sid, client)
+            path = (Path(task_anchor["journal"]["path"]) if task_mode and lane == "codex"
+                    else native._transcript_path(provider, sid, client))
             session = dict(provider=provider, session_id=sid, workspace_uuid=workspace,
                 surface_uuid=target, pane_uuid=str(uuid.UUID(row["target_pane_uuid"])), tty=row["tty"],
                 process=native._public_process(client), native_config_root=str(process_root(provider, client)),
@@ -218,8 +227,12 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             if boundary is not None:
                 kernels[lane]["socket_boundary"] = verify_kernel(client["pid"], boundary, writer=lane == "codex")
             sessions[lane] = session
-            evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches,
-                                                stage=stage)
+            if task_mode and lane == "codex":
+                from upgrade_task_readiness import dynamic_readiness
+                evidence[lane] = dynamic_readiness(native, session, spec)
+            else:
+                evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches,
+                                                    stage=stage)
             session.update(model=evidence[lane]["model"], model_record=evidence[lane]["model_record"],
                            freeze_fence=session["transcript"])
         except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
@@ -256,8 +269,16 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                 denied=binding["isolation"]["denied_probes"], writable=binding["isolation"]["write_probes"])
             boundary = binding_boundary(binding, binary_pin=spec["pins"]["codex"], live=True)
             if boundary is not None:
-                kernels["codex-server"]["socket_boundary"] = verify_kernel(server["pid"], boundary, writer=True)
-            client = DaemonRPC(spec["rpc"]["path"], timeout=15)
+                kernels["codex-server"]["socket_boundary"] = verify_kernel(
+                    server["pid"], boundary, writer=True, physical_unlink_denied=task_mode)
+            if task_mode:
+                from upgrade_task_rpc import task_rpc_type
+                from upgrade_task_thread import observe
+                from upgrade_rpc_peer import server_pin
+                client = task_rpc_type(DaemonRPC)(spec["rpc"]["path"], server_pin(server,uid=os.getuid()),
+                    identity.process,record=lambda *args: None,timeout=15)
+            else:
+                client = DaemonRPC(spec["rpc"]["path"], timeout=15)
             try:
                 session = sessions["codex"]
                 metadata = client.request("thread/read", {"threadId": session["session_id"],
@@ -272,6 +293,8 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                     can_accept_direct_input=True, status=metadata.get("status"), socket=client.socket_identity,
                     last_turn=[{k: t.get(k) for k in ("id", "status")} for t in turns],
                     methods=["thread/read", "thread/turns/list"], input_operations=0)
+                if task_mode:
+                    capability["task_thread"] = observe(client,task_anchor,identity.process)
             finally:
                 client.close()
         except Exception as exc:
@@ -280,11 +303,14 @@ def inspect(startup_ref, spec, binding, *, stage=None):
         require(len({s["workspace_uuid"] for s in sessions.values()}) == 1
                 and all(len({s[k] for s in sessions.values()}) == 3
                         for k in ("surface_uuid", "pane_uuid", "session_id")), "CLIENT_ENDPOINTS_NOT_DISTINCT")
-    return dict(schema="upgrade-live-inspection-v2", startup=startup_ref, observed_at=utc_now(),
+    return dict(schema="upgrade-live-inspection-task-v1" if task_mode else "upgrade-live-inspection-v2",
+                startup=startup_ref, observed_at=utc_now(),
                 observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),
                 launch_intent=intent_ref, launch_result=result_ref, launches=launch_refs,
                 sessions=sessions, readiness=evidence, kernel=kernels, codex_capability=capability,
-                errors=errors, ready=not errors and len(evidence) == 3 and capability is not None,
+                errors=errors, ready=not task_mode and not errors and len(evidence) == 3 and capability is not None,
+                **({"startup_ready": not errors and len(evidence) == 3 and capability is not None,
+                    "business_adoption_supported": False} if task_mode else {}),
                 stopped=os.path.lexists(spec["stop_path"]) or (stage is not None and os.path.lexists(
                     Path(stage["control"]) / "stop.json")), input_operations=0,
                 **({"startup_failures": startup_failures}

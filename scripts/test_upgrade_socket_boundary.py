@@ -147,11 +147,14 @@ class SocketBoundaryTests(unittest.TestCase):
     def test_kernel_exact_writes_and_nonwriter_deny_all_external_endpoints(self):
         self.endpoint()
         module_path = str(Path(boundary.__file__).resolve())
-        for writer in (False, True):
+        for writer, unlink_denied in ((False, False), (True, False), (True, True)):
             profile = self.root / ('writer.sb' if writer else 'reader.sb')
             raw = sandbox_profile([self.private])
             if writer:
                 raw = boundary.extend_profile(raw, self.plan)
+            if unlink_denied:
+                from upgrade_task_socket_policy import restrict_agent_connections
+                raw = restrict_agent_connections(raw, self.plan['physical'], self.plan['advertised'])
             profile.write_bytes(raw)
             code = f'''
 import importlib.util, os, sys
@@ -161,7 +164,7 @@ spec = importlib.util.spec_from_file_location('boundary', {module_path!r})
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 m.shared_directory = lambda: Path({str(self.shared)!r})
-print(m.verify_kernel(os.getpid(), {self.plan!r}, writer={writer!r}))
+print(m.verify_kernel(os.getpid(), {self.plan!r}, writer={writer!r}, physical_unlink_denied={unlink_denied!r}))
 '''
             result = subprocess.run(['/usr/bin/sandbox-exec', '-f', str(profile),
                 sys.executable, '-I', '-B', '-c', code], capture_output=True, text=True, timeout=20)

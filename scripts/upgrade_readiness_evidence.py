@@ -13,7 +13,7 @@ import uuid
 
 from orchestration_common import (ContractError, digest, file_ref, json_ref, parse_time, read_regular,
                                   require, strict_json)
-from upgrade_startup_contract import (GOAL_SCHEMA, is_readiness_command, pressure_startup_prompt,
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, is_readiness_command, pressure_startup_prompt,
                                       readiness_command, readiness_prompt)
 
 
@@ -267,7 +267,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         spec = stage_view(spec, stage)
     command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
                                 spec["pins"]["rtk"]["path"], lane)
-    goal_mode = spec.get("schema") == GOAL_SCHEMA and stage is None
+    goal_mode = spec.get("schema") in (GOAL_SCHEMA, TASK_SCHEMA) and stage is None
     prompt = (stage["prompts"][lane] if stage is not None else
               pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
               if goal_mode else readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],

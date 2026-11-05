@@ -23,7 +23,7 @@ import stat
 import uuid
 
 from orchestration_common import (canonical, checked_path, contract_errors,
-                                  object_sha, read_ref, require, strict_json, utc_now)
+                                  json_ref, object_sha, read_ref, require, strict_json, utc_now)
 from upgrade_dynamic_route import NAMESPACE, envelope, request_key
 
 TOOL = "execute"
@@ -59,6 +59,48 @@ def tool_definition():
                             "required": ["operation_id"], "additionalProperties": False}}
 
 
+def validate_registration(registration):
+    require(isinstance(registration, dict), "TASK_OPERATION_REGISTRATION_INVALID")
+    multi = registration.get("schema") == "upgrade-task-operations-v2"
+    fields = {"schema", "task_id", "thread_id", "turn_id", "controller_id", "authority_ref", "operations"}
+    if multi:
+        fields |= {"server", "initial_operations", "choice_groups"}
+    require(set(registration) == fields and registration["schema"] in (
+        "upgrade-task-operations-v1", "upgrade-task-operations-v2"), "TASK_OPERATION_REGISTRATION_INVALID")
+    _name(registration["task_id"]); _uuid(registration["thread_id"]); _uuid(registration["turn_id"])
+    _name(registration["controller_id"])
+    read_ref(registration["authority_ref"], "new task authority")
+    ops = registration["operations"]
+    require(isinstance(ops, dict) and 0 < len(ops) <= 1024 and len(canonical(registration)) <= MAX_BYTES,
+            "TASK_OPERATION_BUDGET_INVALID")
+    for key, spec in ops.items():
+        _name(key)
+        require(isinstance(spec, dict) and set(spec) == {"kind", "payload"}
+                and isinstance(spec["payload"], dict), "TASK_OPERATION_SPEC_INVALID")
+        _name(spec["kind"])
+    if multi:
+        from upgrade_rpc_peer import SERVER_KEYS
+        server = registration["server"]
+        require(isinstance(server, dict) and set(server) == SERVER_KEYS,
+                "TASK_OPERATION_SERVER_PIN_REQUIRED")
+        _operation_subset(registration["initial_operations"], ops)
+        groups = registration["choice_groups"]
+        require(isinstance(groups, dict) and len(groups) <= len(ops), "TASK_OPERATION_CHOICE_GROUPS_INVALID")
+        selected = set()
+        for name, members in groups.items():
+            _name(name); _operation_subset(members, ops)
+            require(len(members) >= 2 and not selected.intersection(members),
+                    "TASK_OPERATION_CHOICE_GROUPS_OVERLAP")
+            selected.update(members)
+    return registration
+
+
+def _operation_subset(value, operations):
+    require(isinstance(value, list) and value and all(isinstance(x, str) for x in value)
+            and len(set(value)) == len(value) and set(value) <= set(operations),
+            "TASK_OPERATION_TURN_SCOPE_INVALID")
+
+
 class OperationLedger:
     """SQLite transactions serialize independent controller contenders.
 
@@ -70,20 +112,7 @@ class OperationLedger:
     @contract_errors("TASK_OPERATION_CREATE_REFUSED")
     def create(cls, path, registration):
         path = checked_path(path)
-        require(isinstance(registration, dict) and set(registration) == {
-            "schema", "task_id", "thread_id", "turn_id", "controller_id", "authority_ref", "operations"}
-            and registration["schema"] == "upgrade-task-operations-v1", "TASK_OPERATION_REGISTRATION_INVALID")
-        _name(registration["task_id"]); _uuid(registration["thread_id"]); _uuid(registration["turn_id"])
-        _name(registration["controller_id"])
-        read_ref(registration["authority_ref"], "new task authority")
-        ops = registration["operations"]
-        require(isinstance(ops, dict) and 0 < len(ops) <= 1024 and len(canonical(registration)) <= MAX_BYTES,
-                "TASK_OPERATION_BUDGET_INVALID")
-        for key, spec in ops.items():
-            _name(key)
-            require(isinstance(spec, dict) and set(spec) == {"kind", "payload"}
-                    and isinstance(spec["payload"], dict), "TASK_OPERATION_SPEC_INVALID")
-            _name(spec["kind"])
+        validate_registration(registration)
         st = path.parent.stat()
         require(stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid()
                 and stat.S_IMODE(st.st_mode) == 0o700, "TASK_OPERATION_PRIVATE_DIRECTORY_REQUIRED")
@@ -101,6 +130,11 @@ class OperationLedger:
                     kind TEXT NOT NULL, body BLOB NOT NULL);
             ''')
             db.execute("INSERT INTO registration VALUES (1,?)", (canonical(registration),))
+            if registration["schema"] == "upgrade-task-operations-v2":
+                db.execute("CREATE TABLE turns (sequence INTEGER PRIMARY KEY, turn_id TEXT UNIQUE NOT NULL, "
+                           "scope BLOB NOT NULL, grant BLOB)")
+                db.execute("INSERT INTO turns VALUES (0,?,?,NULL)", (registration["turn_id"],
+                           canonical(registration["initial_operations"])))
             db.commit()
         finally:
             db.close()
@@ -151,6 +185,76 @@ class OperationLedger:
         self.db.execute("INSERT INTO events(call_id,kind,body) VALUES (?,?,?)",
                         (call, kind, canonical({"at": utc_now(), **body})))
 
+    @property
+    def active_turn(self):
+        if self.registration["schema"] == "upgrade-task-operations-v1":
+            return self.registration["turn_id"]
+        row = self.db.execute("SELECT turn_id FROM turns ORDER BY sequence DESC LIMIT 1").fetchone()
+        require(row is not None, "TASK_OPERATION_TURN_REGISTRATION_MISSING")
+        return row[0]
+
+    @contract_errors("TASK_OPERATION_TURN_ENROLLMENT_REFUSED")
+    def enroll_turn(self, grant_ref):
+        """Append scope for an externally authorized, already-created turn.
+
+        This only validates the pinned RPC/authority evidence. The owning actor
+        must authenticate the live peer and task before calling; a JSON file is
+        never enrollment authority. Old ledgers cannot acquire this capability.
+        No operation, response or model turn is sent here.
+        """
+        require(self.registration["schema"] == "upgrade-task-operations-v2",
+                "TASK_OPERATION_LEGACY_TURN_FIXED")
+        value = json_ref(grant_ref, "original new turn grant")
+        require(set(value) == {"schema", "registration_sha256", "previous_turn_id", "turn_id",
+                "operation_ids", "authority_ref", "previous_completion", "turn_start"}
+                and value["schema"] == "upgrade-task-operation-turn-v1"
+                and value["registration_sha256"] == self.registration_sha256
+                and value["authority_ref"] == self.registration["authority_ref"],
+                "TASK_OPERATION_TURN_GRANT_CHANGED")
+        read_ref(value["authority_ref"], "original task authority")
+        _uuid(value["turn_id"]); _uuid(value["previous_turn_id"])
+        _operation_subset(value["operation_ids"], self.registration["operations"])
+        from upgrade_task_creation import exchange
+        sent, result = exchange(value["turn_start"], "turn/start", self.registration["server"])
+        require(sent.get("threadId") == self.registration["thread_id"] and sent.get("input")
+                and result.get("turn", {}).get("id") == value["turn_id"],
+                "TASK_OPERATION_NEW_TURN_RPC_CHANGED")
+        previous = json_ref(value["previous_completion"])
+        params = previous.get("message", {}).get("params", {})
+        require(previous.get("direction") == "received"
+                and previous.get("peer", {}).get("server") == self.registration["server"]
+                and previous["peer"].get("peer") == {k:self.registration["server"][k] for k in ("pid","uid")}
+                and previous.get("message", {}).get("method") == "turn/completed"
+                and params.get("threadId") == self.registration["thread_id"]
+                and params.get("turn", {}).get("id") == value["previous_turn_id"]
+                and params["turn"].get("status") in ("completed", "interrupted", "failed"),
+                "TASK_OPERATION_PREVIOUS_TURN_NOT_CLOSED")
+        with self._transaction():
+            require(self.active_turn == value["previous_turn_id"], "TASK_OPERATION_TURN_CHAIN_CHANGED")
+            require(self.db.execute("SELECT 1 FROM turns WHERE turn_id=?", (value["turn_id"],)).fetchone() is None,
+                    "TASK_OPERATION_TURN_ALREADY_ENROLLED")
+            require(self.db.execute("SELECT 1 FROM calls WHERE phase IN "
+                "('INTENDED','RESULT_RECORDED','RESPONSE_INTENDED')").fetchone() is None,
+                    "TASK_OPERATION_PENDING_MUST_BE_SEALED")
+            count = self.db.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+            require(count < 1024, "TASK_OPERATION_TURN_BUDGET_EXHAUSTED")
+            self.db.execute("INSERT INTO turns VALUES (?,?,?,?)", (count, value["turn_id"],
+                canonical(value["operation_ids"]), canonical(grant_ref)))
+        return {"turn_id": value["turn_id"], "operation_budget_reset": False, "input_operations": 0}
+
+    def _scope(self, turn, op):
+        require(turn == self.active_turn, "TASK_OPERATION_FOREIGN_TURN")
+        if self.registration["schema"] == "upgrade-task-operations-v2":
+            scope, grant = self.db.execute("SELECT scope,grant FROM turns WHERE turn_id=?", (turn,)).fetchone()
+            if grant:
+                read_ref(strict_json(grant), "unchanged turn grant")
+            require(op in strict_json(scope), "TASK_OPERATION_OUTSIDE_TURN_SCOPE")
+            for members in self.registration["choice_groups"].values():
+                if op in members:
+                    marks = ",".join("?" for _ in members)
+                    require(self.db.execute("SELECT 1 FROM calls WHERE operation_id IN ("+marks+")", members).fetchone()
+                            is None, "TASK_OPERATION_CHOICE_ALREADY_INTENDED_NO_REPLAY")
+
     @contract_errors("TASK_OPERATION_RECEIVE_REFUSED")
     def receive(self, message):
         value = envelope(message)
@@ -160,7 +264,7 @@ class OperationLedger:
         require(isinstance(params, dict) and set(params) == {
             "threadId", "turnId", "callId", "namespace", "tool", "arguments"}, "TASK_OPERATION_FIELDS_INVALID")
         require(_uuid(params["threadId"]) == self.registration["thread_id"], "TASK_OPERATION_FOREIGN_THREAD")
-        require(_uuid(params["turnId"]) == self.registration["turn_id"], "TASK_OPERATION_FOREIGN_TURN")
+        turn = _uuid(params["turnId"])
         require(params["namespace"] == NAMESPACE and params["tool"] == TOOL, "TASK_OPERATION_TOOL_NOT_OWNED")
         call = _name(params["callId"])
         args = params["arguments"]
@@ -169,6 +273,7 @@ class OperationLedger:
         require(op in self.registration["operations"], "TASK_OPERATION_UNREGISTERED")
         key = json.dumps(request_key(value["id"]))
         with self._transaction():
+            self._scope(turn, op)
             row = self.db.execute("SELECT call_id FROM calls WHERE call_id=? OR operation_id=? OR request_key=?",
                                   (call, op, key)).fetchone()
             require(row is None, "TASK_OPERATION_ALREADY_INTENDED_NO_REPLAY")

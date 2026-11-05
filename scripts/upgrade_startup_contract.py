@@ -23,6 +23,7 @@ FIELDS = {"schema", "context", "arm", "controller", "native_policy", "pins", "cl
           "rpc", "work_root", "workspace_name", "protected_surface_uuids", "stop_path",
           "adoption_path", "authorization"}
 GOAL_SCHEMA = "upgrade-startup-v3"
+TASK_SCHEMA = "upgrade-startup-task-v1"
 GOAL_LANES = {"claude_a", "claude_b"}
 GOAL_FIELDS = {"goal_startup", "lane_instructions"}
 MAX_INSTRUCTION_BYTES = 256 * 1024
@@ -176,6 +177,18 @@ def pressure_lane_document(controller, python, rtk, lane, responsibilities):
             "## Registered lane responsibilities\n\n" + responsibilities + "\n")
 
 
+def task_lane_document(responsibilities):
+    require(isinstance(responsibilities, str) and responsibilities.strip()
+            and "\x00" not in responsibilities and len(responsibilities.encode()) <= MAX_INSTRUCTION_BYTES,
+            "STARTUP_INSTRUCTIONS_INVALID")
+    return ("# Registered Codex task-thread responsibilities\n\n"
+            "Use only the controller-registered upgrade_collaboration.execute operations. "
+            "Select an existing operation_id; never invent shell commands, another task, paths or targets. "
+            "The controller returns the original operation result; UNKNOWN is read-only recovery, not retry. "
+            "Readiness does not authorize business actions before independent adoption. "
+            "Keep this exact task thread and its native records.\n\n" + responsibilities + "\n")
+
+
 def pressure_startup_prompt(lane, instructions, goals):
     path = instructions[lane]["path"]
     if lane in GOAL_LANES:
@@ -288,10 +301,13 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     default a recovered stage's own frozen pins; a builder passes the pins it is
     about to freeze. Each must name the original path and match exactly."""
     spec = json_ref(ref, "startup")
-    goal_mode = spec.get("schema") == GOAL_SCHEMA
+    task_mode = spec.get("schema") == TASK_SCHEMA
+    goal_mode = spec.get("schema") in (GOAL_SCHEMA, TASK_SCHEMA)
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
     if goal_mode:
         fields |= GOAL_FIELDS
+    if task_mode:
+        fields |= {"task_startup"}
     if "existing_workspace_uuid" in spec:
         # R511: side panes in one pinned existing workspace instead of a new one.
         existing = spec["existing_workspace_uuid"]
@@ -308,7 +324,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 and set(targets.values()) <= set(spec["protected_surface_uuids"]),
                 'STARTUP_EXISTING_TARGET_INVALID')
         fields |= {target_field}
-    require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA),
+    require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA, TASK_SCHEMA),
             "STARTUP_FIELDS_CHANGED")
     source = checked_path(spec["controller"])
     if controller is not None:
@@ -320,6 +336,18 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     startup_continuity_enabled(binding)
     child_budget = child_budget_enabled(binding)
     station = station_launchers_enabled(binding)
+    if task_mode:
+        from upgrade_task_startup import plan_value
+        plan = plan_value(spec["task_startup"])
+        require(binding.get("task_startup") == spec["task_startup"]
+                and plan["native_root"] == spec["clients"]["codex"]["native_root"]
+                and plan["work_root"] == spec["work_root"]
+                and pre_exec_hold_enabled(binding) and station is not None
+                and spec["native_policy"] == SOCKET_POLICY and "codex_package" in binding
+                and not startup_continuity_enabled(binding), "STARTUP_TASK_TOPOLOGY_CHANGED")
+        require(stage_controller is None, "STARTUP_TASK_LEGACY_STAGE_REFUSED")
+    else:
+        require("task_startup" not in binding, "STARTUP_TASK_DOWNGRADE_REFUSED")
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -371,6 +399,11 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if task_mode:
+        required |= {"task_startup", "codex_server_sandbox"}
+        local.update(task_startup=paths["config"] / "task-startup.json",
+                     codex_server_sandbox=paths["config"] / "codex-server.sb")
+        require(pins.get("task_startup") == spec["task_startup"], "STARTUP_TASK_PLAN_PIN_CHANGED")
     if continuity_registration:
         required.add(CONTINUITY_CURRENT_PIN)
         current_path = paths["state"] / "CURRENT.json"
@@ -468,6 +501,12 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 profile = extend_profile(profile, boundary)
             require(read_regular(pins[lane + "_sandbox"]["path"]) == profile,
                     "STARTUP_SOCKET_PROFILE_CHANGED:" + lane)
+        if task_mode:
+            from upgrade_task_socket_policy import restrict_agent_connections
+            server_profile = restrict_agent_connections(read_regular(pins["codex_sandbox"]["path"]),
+                boundary["physical"], boundary["advertised"])
+            require(read_regular(pins["codex_server_sandbox"]["path"]) == server_profile,
+                    "STARTUP_TASK_SERVER_PROFILE_CHANGED")
     socket = control_socket(paths, socket_boundary=boundary)
     mg = pins["mg"]["path"] if station is not None else None
     require(spec["rpc"] == station_rpc(station, socket, pins["codex"]["path"], pins["python"]["path"], mg,
@@ -506,9 +545,10 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                            session_id=client["session_id"], remote_socket=socket if provider == "codex" else None,
                            socket_boundary=boundary if provider == "codex" else None,
                            station=station_client(station, lane, pins["python"]["path"], mg))
-        argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
-                    if goal_mode else
-                    readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
+        if not (task_mode and lane == "codex"):
+            argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
+                        if goal_mode else
+                        readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"],
                                    response_observation=response_observation, child_budget=child_budget,

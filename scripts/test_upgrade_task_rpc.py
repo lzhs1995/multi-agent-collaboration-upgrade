@@ -56,5 +56,23 @@ class RPCTests(unittest.TestCase):
         self.assertEqual(self.client.sent,[])
         self.verify.side_effect=None
 
+    def test_buffered_request_keeps_its_own_record_not_later_response(self):
+        sequence = []
+
+        def record(direction, message, peer):
+            ref = {"path": "/fixture/" + str(len(sequence)), "message": message}
+            sequence.append(ref)
+            return ref
+
+        self.client.record = record
+        incoming = {"id": 99, "method": "item/tool/call", "params": {"callId": "exact"}}
+        self.client.messages = [incoming, {"id": 1, "result": {"turn": "original"}}]
+        self.client.request("turn/start", {})
+        self.assertEqual(self.client.last_exchange["intent"], sequence[0])
+        self.assertEqual(self.client.last_exchange["response"], sequence[2])
+        message, ref = self.client.receive_recorded()
+        self.assertEqual(message, incoming)
+        self.assertEqual(ref, sequence[1])
+
 
 if __name__=='__main__':unittest.main()

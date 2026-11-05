@@ -47,6 +47,101 @@ def external_publisher(spec):
             "CLIENT_CANNOT_PUBLISH_ADOPTION")
 
 
+def bootstrap_task_thread(runtime_ref, client):
+    """New topology only: one task creation on a TUI-first pinned connection.
+
+    The caller retains this TaskRPC to process buffered requests after actual
+    TUI attachment and independently verified actor enrollment. This returns
+    creation evidence, never live adoption or authority for campaign actions.
+    Legacy runtime requests are refused before any mutation.
+    """
+    from upgrade_startup_contract import TASK_SCHEMA
+    from upgrade_task_startup import bootstrap_task
+    from upgrade_rpc_peer import server_pin, verify_peer
+    import cmux_daemon_identity as identity
+    _, runtime = validate_live_runtime(runtime_ref)
+    spec = json_ref(runtime["startup"])
+    require(spec.get("schema") == TASK_SCHEMA, "TASK_BOOTSTRAP_EXPLICIT_NEW_TOPOLOGY_REQUIRED")
+    external_publisher(spec)
+    require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    binding = json_ref(file_ref(Path(spec["controller"]) / "upgrade-binding.json"))
+    startup = Path(binding["state_root"]) / "startup"
+    release = json_ref(file_ref(startup / "release.json"))
+    require(release.get("startup") == runtime["startup"], "TASK_BOOTSTRAP_HELD_RELEASE_REQUIRED")
+    launched = json_ref(file_ref(startup / "codex-server.json"))
+    row = identity.process(launched["pid"])
+    require(launched["startup"] == runtime["startup"] and row["birth"] == launched["birth"]
+            and row["executable"] == spec["pins"]["codex"]["path"] and row["argv"] == spec["rpc"]["argv"]
+            and client.server == server_pin(row, uid=os.getuid()), "TASK_BOOTSTRAP_SERVER_CHANGED")
+    origin = json_ref(file_ref(startup / "codex-origin.json"))
+    tui = identity.process(origin["pid"])
+    require(origin["startup"] == runtime["startup"] and tui["birth"] == origin["birth"]
+            and tui["executable"] == spec["pins"]["codex"]["path"], "TASK_BOOTSTRAP_OFFICIAL_TUI_REQUIRED")
+    verify_peer(client.sock, client.server, client.process)
+    control = Path(spec["adoption_path"]).parent
+    result = bootstrap_task(client, spec["task_startup"], control / "task-startup")
+    require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    attach = write_json(control / "task-attach.json", dict(schema="upgrade-task-attach-v1",
+        startup=runtime["startup"], result=result), exclusive=True)
+    return dict(status="TASK_CREATED_AWAITING_TUI_AND_ADOPTION", result=result, attach=attach,
+                model_turns_started=1, operations_executed=0, adoption_proven=False)
+
+
+def readiness_task_actor(runtime_ref, client):
+    """Serve only the new startup's fixed readiness operation, never business.
+
+    This is the explicit pre-adoption exception: one nonce receipt in the
+    protected control directory. Every business kind is refused. The retained
+    original RPC stream and ledger feed the normal TaskActor implementation.
+    """
+    import secrets
+    from upgrade_startup_contract import TASK_SCHEMA
+    from upgrade_task_readiness import SCHEMA, task_startup_result
+    from upgrade_task_operations import OperationLedger
+    from upgrade_task_actor import TaskActor
+    from upgrade_task_thread import observe
+    import cmux_daemon_identity as identity
+    _, runtime = validate_live_runtime(runtime_ref)
+    spec = json_ref(runtime["startup"])
+    require(spec.get("schema") == TASK_SCHEMA, "TASK_READINESS_NEW_TOPOLOGY_REQUIRED")
+    external_publisher(spec)
+    _, startup, anchor = task_startup_result(spec)
+    registration = json_ref(startup["operations"])
+    require(registration["operations"] == {"ready":{"kind":"readiness","payload":{}}},
+            "TASK_READINESS_BUSINESS_OPERATIONS_REFUSED")
+    control = Path(spec["adoption_path"]).parent
+    binding = json_ref(file_ref(Path(spec["controller"]) / "upgrade-binding.json"))
+    launched = json_ref(file_ref(Path(binding["state_root"]) / "startup/codex.json"))
+
+    def gate(original, message, record):
+        external_publisher(spec)
+        require(not os.path.lexists(spec["stop_path"]) and original == registration,
+                "TASK_READINESS_STOPPED_OR_CHANGED")
+        current = identity.process(launched["pid"])
+        require(current["birth"] == launched["birth"]
+                and current["executable"] == spec["pins"]["codex"]["path"]
+                and current["argv"][-2:] == ["resume",startup["thread_id"]]
+                and client.server == anchor["server"], "TASK_READINESS_TUI_OR_SERVER_CHANGED")
+        read_ref(spec["task_startup"])
+        proof = observe(client,anchor,identity.process)
+        require(proof["thread_id"] == registration["thread_id"]
+                and proof["latest_turn_id"] == registration["turn_id"], "TASK_READINESS_ACTIVE_TURN_CHANGED")
+
+    def readiness(payload):
+        require(payload == {}, "TASK_READINESS_PAYLOAD_CHANGED")
+        value = dict(schema=SCHEMA,plan=spec["task_startup"],thread_id=startup["thread_id"],
+                     turn_id=startup["turn_id"],receipt_nonce=secrets.token_hex(24))
+        receipt = write_json(control / "task-readiness-receipt.json",value,exclusive=True)
+        return dict(success=True,contentItems=[dict(type="inputText",text=json.dumps(value,sort_keys=True))]),receipt
+
+    ledger = OperationLedger(startup["ledger"],startup["registration_sha256"])
+    try:
+        return TaskActor(client,ledger,{"readiness":readiness},gate,control / "task-readiness-events")
+    except BaseException:
+        ledger.close()
+        raise
+
+
 def publish_bootstrap(runtime_ref, campaign_ref, instructions_ref):
     """Publish one immutable first instruction; never send or wake a client.
 
@@ -209,6 +304,9 @@ def control(runtime_ref, command):
         return dict(status="HELD_RELEASE_OBSERVED", launch_request=request_ref, input_operations=0)
     require(not stopped, "EXPERIMENT_STOP_REQUESTED")
     if command in ("launch", "hold"):
+        from upgrade_startup_contract import TASK_SCHEMA
+        require(spec.get("schema") != TASK_SCHEMA,
+                "TASK_ACTOR_BUSINESS_INTEGRATION_INCOMPLETE: candidate materialization only; no formal launch")
         require(not launched, "ORIGINAL_LAUNCH_ALREADY_EXISTS: inspect it; no retry or replacement")
         # A batch hold creates the held processes without the launch clock;
         # only the later permit-scoped release writes launch-request.json.
