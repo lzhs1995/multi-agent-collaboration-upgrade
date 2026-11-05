@@ -46,9 +46,12 @@ class EnrollmentTests(unittest.TestCase):
         self.native=SimpleNamespace(_tree_row=lambda *a:copy.deepcopy(self.row),_target_process=lambda *a:copy.deepcopy(self.process),
             _provider=lambda p:'codex',_public_process=lambda p:{k:p[k] for k in self.session['process']},
             private_roots=SimpleNamespace(process_root=lambda *a:self.session['native_config_root']),
-            bind_target=self.bound)
+            bind_target=lambda *a:(_ for _ in ()).throw(AssertionError('read-only enrollment invoked a sender binding')))
         self.validation_calls=[]
         for target,kwargs in (
+            ('upgrade_task_enrollment._observe_claude',dict(side_effect=lambda bridge,native,expected:
+                {k:copy.deepcopy(expected[k]) for k in ('provider','session_id','tty','process','native_config_root',
+                    'workspace_uuid','surface_uuid','pane_uuid','transcript')})),
             ('upgrade_task_campaign.validate_controls',dict(return_value=(f.registration,{k:v['payload'] for k,v in f.registration['operations'].items()}))),
             ('upgrade_task_readiness.task_startup_result',dict(return_value=(None,self.startup,self.anchor))),
             ('orchestration_campaign.validate_campaign',dict(side_effect=lambda ref:self.campaign)),
@@ -58,11 +61,6 @@ class EnrollmentTests(unittest.TestCase):
             ('orchestration_campaign.controller_modules',dict(return_value=(None,self.native,None,None)))):
             p=patch(target,**kwargs);p.start();self.addCleanup(p.stop)
         f.runner.campaign=self.campaign;f.runner.fixtures=False
-
-    def bound(self,bridge,surface,*args):
-        s=next(s for s in self.campaign['sessions'].values() if s['surface_uuid']==surface)
-        return dict(**{k:s[k] for k in ('provider','session_id','tty','process','native_config_root','transcript')},
-            identity=dict(workspace_uuid=s['workspace_uuid'],target_surface_uuid=s['surface_uuid'],target_pane_uuid=s['pane_uuid']))
 
     def gate(self):return TaskCampaignGate(self.f.runner,self.client,self.f.ledger)
 

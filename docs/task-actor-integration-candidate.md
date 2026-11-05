@@ -417,3 +417,23 @@ This does not enable TASK launch. `PinnedRuntime.harness` still invokes a
 subprocess and cannot carry the original actor ContextVar into native identity
 checks. Live actor-aware harness identity, preparation/sender provenance and
 adoption/FD isolation remain required before a real collaboration unit.
+
+## Actor enrollment observes Claude without sender authority
+
+Enrollment no longer calls `bind_target`, which reentered the foreground
+workspace guard and would recurse through an actor-aware sender. Its explicit
+read-only observer uses the pinned original controller's terminal inventory,
+kernel process, private root, Claude native registration and journal readers.
+It requires the original enrolled lane and native session registration;
+resume arguments alone cannot substitute. It rechecks process uniqueness,
+birth, endpoint, session, root and the journal baseline before returning.
+The resulting session observation contains no delivery binding or input grant.
+
+Eight new local checks use the transformed original .84 registration and file
+readers with real temporary journals. Kernel inventory and deployment are
+explicit doubles. They cover missing/foreign registration, process replacement
+and ambiguity, moved terminals, changed sessions, invalid/duplicate/incomplete
+journals, replacement/in-place mutation and a valid complete append. The
+affected enrollment tests also pass. This resolves the identity-observation
+dependency; live harness identity, sender permission and adoption still need
+their separate integration.

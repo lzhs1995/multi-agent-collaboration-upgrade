@@ -20,6 +20,48 @@ IDENTITY_SOURCE="live_kernel_and_original_task_rpc"
 _active=ContextVar("upgrade_original_campaign_actor",default=None)
 
 
+def _observe_claude(bridge,native,expected):
+    """Read one original Claude without invoking sender/workspace authority.
+
+    Uses the pinned controller's kernel inventory, native registration and file
+    readers. The returned observation is not a delivery binding or capability.
+    Rechecking the target avoids recursively calling actor identity through
+    bind_target -> pin_workspace while enrollment itself is being observed.
+    """
+    from orchestration_campaign import canonical_live_uuids
+    require(expected["provider"]=="claude","TASK_OBSERVATION_ORIGINAL_CLAUDE_REQUIRED")
+    row=native._tree_row(bridge,expected["surface_uuid"])
+    process=native._target_process(row)
+    require(native._provider(process)=="claude","TASK_OBSERVATION_PROVIDER_CHANGED")
+    session=native._live_session(process,"claude",require_native=True)
+    root=native.private_roots.process_root("claude",process)
+    path=native._transcript_path("claude",session,process)
+    pin=native._pin_file(path,"claude",session)
+    require(pin["at_record_boundary"],"TASK_OBSERVATION_INCOMPLETE_JOURNAL")
+    actual=dict(provider="claude",session_id=session,tty=row["tty"],
+        process=native._public_process(process),native_config_root=str(root),
+        workspace_uuid=row["workspace_uuid"],surface_uuid=row["target_surface_uuid"],
+        pane_uuid=row["target_pane_uuid"],transcript={k:pin[k] for k in ("path","device","inode")})
+    canonical_live_uuids(actual)
+    require(all(expected.get(k)==v for k,v in actual.items()),"TASK_OBSERVATION_ORIGINAL_LANE_CHANGED")
+    require(all(process["env"].get(k,"").upper()==actual[v].upper() for k,v in
+        (("CMUX_SURFACE_ID","surface_uuid"),("CMUX_WORKSPACE_ID","workspace_uuid")))
+        and native.private_process.terminal(process)==row["tty"],"TASK_OBSERVATION_ENDPOINT_CHANGED")
+    require(native._tree_row(bridge,expected["surface_uuid"])==row
+        and native._target_process(row)==process
+        and native.identity.process(process["pid"])==process,
+        "TASK_OBSERVATION_PROCESS_OR_TREE_CHANGED")
+    require(native._provider(process)=="claude"
+        and native._live_session(process,"claude",require_native=True)==session
+        and native.private_roots.process_root("claude",process)==root
+        and native._transcript_path("claude",session,process)==path,
+        "TASK_OBSERVATION_SESSION_OR_ROOT_CHANGED")
+    with native._open(path) as handle:
+        native._metadata(handle,"claude",session)
+        native._check_file(handle,{"transcript":pin})
+    return actual
+
+
 class TaskCampaignGate:
     def __init__(self,runner,client,ledger):
         from orchestration_run import Runner
@@ -96,11 +138,7 @@ class TaskCampaignGate:
                         transcript=dict(self.anchor["journal"]),
                         native_config_root=str(native.private_roots.process_root("codex",process)))
                 else:
-                    bound=native.bind_target(bridge,expected["surface_uuid"],"TASK_CAMPAIGN_IDENTITY_READ_ONLY")
-                    actual={k:bound[k] for k in ("provider","session_id","tty","process","native_config_root")}
-                    actual.update(workspace_uuid=bound["identity"]["workspace_uuid"],
-                        surface_uuid=bound["identity"]["target_surface_uuid"],pane_uuid=bound["identity"]["target_pane_uuid"],
-                        transcript={k:bound["transcript"][k] for k in ("path","device","inode")})
+                    actual=_observe_claude(bridge,native,expected)
                 canonical_live_uuids(actual)
                 require(all(expected.get(k)==v for k,v in actual.items()),
                         "TASK_ENROLLMENT_ORIGINAL_LANE_CHANGED:"+lane)
