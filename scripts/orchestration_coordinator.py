@@ -906,6 +906,9 @@ class Coordinator:
         require(isinstance(advice, dict) and isinstance(advice.get("status"), str), "the published advice has no status")
         notice = reference_plan(text, body["marker"], directory)["text"]
         command = read_command(self.campaign["python"]["path"], self.campaign["controller"]["path"], notice)
+        if self.campaign.get("task_controls",{}).get("schema")=="upgrade-task-campaign-controls-v3":
+            from upgrade_task_advice import read_control
+            command=read_control(self.campaign,self.spec["run_id"],node_id)
         return dict(arm="advisory-on", advice_sha256=decision["advice_sha256"], notice=notice, command=command,
                     fence=fence, not_before_epoch=parse_time(self.header["started_at"]).timestamp(),
                     worker_status=advice["status"], worker_journal=journal), body

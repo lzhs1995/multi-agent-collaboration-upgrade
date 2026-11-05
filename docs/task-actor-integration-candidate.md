@@ -178,15 +178,36 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   This fixture does not prove a real model reviewed the candidate. Concurrent
   binding attempts, UNKNOWN, STOP, changed sources and mutually exclusive
   choices preserve the original budgets and refuse new effects.
+- Explicit campaign controls v3 now connect the original JEV producer, a typed
+  full-body read, native return evidence, every frozen decision alternative and
+  the existing publish/bind/claim chain. A fixed read receipt pins the actual
+  sha-named advice file; a new resolver substitutes only that verified body SHA.
+  It requires the producer's original native completion/outer result and the
+  reader's complete return before opening decision slots. Changed bodies,
+  missing/truncated native output, UNKNOWN and alternative replays refuse.
+  Off-arm controls declare no reader and make zero model requests; unknown
+  dynamic input cannot silently count as zero advice exposure.
+- The v3 worker runs in the retained external controller's scoped actor context
+  with explicitly supplied, original registration-bound connections/credentials.
+  It preserves the original per-run connection, worker/journal/request budgets,
+  STOP and UNKNOWN; credentials never enter operation/result files and are
+  released on authentication STOP. This intentionally adds worker modules to
+  the new adapter dependency closure, while old frozen adapters/processes stay
+  unchanged. The private startup controller retains only the structural receipt
+  resolver. Its generated readiness service explicitly refuses business next
+  input; it never imports the external campaign enrollment/worker modules.
+  This closure check found a previously untested lazy import from a845e04;
+  the explicit rendering transformation corrects that generated-copy boundary.
 
 ## Deliberately unclaimed capabilities
 
 The actual same-surface startup sequence has not been run for this candidate.
 The production campaign factory owns its enrollment gate; standalone TaskActor
 remains a component whose owner must supply one. Full TASK adoption is absent. The
-campaign controls and the publish/bind result legs have typed evidence branches;
-the advice-body producer/reader, transport, input attribution and callback legs
-remain incomplete. Operations-v2 is selected by explicit v2 startup plans;
+campaign controls and the advice/read/publish/bind result legs have typed evidence
+branches. Actual transport, input attribution and callback legs remain incomplete.
+The worker capability still needs production launch integration and deployment
+validation. Operations-v2 is selected by explicit v2 startup plans;
 later turn enrollment has a live business gate but has not run under actual
 TASK adoption. Broker/remote-exec/MCP/inherited-FD and both Claude
 boundaries remain incomplete. No adoption or exclusive-responder claim follows
@@ -198,9 +219,9 @@ until the complete business chain and deployment boundary are independently
 verified. Never bypass it by invoking the underlying harness directly.
 
 Operations-v1/v2 remain fixed. The new v3 binding path integrates
-candidate-to-accept and failure-candidate-to-settle. Generated advice hashes have
-a structural resolver definition but the campaign adapter explicitly rejects it
-until its complete producer/reader chain is connected. Real enrollment, deployment
+candidate-to-accept and failure-candidate-to-settle. Explicit campaign controls v3
+use the new receipt-backed advice resolver; the old direct-source advice resolver
+remains unintegrated and refused. Real enrollment, deployment
 of the runtime service and actual model review remain unverified. Neither
 copying the ledger nor changing its original registration is supported.
 Binding artifact publication and SQLite insertion are separate operations. The
@@ -223,7 +244,9 @@ explicit pending work, not a complete campaign registration interface.
    the respective 188/179/187 artifact references. Original S40 has also returned
    bounded PASS for the explicit campaign identity increment; deployment tests
    remain mocks. Failure binding and typed closeout have also received bounded
-   PASS with their original references checked. Review only new network changes,
+   PASS with their original references checked. Network, descriptor closure and
+   retained normal-turn/next-input increments also received bounded PASS. Review
+   the new advice integration and generated startup closure correction,
    preserving earlier accepted scopes and recovery limits.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve

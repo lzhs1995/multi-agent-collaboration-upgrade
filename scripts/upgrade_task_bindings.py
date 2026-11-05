@@ -8,7 +8,7 @@ this binding, or the fact a producer completed is not execution authority.
 from __future__ import annotations
 
 import copy
-from orchestration_common import checked_path, json_ref, object_sha, read_ref, require, strict_json
+from orchestration_common import checked_path, contract_errors, file_ref, json_ref, object_sha, read_ref, require, strict_json
 
 REGISTRATION_SCHEMA = "upgrade-task-operations-v3"
 SLOT_SCHEMA = "upgrade-task-artifact-slot-v1"
@@ -17,6 +17,7 @@ RESOLVERS = {
     "campaign-accept-marker-v1": ["marker"],
     "campaign-settle-marker-v1": ["marker"],
     "campaign-advice-sha-v1": ["decision_fields", "advice_sha256"],
+    "campaign-advice-receipt-sha-v1": ["decision_fields", "advice_sha256"],
 }
 
 
@@ -64,8 +65,31 @@ def validate_binding(registration, operation_id, ref):
             "TASK_SLOT_REPLACEMENT_INVALID")
     if slot["resolver"]=="campaign-advice-sha-v1":
         require(value["replacement"]==value["source"]["sha256"], "TASK_SLOT_ADVICE_SHA_CHANGED")
+    if slot["resolver"]=="campaign-advice-receipt-sha-v1":
+        require(value["replacement"]==receipt_advice_sha(value["source"]),"TASK_SLOT_ADVICE_SHA_CHANGED")
     resolved=resolve_replacement(registration, operation_id, value["replacement"])
     return value,resolved
+
+
+@contract_errors("TASK_ADVICE_READ_RECEIPT_REFUSED")
+def receipt_advice_sha(ref):
+    """Structural fixed-receipt resolver, without campaign/worker dependencies.
+
+    The business adapter separately checks campaign, original producer and full
+    native exposure. This file pin never grants execution or model-consumption
+    authority; only the predeclared SHA leaf can be substituted.
+    """
+    from upgrade_body_read import read_result
+    receipt=json_ref(ref);value=receipt.get("result",{})
+    require(receipt.get("schema")=="upgrade-task-campaign-result-v1"
+            and receipt.get("operation",{}).get("action")=="read-advice"
+            and value.get("schema")=="upgrade-task-advice-read-v1","TASK_ADVICE_READ_RECEIPT_INVALID")
+    body=value.get("body_read",{})
+    require(body==read_result(body.get("notice")),"TASK_ADVICE_FULL_BODY_CHANGED")
+    publication=value.get("publication")
+    require(isinstance(publication,dict) and publication==file_ref(body["reference"]["path"])
+            and read_ref(publication).decode("utf-8")==body["body"],"TASK_ADVICE_PUBLICATION_CHANGED")
+    return publication["sha256"]
 
 
 def resolve_replacement(registration, operation_id, replacement):

@@ -4,9 +4,9 @@ The frozen registration declares complete operations; the model selects an ID.
 This is a dispatch/evidence adapter, not a live enrollment gate. Runner retains
 all original identity, adoption, permit, transport and candidate checks. In
 particular this module cannot make the incomplete TASK topology launchable.
-Controls v2 permits explicit candidate-to-accept and failure-to-settle slots,
-bound once after the original producing operation completes. Other generated-artifact
-resolvers remain unavailable in this adapter. There is no arbitrary command.
+Controls v2 permits explicit candidate-to-accept and failure-to-settle slots.
+Explicit v3 adds the original advisory worker and complete-body read as typed
+controls, with receipt-backed decision slots. There is no arbitrary command.
 This module belongs to the frozen orchestration adapter tree, not the private
 MAC startup controller (which intentionally has no Runner dependencies).
 """
@@ -21,14 +21,16 @@ from upgrade_task_operations import validate_registration
 
 SCHEMA = "upgrade-task-campaign-controls-v1"
 BINDING_SCHEMA = "upgrade-task-campaign-controls-v2"
+ADVICE_SCHEMA = "upgrade-task-campaign-controls-v3"
 PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
-                     "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify"})
+                     "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
+                     "advice", "read-advice"})
 READ_ACTIONS = frozenset({"status", "recover", "verify"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
-ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation")
+ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation", "advisory_registration")
 MARKER_SLOTS = {
     "campaign-accept-marker-v1": ("accept", "candidate", "candidate.json"),
     "campaign-settle-marker-v1": ("settle", "failure-candidate", "failure-candidate.json"),
@@ -36,7 +38,8 @@ MARKER_SLOTS = {
 
 
 def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
-                      decision=None, decision_fields=None, boundary=None, reason=None, observation=None):
+                      decision=None, decision_fields=None, boundary=None, reason=None, observation=None,
+                      advisory_registration=None):
     """Exact finite command, suitable for freezing before its model invocation."""
     from orchestration_campaign import DECISION_ARGUMENTS
     require(action in ACTIONS, "TASK_CAMPAIGN_ACTION_NOT_REGISTERABLE")
@@ -64,6 +67,12 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
     else:
         require(decision_fields is None, "TASK_CAMPAIGN_UNEXPECTED_DECISION_FIELDS")
     extra = {}
+    if action == "advice":
+        from jev_registration import load
+        load(advisory_registration,run_id=run_id,node_id=node_id)
+        extra["advisory_registration"]=advisory_registration
+    else:
+        require(advisory_registration is None,"TASK_CAMPAIGN_UNEXPECTED_ADVICE_REGISTRATION")
     if action == "failure-candidate":
         require(isinstance(boundary, str) and boundary in FAILURE_BOUNDARIES,
                 "TASK_CAMPAIGN_FAILURE_BOUNDARY_INVALID")
@@ -95,9 +104,9 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
     require(campaign.get("version") == 3, "TASK_CAMPAIGN_EXPLICIT_V3_REQUIRED")
     controls = campaign["task_controls"]
     require(isinstance(controls, dict) and set(controls) == {"schema", "registration", "evidence_directory"}
-            and controls["schema"] in (SCHEMA, BINDING_SCHEMA), "TASK_CAMPAIGN_CONTROLS_INVALID")
+            and controls["schema"] in (SCHEMA, BINDING_SCHEMA, ADVICE_SCHEMA), "TASK_CAMPAIGN_CONTROLS_INVALID")
     registration = validate_registration(json_ref(controls["registration"]))
-    require(registration["schema"] == ("upgrade-task-operations-v3" if controls["schema"] == BINDING_SCHEMA
+    require(registration["schema"] == ("upgrade-task-operations-v3" if controls["schema"] in (BINDING_SCHEMA,ADVICE_SCHEMA)
                                       else "upgrade-task-operations-v2")
             and registration["thread_id"] == campaign["sessions"]["codex"]["session_id"],
             "TASK_CAMPAIGN_ORIGINAL_TASK_REQUIRED")
@@ -112,27 +121,32 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
             continue
         value = operation["payload"]
         kwargs={k:value.get(k) for k in ARGUMENTS}
+        advice_slot=False
         if name in slots:
             slot=slots[name]
-            contract=MARKER_SLOTS.get(slot["resolver"])
-            require(contract is not None and value.get("action") == contract[0],
-                    "TASK_CAMPAIGN_RESOLVER_NOT_INTEGRATED")
-            require(slot["source_path"] == str(Path(campaign["root"]) / "runs" / value["run_id"] /
-                    "nodes" / value["node_id"] / contract[2]), "TASK_CAMPAIGN_SLOT_PATH_CHANGED")
-            producer=registration["operations"][slot["producer_operation"]]
-            producer_args={"boundary":producer["payload"].get("boundary")} if contract[1]=="failure-candidate" else {}
-            require(producer==dict(kind=KIND,payload=operation_payload(campaign,contract[1],value["run_id"],
-                node_id=value["node_id"],**producer_args)), "TASK_CAMPAIGN_SLOT_PRODUCER_CHANGED")
-            kwargs["marker"]="declared-candidate-marker"
+            advice_slot=slot["resolver"]=="campaign-advice-receipt-sha-v1"
+            if advice_slot:
+                from upgrade_task_advice import validate_advice_slot
+                validate_advice_slot(campaign,registration,name)
+                kwargs["decision_fields"]=dict(value["decision_fields"],advice_sha256="0"*64)
+            else:
+                _validate_marker_slot(campaign,registration,name,value,kwargs)
         expected = operation_payload(campaign, value.get("action"), value.get("run_id"), **kwargs)
         if name in slots:
-            expected["marker"]=None
+            if advice_slot:expected["decision_fields"]["advice_sha256"]=None
+            else:expected["marker"]=None
         require(value == expected, "TASK_CAMPAIGN_OPERATION_SCOPE_CHANGED")
         fingerprint = object_sha(value)
         require(fingerprint not in seen, "TASK_CAMPAIGN_DUPLICATE_OPERATION")
         seen.add(fingerprint); found[name] = value
         if value["action"] == "publish-decision":
             decisions.setdefault((value["run_id"], value["node_id"]), set()).add(name)
+    if controls["schema"]==ADVICE_SCHEMA:
+        from upgrade_task_advice import validate_advice_controls
+        validate_advice_controls(campaign,registration,found)
+    else:
+        require(not any(p["action"] in ("advice","read-advice") for p in found.values()),
+                "TASK_CAMPAIGN_ADVICE_OPT_IN_REQUIRED")
     require(found, "TASK_CAMPAIGN_NO_REGISTERED_CONTROLS")
     require(set(slots) <= set(found), "TASK_CAMPAIGN_FOREIGN_SLOT")
     # A fixed marker and a slot for the same node cannot provide two attempts.
@@ -155,6 +169,20 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
     return registration, found
 
 
+def _validate_marker_slot(campaign,registration,name,value,kwargs):
+    slot=registration["binding_slots"][name]
+    contract=MARKER_SLOTS.get(slot["resolver"])
+    require(contract is not None and value.get("action") == contract[0],
+            "TASK_CAMPAIGN_RESOLVER_NOT_INTEGRATED")
+    require(slot["source_path"] == str(Path(campaign["root"]) / "runs" / value["run_id"] /
+            "nodes" / value["node_id"] / contract[2]), "TASK_CAMPAIGN_SLOT_PATH_CHANGED")
+    producer=registration["operations"][slot["producer_operation"]]
+    producer_args={"boundary":producer["payload"].get("boundary")} if contract[1]=="failure-candidate" else {}
+    require(producer==dict(kind=KIND,payload=operation_payload(campaign,contract[1],value["run_id"],
+        node_id=value["node_id"],**producer_args)), "TASK_CAMPAIGN_SLOT_PRODUCER_CHANGED")
+    kwargs["marker"]="declared-candidate-marker"
+
+
 def campaign_control(campaign, campaign_ref, action, run_id, **kwargs):
     # Caller validators retain their live gates. Static readers never acquire
     # execution authority merely by interpreting this descriptor.
@@ -166,7 +194,13 @@ def campaign_control(campaign, campaign_ref, action, run_id, **kwargs):
         from upgrade_task_bindings import resolve_replacement
         template=operations[name]
         if payload["action"]==template["action"] and payload["run_id"]==template["run_id"] and payload["node_id"]==template["node_id"]:
-            expected=resolve_replacement(registration,name,_candidate_marker(campaign,registration["binding_slots"][name],template))
+            slot=registration["binding_slots"][name]
+            if slot["resolver"]=="campaign-advice-receipt-sha-v1":
+                from upgrade_task_advice import receipt_advice_sha
+                replacement=receipt_advice_sha(file_ref(slot["source_path"]))
+            else:replacement=_candidate_marker(campaign,slot,template)
+            expected=resolve_replacement(registration,name,replacement)
+            if slot["resolver"]=="campaign-advice-receipt-sha-v1" and expected!=dict(kind=KIND,payload=payload):continue
             require(expected==dict(kind=KIND,payload=payload), "TASK_CAMPAIGN_GENERATED_MARKER_CHANGED")
             matches.append(name)
     require(len(matches) == 1, "TASK_CAMPAIGN_EXACT_OPERATION_NOT_FROZEN")
@@ -204,7 +238,7 @@ def _candidate_marker(campaign, slot, payload):
     return marker_for(info,candidate)
 
 
-def campaign_handler(runner, registration_ref, receipts):
+def campaign_handler(runner, registration_ref, receipts, *, advice_connections=None):
     """Fixed TaskActor handler; it never changes Runner's live authority checks."""
     from orchestration_campaign import find_control
     from orchestration_native import NativeReader
@@ -217,6 +251,8 @@ def campaign_handler(runner, registration_ref, receipts):
     require(directory == Path(registration_ref["path"]).parent / "campaign-results",
             "TASK_CAMPAIGN_RESULT_DIRECTORY_CHANGED")
     directory.mkdir(mode=0o700, exist_ok=False)
+    from upgrade_task_advice import advice_handler
+    advice=advice_handler(runner,registration,advice_connections)
 
     def handle(payload):
         require(json_ref(registration_ref) == registration, "TASK_CAMPAIGN_HANDLER_REGISTRATION_CHANGED")
@@ -245,6 +281,7 @@ def campaign_handler(runner, registration_ref, receipts):
         elif action == "settle": result = runner.settle(run, node, payload["marker"])
         elif action == "publish-decision": result = runner.publish_decision(run, node, payload["decision_fields"])
         elif action == "bind-unbound": result = runner.bind_unbound(run, node, payload["decision"])
+        elif action in ("advice","read-advice"):result=advice(payload)
         else: raise AssertionError("unvalidated campaign action")
         receipt = write_json(directory / (script["operation_id"]+".json"),
             dict(schema="upgrade-task-campaign-result-v1", campaign=runner.ref,
@@ -254,7 +291,7 @@ def campaign_handler(runner, registration_ref, receipts):
 
 
 def campaign_completion_binder(runner, ledger, registration_ref):
-    """Append acceptance/failure bindings after a live-gated native completion.
+    """Append declared bindings after a live-gated native completion.
 
     TaskActor invokes this after recording completion. A failure leaves the
     original completed operation intact and closes the actor; no retry/input.
@@ -306,10 +343,20 @@ def campaign_completion_binder(runner, ledger, registration_ref):
             co=runner.co(payload["run_id"])
             with co.node_locks(payload["node_id"]):
                 co._gate()
-                _,data=co.state();info=data[payload["node_id"]]
                 source=file_ref(slot["source_path"])
-                require(source==receipt["result"].get("candidate"),
-                        "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
+                if slot["resolver"]=="campaign-advice-receipt-sha-v1":
+                    from upgrade_task_advice import receipt_advice_sha,completed_result,one_operation
+                    require(source==row["receipt"],"TASK_ADVICE_ORIGINAL_READ_RECEIPT_REQUIRED")
+                    replacement=receipt_advice_sha(source)
+                    producer,_=one_operation(registration,"advice",payload["run_id"],payload["node_id"])
+                    original,_=completed_result(runner.campaign,runner.ref,registration,producer,reader,
+                        until=returned["call_record"]["offset"])
+                    require(receipt["result"].get("producer")==original,"TASK_ADVICE_ORIGINAL_PRODUCER_CHANGED")
+                    advice,_=co._bind_advice(payload["node_id"],dict(advice_sha256=replacement))
+                    require(advice["notice"]==receipt["result"]["body_read"]["notice"],"TASK_ADVICE_ORIGINAL_NOTICE_CHANGED")
+                else:
+                    _,data=co.state();info=data[payload["node_id"]]
+                    require(source==receipt["result"].get("candidate"),"TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
                 if slot["resolver"]=="campaign-settle-marker-v1":
                     producer=registration["operations"][row["operation_id"]]["payload"]
                     candidate=json_ref(source)
@@ -318,7 +365,7 @@ def campaign_completion_binder(runner, ledger, registration_ref):
                     validate_failure_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,candidate,
                                                fixtures=runner.fixtures)
                     replacement=failure_marker(info,candidate)
-                else:
+                elif slot["resolver"]=="campaign-accept-marker-v1":
                     require(source==info.get("candidate"), "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
                     candidate=validate_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,source,
                                                  fixtures=runner.fixtures,rerun=False)
@@ -359,7 +406,7 @@ def campaign_completion_binder(runner, ledger, registration_ref):
     return bind
 
 
-def campaign_task_service(runner, client, ledger, enrollment_gate):
+def campaign_task_service(runner, client, ledger, enrollment_gate, *, advice_connections=None):
     """Connect the original retained RPC and ledger to the fixed business actor.
 
     The deployment supplies its live enrollment gate. This adapter never
@@ -396,7 +443,7 @@ def campaign_task_service(runner, client, ledger, enrollment_gate):
     reader=NativeReader(runner.campaign["sessions"]["codex"],fixtures=runner.fixtures)
     directory=Path(controls["evidence_directory"])
     directory.mkdir(mode=0o700,exist_ok=False)
-    handler=campaign_handler(runner,controls["registration"],parent/"campaign-results")
+    handler=campaign_handler(runner,controls["registration"],parent/"campaign-results",advice_connections=advice_connections)
     completion=(campaign_completion_binder(runner,ledger,controls["registration"])
                 if registration["schema"]=="upgrade-task-operations-v3" else None)
     if not runner.fixtures:

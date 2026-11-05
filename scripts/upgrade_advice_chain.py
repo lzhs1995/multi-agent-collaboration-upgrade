@@ -113,6 +113,10 @@ def advice_read_evidence(reader, *, fence, until, notice, command, not_before, n
     the window, bounds it, and re-pins every matched record afterwards so a
     match cannot survive a journal that changed under it.
     """
+    if isinstance(command,dict):
+        from upgrade_task_advice import typed_read_evidence
+        return typed_read_evidence(reader,fence=fence,until=until,notice=notice,command=command,
+            not_before=not_before,not_after=not_after)
     records = _window(reader, fence, until)
     evidence = body_read_evidence(records, provider=reader.provider,
                                   session_id=reader.session["session_id"], notice=notice,
@@ -725,6 +729,9 @@ def chain_from_binding(co, key, info, readers, binding, *, registration, not_aft
         require(decision.get("advice_sha256") is None, "the off arm must cite no advice")
         records = _window(reader, advice.get("fence") or co.header["native_start"]["codex"], until)
         attempts = globals()["advice_read_attempts"](records, node_root, reader.provider)
+        if co.campaign.get("task_controls",{}).get("schema")=="upgrade-task-campaign-controls-v3":
+            from upgrade_task_advice import typed_read_attempts
+            attempts+=typed_read_attempts(co.campaign,records)
         require(globals()["off_arm_has_no_advice_file"](node_root), "ADVICE_ARM_VIOLATION: off arm published advice")
         require(globals()["off_arm_worker_requests_zero"](journal), "ADVICE_ARM_VIOLATION: off arm made worker requests")
         require(globals()["off_arm_has_no_advice_read"](attempts), "ADVICE_ARM_VIOLATION: off arm read advice")

@@ -60,6 +60,18 @@ def render_private_support(support):
     buffers, changes = {}, []
     for name in SUPPORT:
         raw = read_regular(support / name)
+        transformations=["private_live_support", "distinct_module_namespace"]
+        if name=="upgrade_task_actor.py":
+            # The startup copy serves readiness only. Business input belongs to
+            # the retained external campaign service, whose exact production
+            # gate is deliberately not shipped in this private controller.
+            source=raw.decode()
+            begin=source.index('    def start_next_turn(self,plan_ref):\n')
+            end=source.index('    def _bindings(self):\n',begin)
+            source=source[:begin]+('    def start_next_turn(self,plan_ref):\n'
+                '        require(False,"TASK_SERVICE_EXTERNAL_CAMPAIGN_INPUT_REQUIRED")\n\n')+source[end:]
+            raw=source.encode()
+            transformations.append("private_readiness_service_no_campaign_input")
         if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py", "upgrade_child_hook.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
@@ -68,7 +80,7 @@ def render_private_support(support):
         compile(raw, private_name, "exec", dont_inherit=True)
         buffers["scripts/" + private_name] = (raw, False)
         changes.append({"path": "scripts/" + private_name, "source": file_ref(support / name),
-                        "transformations": ["private_live_support", "distinct_module_namespace"],
+                        "transformations": transformations,
                         "after": {"sha256": digest(raw), "bytes": len(raw)}})
     # Vendor notices travel with the private copy, under the same manifest.
     for name in ("licenses/TOMLI-LICENSE", "docs/VENDORED-TOMLI.md"):
