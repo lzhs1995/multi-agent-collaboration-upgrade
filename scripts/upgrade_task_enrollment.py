@@ -120,9 +120,14 @@ class TaskCampaignGate:
                 "TASK_ENROLLMENT_NORMAL_PREVIOUS_TURN_REQUIRED")
         read_ref(self.proof,"original actor enrollment")
         value=json_ref(plan_ref)
-        require(set(value)=={"schema","registration_sha256","authority_ref","previous_turn_id",
+        fields={"schema","registration_sha256","authority_ref","previous_turn_id",
                 "previous_completion","operation_ids","text"}
-                and value["schema"]=="upgrade-task-next-input-plan-v1"
+        if value.get("schema")=="upgrade-task-next-input-plan-v2":
+            from upgrade_task_instructions import next_input_value
+            fields.add("campaign")
+            require(value==next_input_value(service,previous_ref),"TASK_ENROLLMENT_TYPED_INPUT_PLAN_CHANGED")
+        require(set(value)==fields
+                and value["schema"] in ("upgrade-task-next-input-plan-v1","upgrade-task-next-input-plan-v2")
                 and self.registration["schema"] in ("upgrade-task-operations-v2","upgrade-task-operations-v3")
                 and value["registration_sha256"]==self.ledger.registration_sha256
                 and value["authority_ref"]==self.registration["authority_ref"]

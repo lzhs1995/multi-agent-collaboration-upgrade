@@ -232,7 +232,15 @@ it never recreates an absent artifact, sends a response or reopens the actor.
 Recovery after losing that in-memory owner remains unimplemented. Normal later
 turns use only the retained service and live gate. Creating a second service or recreating its exclusive
 directories is not recovery.
-Typed `advance` and supervisor instructions remain unconnected. Status and
+Typed `advance` remains unconnected. Explicit TASK campaign instructions now
+render exact registered operation scripts, complete alternatives, frozen task
+data and unresolved binding slots. A new v2 next-input plan producer takes all
+remaining original operations from the retained ledger, removes consumed choice
+groups and publishes one exclusive plan after normal completion/live idle. The
+original service re-renders that whole plan before its one-shot input; edits,
+omitted choices and foreign campaign references refuse. v1 plans retain their
+original contract. Publication sends no input and consumes no operation. The
+runtime owner loop and actual deployment are still incomplete. Status and
 read-only recovery have typed observations; finish and verify use the original
 full-run checker. Process-owner recovery and broader transport are still
 explicit pending work, not a complete campaign registration interface.
