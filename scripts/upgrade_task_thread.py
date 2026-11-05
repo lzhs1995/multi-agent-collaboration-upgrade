@@ -167,11 +167,15 @@ def observe(client, anchor, process, *, descriptors=writable_descriptor):
                  anchor["journal"]["device"], anchor["journal"]["inode"])
     descriptor = descriptors(*desc_args)
     data = client.request("thread/read", {"threadId": thread, "includeTurns": False})["thread"]
+    require(verify_peer(client.sock, anchor["server"], process) == peer,
+            "TASK_THREAD_RESPONSE_PEER_CHANGED")
     require(isinstance(data, dict) and data.get("id") == thread
             and data.get("path") == journal["path"], "TASK_THREAD_RPC_IDENTITY_CHANGED")
     require(data.get("canAcceptDirectInput") is True, "TASK_THREAD_DIRECT_INPUT_UNAVAILABLE")
     turns = client.request("thread/turns/list", {"threadId": thread, "limit": 1,
                            "sortDirection": "desc", "itemsView": "notLoaded"})["data"]
+    require(verify_peer(client.sock, anchor["server"], process) == peer,
+            "TASK_THREAD_RESPONSE_PEER_CHANGED")
     require(isinstance(turns, list) and len(turns) <= 1
             and all(isinstance(t, dict) for t in turns), "TASK_THREAD_TURNS_INVALID")
     latest = turns[0] if turns else None

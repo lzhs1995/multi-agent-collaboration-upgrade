@@ -73,6 +73,71 @@ c,_=s.accept();sys.stdin.buffer.read(1);c.close();s.close()
             with self.assertRaisesRegex(ContractError, "UNIX_STREAM_REQUIRED"):
                 kernel_peer(tcp)
 
+    def test_absent_peer_reader_exception_and_missing_keys_are_uniform_refusals(self):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unconnected:
+            with self.assertRaises(ContractError):
+                verify_peer(unconnected, self.pin, lambda pid: self.row)
+
+        class ReaderFailure(RuntimeError):
+            pass
+
+        def failed_reader(pid):
+            raise ReaderFailure("fixture reader inaccessible")
+
+        with self.assertRaisesRegex(ContractError, "OBSERVATION_REFUSED: ReaderFailure"):
+            verify_peer(self.sock, self.pin, failed_reader)
+        with self.assertRaisesRegex(ContractError, "SERVER_ROW_INVALID"):
+            verify_peer(self.sock, self.pin, lambda pid: {"argv": self.row["argv"]})
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native process reader and peer I/O semantics")
+    def test_real_reader_and_fd_transfer_require_post_response_verification(self):
+        # The subprocess is Python named by its actual executable. Its script
+        # operand is literally app-server to exercise the reader/pin interface;
+        # this fixture makes no official-signature or enrollment claim.
+        from cmux_daemon_identity import process
+        tmp = tempfile.TemporaryDirectory(prefix="pf", dir="/tmp")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
+        script = root / "app-server"
+        script.write_text('''import os,socket,sys
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.bind(sys.argv[1]);s.listen(1);print("READY",flush=True)
+c,_=s.accept();c.sendall(b"parent");c.recv(1)
+pid=os.fork()
+if pid==0:
+    c.sendall(b"child!");c.recv(1);os._exit(0)
+c.close();os.waitpid(pid,0)
+''')
+        child = subprocess.Popen([sys.executable, "app-server", str(root / "s")], cwd=root,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        def cleanup():
+            if child.poll() is None:
+                child.terminate()
+            child.communicate(timeout=5)
+
+        self.addCleanup(cleanup)
+        self.assertEqual(child.stdout.readline(), b"READY\n")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            client.connect(str(root / "s"))
+            self.assertEqual(client.recv(6), b"parent")
+            row = process(child.pid)
+            expected = server_pin(row, uid=os.getuid())
+            proof = verify_peer(client, expected, process)
+            self.assertEqual(proof["peer"]["pid"], child.pid)
+            # macOS framework Python execs its app-bundle binary; argv[0] is
+            # the launcher. Compare the real kernel executable of this process.
+            self.assertEqual(expected["executable"], process(os.getpid())["executable"])
+            client.sendall(b"x")
+            self.assertEqual(client.recv(6), b"child!")
+            try:
+                with self.assertRaisesRegex(ContractError, "SERVER_PEER_CHANGED"):
+                    verify_peer(client, expected, process)
+            finally:
+                client.sendall(b"x")
+            self.assertEqual(child.wait(timeout=5), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

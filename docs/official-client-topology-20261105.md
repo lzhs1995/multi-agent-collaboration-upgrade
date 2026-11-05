@@ -135,3 +135,14 @@ tool can reproduce that process/pipe shape. Neither proposed hook actor is
 installed. The next investigation is the official server-origin dynamic-tool
 request on a kernel-authenticated connection, with explicitly registered task
 operations and separate controller ownership; it is not yet an implementation.
+
+The original Claude's later independent peer review added four qualifications,
+now applied: Darwin's LOCAL_PEERPID follows the peer's most recent I/O, so the
+reader verifies the peer immediately after each response; socket transfer,
+socket activation and multiprocess socket I/O are outside this contract. Linux
+SO_PEERCRED is connection-time metadata and cannot establish that property.
+All peer/reader exceptions now refuse proof without granting input retry.
+Sixteen focused tests pass, including the actual Darwin process reader and
+a real accepted-socket transfer to a child whose response is refused. Finally,
+file_identity denotes path stat metadata rather than a mapped-binary content
+hash; official package/signature verification remains a separate requirement.
