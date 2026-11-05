@@ -1,5 +1,6 @@
 """New materialization and old-mode refusal; no native clients are launched."""
 import copy
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -44,13 +45,14 @@ class TaskTopologyTests(unittest.TestCase):
                 source_path=str(cls.root/"candidate.json"),producer_operation="left")}
         cls.runtime_ref=materialize_live(cls.context,"B",binaries=binaries,
             native_policy=SOCKET_POLICY,codex_package=PACKAGE,pre_exec_hold=True,
-            provider_configuration=({"model":"fixture-codex","model_provider":"custom"},{"model":"fixture-claude","env":{}}),
+            provider_configuration=({"model":"fixture-codex","model_provider":"custom"},
+                {"model":"fixture-claude","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:3445"}}),
             station_launchers={"mg":"/usr/bin/true","magpie":"/usr/bin/true",
                 "codex":{"station":"agentrouter-a","base_url":"http://127.0.0.1:3465"},
                 "claude":{"station":"linxi","key":"linxi-s1"}},
             goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
             lane_instructions=instructions,
-            task_startup=task)
+            task_startup=task,task_model_network=getattr(cls,"model_network",False))
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 
@@ -122,6 +124,42 @@ class SlotTaskTopologyTests(TaskTopologyTests):
         self.assertTrue((root/"mac_upgrade_task_bindings.py").is_file())
         self.assertIn("from mac_upgrade_task_bindings import",(root/"mac_upgrade_task_operations.py").read_text())
         self.test_incomplete_business_chain_cannot_launch_or_hold()
+
+
+class NetworkTaskTopologyTests(TaskTopologyTests):
+    model_network=True
+
+    def test_three_execution_profiles_bind_original_gateway_and_keep_tui_separate(self):
+        from upgrade_task_network import model_only_profile
+        contract=self.binding["task_model_network"]
+        self.assertEqual(contract["ports"],dict(codex=3465,claude_a=3445,claude_b=3445))
+        for lane,key in (("codex","codex_server_sandbox"),("claude_a","claude_a_sandbox"),("claude_b","claude_b_sandbox")):
+            raw=Path(self.spec["pins"][key]["path"]).read_bytes()
+            self.assertTrue(raw.endswith(model_only_profile(b"(version 1)\n",contract,lane).split(b"\n",1)[1]))
+        for key in ("control_sandbox","codex_sandbox"):
+            self.assertNotIn(b"(deny network-outbound)",Path(self.spec["pins"][key]["path"]).read_bytes())
+        root=Path(self.spec["controller"])/"scripts"
+        self.assertTrue((root/"mac_upgrade_task_network.py").is_file())
+        self.test_incomplete_business_chain_cannot_launch_or_hold()
+
+    def test_binding_cannot_retarget_gateway(self):
+        path=Path(self.spec["controller"])/"upgrade-binding.json"
+        original=path.read_bytes()
+        mode=path.stat().st_mode&0o777
+        value=json.loads(original)
+        value["task_model_network"]["ports"]["codex"]=3446
+        try:
+            path.chmod(0o600)  # Owned disposable fixture, never a live release.
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ContractError,"TASK_MODEL_NETWORK_CHANGED"):
+                validate_startup(self.runtime["startup"])
+        finally:
+            path.write_bytes(original)
+            path.chmod(mode)
+
+    def test_network_opt_in_cannot_change_a_legacy_startup(self):
+        with self.assertRaisesRegex(ContractError,"TASK_NETWORK_REQUIRES_EXPLICIT_TASK"):
+            materialize_live(self.context,"B",binaries={},task_model_network=True)
 
 
 if __name__=="__main__":unittest.main()

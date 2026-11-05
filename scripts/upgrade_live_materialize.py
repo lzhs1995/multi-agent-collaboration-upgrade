@@ -45,7 +45,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
            "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
            "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
-           "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py")
+           "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py", "upgrade_task_network.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -86,11 +86,13 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
-                     codex_package=None, task_startup=None):
+                     codex_package=None, task_startup=None, task_model_network=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    require(type(task_model_network) is bool and (not task_model_network or task_startup is not None),
+            "STARTUP_TASK_NETWORK_REQUIRES_EXPLICIT_TASK")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
@@ -202,6 +204,10 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                              goal_startup=conditions, lane_instructions=refs)
     codex_original, claude_original = (read_provider_configuration()
         if provider_configuration is None else provider_configuration)
+    network = None
+    if task_model_network:
+        from upgrade_task_network import network_contract
+        network = network_contract(station,claude_original)
     task_plan_ref, task_plan_raw = None, None
     if task_startup is not None:
         from orchestration_common import canonical
@@ -318,6 +324,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["codex_package"] = package
     if task_plan_ref is not None:
         binding["task_startup"] = task_plan_ref
+    if network is not None:
+        binding["task_model_network"] = network
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -475,10 +483,16 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         profile = sandbox_profile(writable, denied)
         if lane == "codex" and socket_boundary is not None:
             profile = extend_profile(profile, socket_boundary)
+        if network is not None and lane in ("claude_a","claude_b"):
+            from upgrade_task_network import model_only_profile
+            profile = model_only_profile(profile,network,lane)
         pins[lane + "_sandbox"] = immutable_bytes(paths["config"] / (lane + ".sb"), profile)
         if lane == "codex" and task_startup is not None:
             from upgrade_task_socket_policy import restrict_agent_connections
             server_profile = restrict_agent_connections(profile, socket_boundary["physical"], socket_boundary["advertised"])
+            if network is not None:
+                from upgrade_task_network import model_only_profile
+                server_profile = model_only_profile(server_profile,network,"codex")
             pins["codex_server_sandbox"] = immutable_bytes(paths["config"] / "codex-server.sb", server_profile)
     patch_ref = write_json(paths["controllers"] / "patches-v2.json", dict(version=2,
         source=source_pin, changes=changes, compatibility_fixes=["original_gate_canonical_ack"],

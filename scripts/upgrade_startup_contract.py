@@ -351,8 +351,15 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
         config = tomllib.loads(read_ref(spec["pins"]["codex/config.toml"]).decode("utf-8"))
         require(all(config.get(key) == value for key, value in TASK_TOOL_REDUCTION.items()),
                 "STARTUP_TASK_TOOL_REDUCTION_CHANGED")
+        if "task_model_network" in binding:
+            from upgrade_task_network import network_contract
+            for lane in GOAL_LANES:
+                original=json.loads(read_ref(spec["pins"][lane+"/settings.json"]))
+                require(binding["task_model_network"]==network_contract(station,original),
+                        "STARTUP_TASK_MODEL_NETWORK_CHANGED")
     else:
-        require("task_startup" not in binding, "STARTUP_TASK_DOWNGRADE_REFUSED")
+        require("task_startup" not in binding and "task_model_network" not in binding,
+                "STARTUP_TASK_DOWNGRADE_REFUSED")
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -504,12 +511,18 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
             profile = sandbox_profile(writable, denied)
             if lane == "codex":
                 profile = extend_profile(profile, boundary)
+            if "task_model_network" in binding and lane in GOAL_LANES:
+                from upgrade_task_network import model_only_profile
+                profile = model_only_profile(profile,binding["task_model_network"],lane)
             require(read_regular(pins[lane + "_sandbox"]["path"]) == profile,
                     "STARTUP_SOCKET_PROFILE_CHANGED:" + lane)
         if task_mode:
             from upgrade_task_socket_policy import restrict_agent_connections
             server_profile = restrict_agent_connections(read_regular(pins["codex_sandbox"]["path"]),
                 boundary["physical"], boundary["advertised"])
+            if "task_model_network" in binding:
+                from upgrade_task_network import model_only_profile
+                server_profile = model_only_profile(server_profile,binding["task_model_network"],"codex")
             require(read_regular(pins["codex_server_sandbox"]["path"]) == server_profile,
                     "STARTUP_TASK_SERVER_PROFILE_CHANGED")
     socket = control_socket(paths, socket_boundary=boundary)

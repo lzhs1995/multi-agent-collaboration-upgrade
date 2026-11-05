@@ -40,6 +40,17 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   source's namespace concatenation; live automatic execution remains unverified.
 - The task server profile denies self-connections and physical socket unlink.
   Its inspector uses that exact unlink policy; legacy writers keep their policy.
+- An explicit `task_model_network=True` materialization choice adds outbound
+  network isolation to the TASK app-server and both Claude lanes. Ports come
+  from the frozen Codex station and Claude settings; startup validation rebuilds
+  the contract and exact profile bytes. Only TCP to each lane's own localhost
+  model port is allowed (IPv4 and IPv6). New connections to other TCP ports,
+  Unix sockets and UDP, including UDP on the permitted model port, are refused
+  in actual Darwin parent/descendant probes. The trusted controller and remote
+  TUI keep their original profiles; older task candidates opt out.
+  This is not inherited-FD, Mach/Apple Events, allowed-service authentication
+  or a complete tool boundary. Required cooperation still needs a restricted
+  channel; no full runtime/adoption claim follows from the network probe.
 - Public official configuration removes shell, apps/plugins and nested-agent
   tool entrypoints for explicit TASK launches; thread creation sets an empty
   environment list and later turn grants reject environment/policy overrides.
@@ -175,8 +186,9 @@ explicit pending work, not a complete campaign registration interface.
    service Ping correction round 1 and same-closed-actor recovery. ROOT verified
    the respective 188/179/187 artifact references. Original S40 has also returned
    bounded PASS for the explicit campaign identity increment; deployment tests
-   remain mocks. Review only new failure binding changes, preserving earlier
-   accepted scopes and recovery limits.
+   remain mocks. Failure binding and typed closeout have also received bounded
+   PASS with their original references checked. Review only new network changes,
+   preserving earlier accepted scopes and recovery limits.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.
