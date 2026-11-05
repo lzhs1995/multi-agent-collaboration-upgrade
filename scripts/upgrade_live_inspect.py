@@ -205,9 +205,10 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                     "CLIENT_PROVIDER_OR_NATIVE_ROOT_CHANGED")
             if task_mode and lane == "codex":
                 from upgrade_task_readiness import task_startup_result
+                from upgrade_task_thread import validate_tui_target
                 _, task_result, task_anchor = task_startup_result(spec)
                 sid = task_result["thread_id"]
-                require(client["argv"][-2:] == ["resume", sid], "TASK_INSPECTION_TUI_NOT_ATTACHED")
+                validate_tui_target(client,process_root(provider,client),spec,task_anchor)
             else:
                 sid = native._live_session(client, provider)
             if provider == "claude":

@@ -10,11 +10,64 @@ import unittest
 
 from orchestration_common import ContractError, digest
 from upgrade_rpc_peer import server_pin
-from upgrade_task_thread import observe, parse_descriptor_output
+from upgrade_task_thread import observe, parse_descriptor_output, validate_tui_target
 
 SID = "11111111-1111-4111-8111-111111111111"
 TURN = "22222222-2222-4222-8222-222222222222"
 OTHER = "33333333-3333-4333-8333-333333333333"
+
+
+class TuiTargetTests(unittest.TestCase):
+    """Only the declaration check; live process/peer observation is separate."""
+    def setUp(self):
+        self.process = dict(executable="/fixture/codex", argv=["/fixture/codex", "--remote",
+            "unix:///fixture/task.sock", "--cd", "/fixture/work", "resume", SID])
+        self.spec = dict(schema="upgrade-startup-task-v1", pins=dict(codex=dict(path="/fixture/codex")),
+            clients=dict(codex=dict(native_root="/fixture/native")),
+            rpc=dict(path="/fixture/task.sock", argv=["/fixture/codex", "app-server"]))
+        self.anchor = dict(schema="upgrade-task-thread-read-anchor-v1", thread_id=SID,
+            native_root="/fixture/native", socket=dict(path="/fixture/task.sock"),
+            server=dict(executable="/fixture/codex", argv_sha256=digest(
+                json.dumps(self.spec['rpc']['argv'],separators=(',',':')).encode())))
+
+    def check(self):
+        return validate_tui_target(self.process, "/fixture/native", self.spec, self.anchor)
+
+    def test_same_declared_target_returns_no_authorization(self):
+        self.assertIsNone(self.check())
+
+    def test_right_thread_wrong_remote_or_duplicate_selector_refuses(self):
+        argv = self.process['argv'][:]
+        for changed in (
+            [*argv[:2], 'unix:///fixture/other.sock', *argv[3:]],
+            [*argv[:1], *argv[3:]],
+            [*argv[:-2], '--remote', 'unix:///fixture/task.sock', *argv[-2:]],
+            [*argv[:-2], '--remote=unix:///fixture/other.sock', *argv[-2:]],
+            [argv[0], '--remote=unix:///fixture/task.sock', *argv[3:]],
+        ):
+            with self.subTest(argv=changed), self.assertRaisesRegex(ContractError, 'REMOTE_TARGET_CHANGED'):
+                self.process['argv'] = changed
+                self.check()
+
+    def test_right_remote_wrong_thread_or_positional_separator_refuses(self):
+        argv = self.process['argv'][:]
+        for changed in ([*argv[:-1], OTHER], [*argv[:-2], '--', *argv[-2:]]):
+            with self.subTest(argv=changed), self.assertRaisesRegex(ContractError, 'TUI_NOT_ATTACHED'):
+                self.process['argv'] = changed
+                self.check()
+
+    def test_original_server_root_and_binary_are_not_selected_from_tui(self):
+        for obj, key, replacement in (
+            (self.anchor['socket'], 'path', '/fixture/other.sock'),
+            (self.anchor['server'], 'argv_sha256', '0' * 64),
+            (self.process, 'executable', '/fixture/other-codex'),
+            (self.anchor, 'native_root', '/fixture/other-native'),
+        ):
+            previous = obj[key]
+            with self.subTest(key=key), self.assertRaises(ContractError):
+                obj[key] = replacement
+                self.check()
+            obj[key] = previous
 
 
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"), "kernel peer")

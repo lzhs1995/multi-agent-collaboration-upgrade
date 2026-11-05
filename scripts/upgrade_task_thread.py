@@ -7,6 +7,7 @@ Other open rollouts neither select nor invalidate this explicitly named thread.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import stat
@@ -18,6 +19,40 @@ from orchestration_common import (checked_path, contract_errors, digest, require
 from upgrade_rpc_peer import verify_peer
 
 MAX_RECORD = 2 * 1024 * 1024
+
+
+def validate_tui_target(process, native_root, spec, anchor):
+    """Match the observed TUI's declared destination to the original task.
+
+    A resume suffix alone can name the right UUID on a different app-server.
+    This check is shared by inspection and live enrollment. It does not prove
+    an established TUI connection, caller authority, or permission to send.
+    The caller must still authenticate the process and the live server peer.
+    """
+    require(spec.get("schema") == "upgrade-startup-task-v1"
+            and anchor.get("schema") == "upgrade-task-thread-read-anchor-v1",
+            "TASK_TUI_EXPLICIT_TOPOLOGY_REQUIRED")
+    thread = _uuid(anchor["thread_id"])
+    require(str(native_root) == spec["clients"]["codex"]["native_root"] == anchor["native_root"],
+            "TASK_TUI_NATIVE_ROOT_CHANGED")
+    require(process["executable"] == spec["pins"]["codex"]["path"]
+            == anchor["server"]["executable"]
+            and anchor["server"]["argv_sha256"] == digest(json.dumps(
+                spec["rpc"]["argv"], ensure_ascii=False, separators=(",", ":")).encode())
+            and anchor["socket"]["path"] == spec["rpc"]["path"],
+            "TASK_TUI_ORIGINAL_SERVER_CHANGED")
+    argv = process.get("argv")
+    require(isinstance(argv, list) and all(isinstance(a, str) for a in argv)
+            and argv[:1] == [process["executable"]]
+            and argv[-2:] == ["resume", thread]
+            and argv.count("resume") == 1 and "--" not in argv,
+            "TASK_TUI_NOT_ATTACHED")
+    selectors = [i for i, arg in enumerate(argv)
+                 if arg == "--remote" or arg.startswith("--remote=")]
+    require(len(selectors) == 1 and argv[selectors[0]] == "--remote"
+            and selectors[0] + 1 < len(argv) - 2
+            and argv[selectors[0] + 1] == "unix://" + anchor["socket"]["path"],
+            "TASK_TUI_REMOTE_TARGET_CHANGED")
 
 
 def _uuid(value):

@@ -276,6 +276,14 @@ explicit pending work, not a complete campaign registration interface.
 
 Tests are evidence about these local components, not completed model runs.
 
+Startup inspection and live enrollment now share the same declared TUI-target
+check. The observed official executable, native root, sole `--remote` socket,
+exact `resume` task UUID and original server argv digest must agree with the
+frozen task anchor. A matching resume suffix on another server is refused before
+readiness or enrollment. This validates the observed command's destination;
+it is not proof of an established TUI connection or callback delivery. Existing
+kernel peer/process checks and complete adoption requirements still apply.
+
 S40's first bounded advice review found caller-owned capability substitution:
 changing the held connection after factory validation sent the first request to
 the replacement. The correction retains the original holder and connection

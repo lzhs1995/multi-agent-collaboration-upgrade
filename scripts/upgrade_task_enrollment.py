@@ -54,7 +54,7 @@ class TaskCampaignGate:
         from orchestration_campaign import (canonical_live_uuids,controller_modules,validate_campaign)
         from upgrade_live_control import external_publisher
         from upgrade_live_runtime import validate_adoption
-        from upgrade_task_thread import observe
+        from upgrade_task_thread import observe, validate_tui_target
         require(os.getpid()==self.owner_pid,"TASK_ENROLLMENT_OWNER_PROCESS_CHANGED")
         require(validate_campaign(self.runner.ref)==self.campaign,"TASK_ENROLLMENT_CAMPAIGN_CHANGED")
         external_publisher(self.spec)
@@ -88,6 +88,8 @@ class TaskCampaignGate:
                     require(native._provider(process)=="codex"
                             and process["argv"][-2:]==["resume",self.registration["thread_id"]],
                             "TASK_ENROLLMENT_TUI_NOT_ATTACHED")
+                    validate_tui_target(process,native.private_roots.process_root("codex",process),
+                                        self.spec,self.anchor)
                     actual=dict(provider="codex",session_id=proof["thread_id"],tty=row["tty"],
                         process=native._public_process(process),workspace_uuid=row["workspace_uuid"],
                         surface_uuid=row["target_surface_uuid"],pane_uuid=row["target_pane_uuid"],

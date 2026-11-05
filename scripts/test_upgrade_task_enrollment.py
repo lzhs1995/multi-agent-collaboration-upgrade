@@ -27,9 +27,21 @@ class EnrollmentTests(unittest.TestCase):
         self.anchor=dict(server=self.client.server,journal={k:f.native.session['transcript'][k] for k in ('path','device','inode')})
         self.startup=dict(operations=f.reg_ref,ledger=str(f.ledger.path),registration_sha256=f.ledger.registration_sha256)
         self.session=self.campaign['sessions']['codex']
+        self.session['process']['executable']=self.client.server['executable']
         self.row=dict(workspace_uuid=self.session['workspace_uuid'],target_surface_uuid=self.session['surface_uuid'],
                       target_pane_uuid=self.session['pane_uuid'],tty=self.session['tty'])
         self.process=dict(self.session['process'],argv=['/fixture/codex','resume',self.registration['thread_id']])
+        self.process['argv']=[self.process['executable'],'--remote','unix:///fixture/task.sock',
+                              'resume',self.registration['thread_id']]
+        self.anchor.update(schema='upgrade-task-thread-read-anchor-v1',thread_id=self.registration['thread_id'],
+                           native_root=self.session['native_config_root'],socket=dict(path='/fixture/task.sock'))
+        self.spec.update(schema='upgrade-startup-task-v1',clients=dict(codex=dict(native_root=self.session['native_config_root'])),
+                         pins=dict(codex=dict(path=self.process['executable'])),
+                         rpc=dict(path='/fixture/task.sock',argv=f.f.server_row['argv']))
+        # The production gate reads these exact frozen values, not the earlier
+        # minimal fixture written before the observed TUI was constructed.
+        self.runtime['startup']=write_json(f.control/'startup-target.json',self.spec)
+        self.campaign['runtime']=write_json(f.control/'runtime-target.json',self.runtime)
         self.observed=dict(thread_id=self.registration['thread_id'],latest_turn_id=f.ledger.active_turn)
         self.native=SimpleNamespace(_tree_row=lambda *a:copy.deepcopy(self.row),_target_process=lambda *a:copy.deepcopy(self.process),
             _provider=lambda p:'codex',_public_process=lambda p:{k:p[k] for k in self.session['process']},
@@ -154,6 +166,12 @@ class EnrollmentTests(unittest.TestCase):
         with patch('upgrade_live_runtime.validate_adoption',side_effect=ContractError('fixture adoption refused')):
             with self.assertRaisesRegex(ContractError,'adoption refused'):self.gate()
         self.assertFalse((self.f.control/'campaign-enrollment.json').exists())
+
+    def test_same_thread_on_different_remote_server_refuses_before_enrollment(self):
+        self.process['argv'][2]='unix:///fixture/other.sock'
+        with self.assertRaisesRegex(ContractError,'REMOTE_TARGET_CHANGED'):self.gate()
+        self.assertFalse((self.f.control/'campaign-enrollment.json').exists())
+        self.assertEqual(self.f.ledger.db.execute('SELECT count(*) FROM calls').fetchone()[0],0)
 
     def test_offline_runner_cannot_be_enrolled_as_live(self):
         self.f.runner.fixtures=True
