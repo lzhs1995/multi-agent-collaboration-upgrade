@@ -208,6 +208,45 @@ forged, no route was substituted, and no business item was accepted. The live
 run used the RPC code before the cleanup-only correction; that correction has
 separate local regression evidence.
 
+## First successful official TUI and dynamic-operation round trip
+
+A distinct diagnostic (`native-dynamic-smoke-v5`, private root `/Users/lzhs/d5`)
+passed on the same official 0.164.0 binary, agentrouter-a gateway on port 3465,
+and gpt-6-astra. The actual official remote TUI initialized the new server first;
+the helper kept its own `cmux_native_input` identity. The new thread's observed
+originator was `codex-tui`. No header override or provider configuration change
+was used. A TUI was attached to that exact thread after its first turn persisted
+the journal. The real model called the registered dynamic tool once, the
+controller recorded and performed one fixed diagnostic operation, and its exact
+result appeared in native completion, the final assistant message and the
+attached TUI. All 55 recorded RPC messages passed the pinned-server peer check.
+The three diagnostic processes were stopped after the result; the server exited
+normally. The maintenance ROOT, S40 and original Claude sessions were unchanged.
+
+The accepted record is
+`/Users/lzhs/.local/state/codex-toolchain/unification-20261104/official-next-preparation-20261105/j7-startup-diagnosis/ROOT-NATIVE-DYNAMIC-V5-ACCEPTANCE.json`.
+It pins the original user/assistant journal slices, single server request and
+response intent, completion and TUI bytes. This is one bounded capability
+diagnostic; it does not satisfy the 33 business items or 15 paired comparisons.
+
+Intermediate attempts remain intact: v2/v3 refused at the diagnostic's incorrect
+TUI readiness parser (zero model turns); v4 created a thread but the official
+TUI could not resume it before any turn had persisted a rollout (zero model
+turns). Readiness matching was checked against both captured official PTYs before
+v4. The v5 sequence waits for the first-turn journal before attaching. These
+failures do not authorize replaying any old attempt. The v1 401 and v5 success
+support the startup-order correction but do not establish the provider's exact
+client acceptance policy.
+
+Integrating this sequence requires an explicit new topology contract, not an
+implicit exception to old foreground rules: launch the official TUI first;
+register dynamic tools on a new task thread; pin the original server/thread,
+startup input and native result; then attach the same thread in the TUI. Preserve
+the helper identity. Complete agent confinement still requires actual broker,
+remote-environment and inherited-FD checks in all three lanes. Busy input,
+cancellation, disconnection, recovery and the existing adoption/handshake/callback
+interfaces still need their own live acceptance before a new full matrix starts.
+
 The routing issue comes from official `bespoke_event_handling.rs:1100` and
 `outgoing_message.rs:347,578`: dynamic calls target subscribed connections, and
 exclusive callback ownership is enforced for user-verification ceremonies,
