@@ -39,12 +39,25 @@ class CampaignActorTests(unittest.TestCase):
             self.registration.update(schema="upgrade-task-operations-v3",initial_operations=list(operations),
                 binding_slots={"accept":dict(schema=SLOT_SCHEMA,resolver="campaign-accept-marker-v1",
                     source_path=str(self.c.root/"runs/run-01/nodes/local/candidate.json"),producer_operation="candidate")})
+        if getattr(self,"failure_mode",False):
+            from upgrade_task_bindings import SLOT_SCHEMA
+            operations["block"]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"block","run-01",
+                node_id="local",reason="original business operation failed"))
+            operations["failure-candidate"]=dict(kind=KIND,payload=operation_payload(self.c.campaign,
+                "failure-candidate","run-01",node_id="local",boundary=getattr(self,"failure_boundary","local_boundary")))
+            template=operation_payload(self.c.campaign,"settle","run-01",node_id="local",marker="template")
+            template["marker"]=None
+            operations["settle"]=dict(kind=KIND,payload=template)
+            self.registration.update(schema="upgrade-task-operations-v3",initial_operations=list(operations),
+                binding_slots={"settle":dict(schema=SLOT_SCHEMA,resolver="campaign-settle-marker-v1",
+                    source_path=str(self.c.root/"runs/run-01/nodes/local/failure-candidate.json"),
+                    producer_operation="failure-candidate")})
         self.reg_ref=write_json(self.control/"operations.json",self.registration)
         self.ledger=OperationLedger.create(self.control/"ledger.sqlite",self.registration)
         self.addCleanup(self.ledger.close)
         self.directory=self.control/"campaign-invocations"
         if not getattr(self,"service_mode",False):self.directory.mkdir(mode=0o700)
-        self.c.campaign["task_controls"]=dict(schema=BINDING_SCHEMA if getattr(self,"binding_mode",False) else SCHEMA,registration=self.reg_ref,
+        self.c.campaign["task_controls"]=dict(schema=BINDING_SCHEMA if self.registration["schema"]=="upgrade-task-operations-v3" else SCHEMA,registration=self.reg_ref,
                                               evidence_directory=str(self.directory))
         self.c.save();self.runner=Runner(self.c.ref,fixtures=True)
         self.queue=[];self.sent=[];self.gates=[];self.sequence=0
@@ -62,7 +75,7 @@ class CampaignActorTests(unittest.TestCase):
             self.control/"actor-events",invocation_recorder=invocation_recorder(self.native.reader,self.reg_ref,
                 self.directory,after=self.native.session["freeze_fence"]["offset"]),
             completion_observer=campaign_completion_binder(self.runner,self.ledger,self.reg_ref)
-                if getattr(self,"binding_mode",False) else None)
+                if self.registration["schema"]=="upgrade-task-operations-v3" else None)
 
     def enqueue(self,message):
         self.sequence+=1
@@ -74,7 +87,7 @@ class CampaignActorTests(unittest.TestCase):
     def call(self,name):
         payload=self.ledger.resolve_operation(name)[0]["payload"]
         descriptor=control_script(self.c.campaign,self.c.ref,payload["action"],payload["run_id"],
-            **{k:payload[k] for k in ("node_id","marker","decision","decision_fields")})
+            **{k:payload.get(k) for k in ("node_id","marker","decision","decision_fields","boundary","reason")})
         self.native.append(dict(timestamp=utc_now(),type="response_item",payload=dict(type="custom_tool_call",
             name="exec",call_id="outer-"+name,input=descriptor["script"],
             internal_chat_message_metadata_passthrough=dict(turn_id=fixtures.TURN))))
@@ -223,6 +236,87 @@ class CampaignActorTests(unittest.TestCase):
             campaign=copy.deepcopy(f.c.campaign)
             campaign["task_controls"]["registration"]=write_json(f.control/"invalid-slots.json",registration)
             with self.assertRaises(ContractError):validate_controls(campaign,fixtures=True)
+
+
+class CampaignFailureActorTests(unittest.TestCase):
+    """Failure handling through the same ledger/actor and actual business verifier."""
+    def fixture(self, *, boundary="local_boundary"):
+        f=CampaignActorTests();f.failure_mode=True;f.failure_boundary=boundary
+        f.setUp();self.addCleanup(f.doCleanups)
+        f.call("start");f.complete("start");f.call("claim");f.complete("claim")
+        f.call("block");f.complete("block")
+        return f
+
+    def test_frozen_failure_returns_then_settles_once_through_original_runner(self):
+        f=self.fixture();f.call("failure-candidate")
+        with self.assertRaisesRegex(ContractError,"NOT_BOUND"):f.ledger.resolve_operation("settle")
+        f.complete("failure-candidate")
+        operation,binding=f.ledger.resolve_operation("settle")
+        self.assertTrue(operation["payload"]["marker"].startswith("ORCH_FAIL_V2|"))
+        self.assertIsNone(f.registration["operations"]["settle"]["payload"]["marker"])
+        before=file_ref(f.c.root/"runs/run-01/nodes/local/failure-candidate.json")
+        f.call("settle");f.complete("settle")
+        self.assertEqual(f.runner.status("run-01")["states"]["local"],"FAILED_PRESERVED")
+        self.assertEqual(before,file_ref(before["path"]))
+        self.assertEqual(f.ledger.db.execute("SELECT count(*) FROM calls").fetchone()[0],5)
+        self.assertEqual(f.ledger.db.execute("SELECT count(*) FROM bindings").fetchone()[0],1)
+        with self.assertRaisesRegex(ContractError,"OPERATION_ALREADY_INTENDED"):f.ledger.bind_artifact("settle",binding)
+
+    def test_late_original_outer_result_required_and_loss_never_replays(self):
+        f=self.fixture();f.call("failure-candidate")
+        message,ref,result=f.complete("failure-candidate",defer_outer=True)
+        self.assertEqual(result["artifact_binding_observation"]["status"],"WAITING_ORIGINAL_NATIVE_RESULT")
+        with self.assertRaisesRegex(ContractError,"NOT_BOUND"):f.ledger.resolve_operation("settle")
+        f.native_result("failure-candidate",message)
+        self.assertEqual(f.actor.bind_completed(message,ref)["status"],"BOUND")
+        self.assertEqual(len(f.sent),4)
+        g=self.fixture()
+        def lost(_):raise TimeoutError("original response lost")
+        g.f.client.respond=lost
+        with self.assertRaises(TimeoutError):g.call("failure-candidate")
+        self.assertEqual(g.ledger.inspect("inner-failure-candidate")["phase"],"UNKNOWN")
+        with self.assertRaisesRegex(ContractError,"NOT_BOUND"):g.ledger.resolve_operation("settle")
+        with self.assertRaisesRegex(ContractError,"CLOSED_NO_REPLAY"):g.actor.step()
+        self.assertEqual(g.runner.status("run-01")["states"]["local"],"BLOCKED")
+
+    def test_changed_source_and_false_boundary_preserve_blocker(self):
+        f=self.fixture();f.call("failure-candidate");f.complete("failure-candidate")
+        with self.assertRaisesRegex(ContractError,"GENERATED_MARKER_CHANGED"):
+            control_script(f.c.campaign,f.c.ref,"settle","run-01",node_id="local",marker="invented")
+        source=f.c.root/"runs/run-01/nodes/local/failure-candidate.json"
+        source.write_bytes(source.read_bytes()+b"\n")
+        with self.assertRaises(ContractError):f.call("settle")
+        self.assertIsNone(f.ledger.db.execute("SELECT 1 FROM calls WHERE operation_id='settle'").fetchone())
+        for boundary in ("callback_boundary","no_business_input","preparation_exited"):
+            g=self.fixture(boundary=boundary)
+            with self.assertRaises(ContractError):g.call("failure-candidate")
+            with self.assertRaisesRegex(ContractError,"NOT_BOUND"):g.ledger.resolve_operation("settle")
+            self.assertEqual(g.runner.status("run-01")["states"]["local"],"BLOCKED")
+
+    def test_failure_slot_scope_and_duplicate_budgets_refuse(self):
+        f=self.fixture()
+        for mutate in (
+            lambda r:r["binding_slots"]["settle"].update(producer_operation="block"),
+            lambda r:r["binding_slots"]["settle"].update(source_path=str(f.control/"foreign.json")),
+            lambda r:r["operations"]["failure-candidate"]["payload"].update(boundary="provider_says_done"),
+            lambda r:r["operations"]["block"]["payload"].update(reason=" "),
+            lambda r:r["operations"].update(again=dict(kind=KIND,payload=operation_payload(f.c.campaign,
+                "settle","run-01",node_id="local",marker="second-budget"))),
+            lambda r:r["operations"].update(again=dict(kind=KIND,payload=operation_payload(f.c.campaign,
+                "failure-candidate","run-01",node_id="local",boundary="callback_boundary")))):
+            registration=copy.deepcopy(f.registration);mutate(registration)
+            campaign=copy.deepcopy(f.c.campaign)
+            campaign["task_controls"]["registration"]=write_json(f.control/"invalid-failure.json",registration)
+            with self.assertRaises(ContractError):validate_controls(campaign,fixtures=True)
+
+    def test_stop_after_original_failure_completion_creates_no_binding(self):
+        f=self.fixture();f.call("failure-candidate")
+        def stop(*args):raise ContractError("fixture STOP")
+        f.actor.gate=stop
+        with self.assertRaisesRegex(ContractError,"STOP"):f.complete("failure-candidate")
+        self.assertEqual(f.ledger.inspect("inner-failure-candidate")["phase"],"NATIVE_COMPLETED")
+        self.assertEqual(f.ledger.db.execute("SELECT count(*) FROM bindings").fetchone()[0],0)
+        self.assertTrue(f.actor.closed)
 
 
 if __name__=="__main__":unittest.main()

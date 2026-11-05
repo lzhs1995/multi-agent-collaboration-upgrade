@@ -49,7 +49,7 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   descriptor, keeping the original native offset fences. UNKNOWN remains an
   invocation observation, never completion or permission to execute again.
 - Explicit campaign controls map frozen IDs to the existing Runner's start,
-  claim, candidate, accept, settle, decision-publish and bind entrypoints. The
+  claim, candidate, accept, block, failure-candidate, settle, decision-publish and bind entrypoints. The
   handler checks the original invocation before calling Runner and does not
   bypass any live identity/adoption/transport gates. Offline start/claim has
   passed through the actual actor, ledger, Runner and Coordinator.
@@ -73,6 +73,16 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   unbound. `TaskActor.bind_completed` can observe that same original completion
   later without another effect or response. The bound operation reader
   rechecks the producer's original native result within its saved fence.
+- Failure-to-settle now uses that same producer/reader chain. A frozen block
+  operation names its concrete reason; a failure producer names one of the
+  original four boundary types. Each node has one blocker, producer and settle
+  operation budget. The original Runner creates the candidate, and only its
+  successful native inner/outer return can bind the exact failure marker.
+  Binding checks the original blocker, output tree and boundary with the
+  business checker; settlement still verifies the actual terminal boundary
+  before releasing resources. Local offline failure settlement passes through
+  the real actor and ledger. False delegated/preparation boundaries, modified
+  source, STOP and unknown responses preserve the blocker without replay.
 - `TaskService` now drives that same actor and retained RPC connection in bounded
   pulses. Idle polls preserve the connection and budgets. Late native results
   bind before a queued dependent operation; a normal terminal event waits for
@@ -133,10 +143,10 @@ reports `ready=false`, and `startup_ready` is separate. Do not remove that refus
 until the complete business chain and deployment boundary are independently
 verified. Never bypass it by invoking the underlying harness directly.
 
-Operations-v1/v2 remain fixed. The new v3 binding path currently integrates only
-candidate-to-accept. Generated settle markers and advice hashes have structural
-resolver definitions but the campaign adapter explicitly rejects them until
-their complete producer/reader chain is connected. Real enrollment, deployment
+Operations-v1/v2 remain fixed. The new v3 binding path integrates
+candidate-to-accept and failure-candidate-to-settle. Generated advice hashes have
+a structural resolver definition but the campaign adapter explicitly rejects it
+until its complete producer/reader chain is connected. Real enrollment, deployment
 of the runtime service and actual model review remain unverified. Neither
 copying the ledger nor changing its original registration is supported.
 Binding artifact publication and SQLite insertion are separate operations. The
@@ -154,8 +164,10 @@ explicit pending work, not a complete campaign registration interface.
 
 1. Original S40 accepted bounded generated bindings, scoped hook discovery,
    service Ping correction round 1 and same-closed-actor recovery. ROOT verified
-   the respective 188/179/187 artifact references. Review only the new explicit
-   campaign identity increment, preserving earlier tests and recovery limits.
+   the respective 188/179/187 artifact references. Original S40 has also returned
+   bounded PASS for the explicit campaign identity increment; deployment tests
+   remain mocks. Review only new failure binding changes, preserving earlier
+   accepted scopes and recovery limits.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.

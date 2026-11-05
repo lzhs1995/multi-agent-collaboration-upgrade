@@ -4,8 +4,8 @@ The frozen registration declares complete operations; the model selects an ID.
 This is a dispatch/evidence adapter, not a live enrollment gate. Runner retains
 all original identity, adoption, permit, transport and candidate checks. In
 particular this module cannot make the incomplete TASK topology launchable.
-Controls v2 permits an explicitly declared candidate-to-accept slot, bound once
-after the original candidate operation completes. Other generated-artifact
+Controls v2 permits explicit candidate-to-accept and failure-to-settle slots,
+bound once after the original producing operation completes. Other generated-artifact
 resolvers remain unavailable in this adapter. There is no arbitrary command.
 This module belongs to the frozen orchestration adapter tree, not the private
 MAC startup controller (which intentionally has no Runner dependencies).
@@ -23,11 +23,18 @@ SCHEMA = "upgrade-task-campaign-controls-v1"
 BINDING_SCHEMA = "upgrade-task-campaign-controls-v2"
 PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
-ACTIONS = frozenset({"start", "claim", "candidate", "accept", "settle", "publish-decision", "bind-unbound"})
+ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
+                     "settle", "publish-decision", "bind-unbound"})
+FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
+ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason")
+MARKER_SLOTS = {
+    "campaign-accept-marker-v1": ("accept", "candidate", "candidate.json"),
+    "campaign-settle-marker-v1": ("settle", "failure-candidate", "failure-candidate.json"),
+}
 
 
 def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
-                      decision=None, decision_fields=None):
+                      decision=None, decision_fields=None, boundary=None, reason=None):
     """Exact finite command, suitable for freezing before its model invocation."""
     from orchestration_campaign import DECISION_ARGUMENTS
     require(action in ACTIONS, "TASK_CAMPAIGN_ACTION_NOT_REGISTERABLE")
@@ -54,9 +61,22 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
                 "TASK_CAMPAIGN_EXACT_DECISION_FIELDS_REQUIRED")
     else:
         require(decision_fields is None, "TASK_CAMPAIGN_UNEXPECTED_DECISION_FIELDS")
+    extra = {}
+    if action == "failure-candidate":
+        require(isinstance(boundary, str) and boundary in FAILURE_BOUNDARIES,
+                "TASK_CAMPAIGN_FAILURE_BOUNDARY_INVALID")
+        extra["boundary"] = boundary
+    else:
+        require(boundary is None, "TASK_CAMPAIGN_UNEXPECTED_FAILURE_BOUNDARY")
+    if action == "block":
+        require(isinstance(reason, str) and reason.strip() and len(reason.encode()) <= 8192,
+                "TASK_CAMPAIGN_CONCRETE_BLOCKER_REQUIRED")
+        extra["reason"] = reason
+    else:
+        require(reason is None, "TASK_CAMPAIGN_UNEXPECTED_BLOCKER")
     return dict(schema=PAYLOAD_SCHEMA, campaign_id=campaign["campaign_id"],
                 campaign_root=campaign["root"], action=action, run_id=run_id, node_id=node_id,
-                marker=marker, decision=decision, decision_fields=decision_fields)
+                marker=marker, decision=decision, decision_fields=decision_fields, **extra)
 
 
 def validate_controls(campaign, *, fixtures=False, check_startup=True):
@@ -80,16 +100,18 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
         if operation["kind"] != KIND:
             continue
         value = operation["payload"]
-        kwargs={k:value.get(k) for k in ("node_id", "marker", "decision", "decision_fields")}
+        kwargs={k:value.get(k) for k in ARGUMENTS}
         if name in slots:
             slot=slots[name]
-            require(slot["resolver"] == "campaign-accept-marker-v1" and value.get("action") == "accept",
+            contract=MARKER_SLOTS.get(slot["resolver"])
+            require(contract is not None and value.get("action") == contract[0],
                     "TASK_CAMPAIGN_RESOLVER_NOT_INTEGRATED")
             require(slot["source_path"] == str(Path(campaign["root"]) / "runs" / value["run_id"] /
-                    "nodes" / value["node_id"] / "candidate.json"), "TASK_CAMPAIGN_SLOT_PATH_CHANGED")
+                    "nodes" / value["node_id"] / contract[2]), "TASK_CAMPAIGN_SLOT_PATH_CHANGED")
             producer=registration["operations"][slot["producer_operation"]]
-            require(producer==dict(kind=KIND,payload=operation_payload(campaign,"candidate",value["run_id"],
-                node_id=value["node_id"])), "TASK_CAMPAIGN_SLOT_PRODUCER_CHANGED")
+            producer_args={"boundary":producer["payload"].get("boundary")} if contract[1]=="failure-candidate" else {}
+            require(producer==dict(kind=KIND,payload=operation_payload(campaign,contract[1],value["run_id"],
+                node_id=value["node_id"],**producer_args)), "TASK_CAMPAIGN_SLOT_PRODUCER_CHANGED")
             kwargs["marker"]="declared-candidate-marker"
         expected = operation_payload(campaign, value.get("action"), value.get("run_id"), **kwargs)
         if name in slots:
@@ -105,6 +127,9 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
     # A fixed marker and a slot for the same node cannot provide two attempts.
     endpoints=[(p["action"],p["run_id"],p["node_id"]) for p in found.values() if p["action"]=="accept"]
     require(len(endpoints)==len(set(endpoints)), "TASK_CAMPAIGN_DUPLICATE_ACCEPTANCE")
+    for action in ("block", "failure-candidate", "settle"):
+        endpoints=[(p["run_id"],p["node_id"]) for p in found.values() if p["action"]==action]
+        require(len(endpoints)==len(set(endpoints)), "TASK_CAMPAIGN_DUPLICATE_FAILURE_CONTROL:"+action)
     for choices in decisions.values():
         require(len(choices) == 1 or any(choices <= set(group) for group in registration["choice_groups"].values()),
                 "TASK_CAMPAIGN_DECISION_CHOICE_BUDGET_REQUIRED")
@@ -145,7 +170,7 @@ def _candidate_marker(campaign, slot, payload):
     Full business validation stays in Runner and the binding producer. This
     reconstruction does not acquire live authority or manufacture a new pin.
     """
-    from orchestration_evidence import marker_for
+    from orchestration_evidence import marker_for, failure_marker
     from orchestration_common import read_json
     root=Path(campaign["root"])/"runs"/payload["run_id"]
     # Full state replay would recursively reconstruct this same control when
@@ -157,6 +182,14 @@ def _candidate_marker(campaign, slot, payload):
     require(candidate.get("run_id")==payload["run_id"] and candidate.get("node_id")==payload["node_id"]
             and candidate.get("task_id")==info.get("task_id")
             and candidate.get("attempt_id")==info.get("attempt_id"), "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
+    if slot["resolver"]=="campaign-settle-marker-v1":
+        # The claim predates BLOCKED and therefore contains no blocker field.
+        # Replay of the state would recurse via settlement control verification.
+        # Pin the original node artifact here; Runner/binder verify its transition.
+        blocker=file_ref(root/"nodes"/payload["node_id"]/"blocker.json")
+        require(candidate.get("blocker")==blocker and json_ref(blocker).get("task_id")==info["task_id"],
+                "TASK_CAMPAIGN_ORIGINAL_BLOCKER_CHANGED")
+        return failure_marker(info,candidate)
     return marker_for(info,candidate)
 
 
@@ -177,7 +210,7 @@ def campaign_handler(runner, registration_ref, receipts):
     def handle(payload):
         require(json_ref(registration_ref) == registration, "TASK_CAMPAIGN_HANDLER_REGISTRATION_CHANGED")
         script = campaign_control(runner.campaign, runner.ref, payload["action"], payload["run_id"],
-            **{k:payload[k] for k in ("node_id", "marker", "decision", "decision_fields")})
+            **{k:payload.get(k) for k in ARGUMENTS})
         expected=script.get("operation",registration["operations"][script["operation_id"]])
         require(expected == {"kind":KIND, "payload":payload},
                 "TASK_CAMPAIGN_HANDLER_SCOPE_CHANGED")
@@ -187,6 +220,8 @@ def campaign_handler(runner, registration_ref, receipts):
         if action == "start": result = runner.start(run)
         elif action == "claim": result = runner.claim(run, node)
         elif action == "candidate": result = runner.candidate(run, node)
+        elif action == "block": result = runner.block(run, node, payload["reason"])
+        elif action == "failure-candidate": result = runner.failure_candidate(run, node, payload["boundary"])
         elif action == "accept": result = runner.accept(run, node, payload["marker"])
         elif action == "settle": result = runner.settle(run, node, payload["marker"])
         elif action == "publish-decision": result = runner.publish_decision(run, node, payload["decision_fields"])
@@ -200,7 +235,7 @@ def campaign_handler(runner, registration_ref, receipts):
 
 
 def campaign_completion_binder(runner, ledger, registration_ref):
-    """Append candidate bindings only after a live-gated native completion.
+    """Append acceptance/failure bindings after a live-gated native completion.
 
     TaskActor invokes this after recording completion. A failure leaves the
     original completed operation intact and closes the actor; no retry/input.
@@ -246,7 +281,7 @@ def campaign_completion_binder(runner, ledger, registration_ref):
                 and strict_json(items[0]["text"])==receipt["result"]==returned["value"],
                 "TASK_CAMPAIGN_PRODUCER_OUTPUT_CHANGED")
         refs=[]
-        from orchestration_evidence import validate_candidate, marker_for
+        from orchestration_evidence import validate_candidate, marker_for, validate_failure_candidate, failure_marker
         for name,slot in slots:
             payload=registration["operations"][name]["payload"]
             co=runner.co(payload["run_id"])
@@ -254,14 +289,25 @@ def campaign_completion_binder(runner, ledger, registration_ref):
                 co._gate()
                 _,data=co.state();info=data[payload["node_id"]]
                 source=file_ref(slot["source_path"])
-                require(source==receipt["result"].get("candidate") and source==info.get("candidate"),
+                require(source==receipt["result"].get("candidate"),
                         "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
-                candidate=validate_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,source,
-                                             fixtures=runner.fixtures,rerun=False)
+                if slot["resolver"]=="campaign-settle-marker-v1":
+                    producer=registration["operations"][row["operation_id"]]["payload"]
+                    candidate=json_ref(source)
+                    require(candidate.get("boundary")==receipt["result"].get("boundary")==producer["boundary"],
+                            "TASK_CAMPAIGN_FAILURE_BOUNDARY_CHANGED")
+                    validate_failure_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,candidate,
+                                               fixtures=runner.fixtures)
+                    replacement=failure_marker(info,candidate)
+                else:
+                    require(source==info.get("candidate"), "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
+                    candidate=validate_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,source,
+                                                 fixtures=runner.fixtures,rerun=False)
+                    replacement=marker_for(info,candidate)
                 value=dict(schema=ARTIFACT_SCHEMA,registration_sha256=object_sha(registration),operation_id=name,
                     slot=slot,source=source,producer_call_id=call,producer_result=row["receipt"],
                     producer_native=dict(invocation=invocation,fence=fence),
-                    replacement=marker_for(info,candidate))
+                    replacement=replacement)
                 if existing_only:
                     # Publication and SQLite insertion are separate. Recovery
                     # may attach this original complete artifact, never replace
