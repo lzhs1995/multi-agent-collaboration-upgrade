@@ -42,13 +42,21 @@ class CampaignActorTests(unittest.TestCase):
         self.reg_ref=write_json(self.control/"operations.json",self.registration)
         self.ledger=OperationLedger.create(self.control/"ledger.sqlite",self.registration)
         self.addCleanup(self.ledger.close)
-        self.directory=self.control/"campaign-invocations";self.directory.mkdir(mode=0o700)
+        self.directory=self.control/"campaign-invocations"
+        if not getattr(self,"service_mode",False):self.directory.mkdir(mode=0o700)
         self.c.campaign["task_controls"]=dict(schema=BINDING_SCHEMA if getattr(self,"binding_mode",False) else SCHEMA,registration=self.reg_ref,
                                               evidence_directory=str(self.directory))
         self.c.save();self.runner=Runner(self.c.ref,fixtures=True)
         self.queue=[];self.sent=[];self.gates=[];self.sequence=0
         f.client.receive_recorded=lambda timeout:self.queue.pop(0)
         f.client.respond=self.sent.append
+        if getattr(self,"service_mode",False):
+            from upgrade_task_campaign import campaign_task_service
+            f.client.poll_recorded=lambda **kwargs:self.queue.pop(0) if self.queue else None
+            self.service=campaign_task_service(self.runner,f.client,self.ledger,lambda *args:self.gates.append(args))
+            self.actor=self.service.actor
+            self.handler=self.actor.handlers[KIND]
+            return
         self.handler=campaign_handler(self.runner,self.reg_ref,self.control/"campaign-results")
         self.actor=TaskActor(f.client,self.ledger,{KIND:self.handler},lambda *args:self.gates.append(args),
             self.control/"actor-events",invocation_recorder=invocation_recorder(self.native.reader,self.reg_ref,

@@ -223,12 +223,13 @@ def native_invocation(reader,evidence_ref,request,*,allow_intended=False):
                     and producer_evidence["inner_call_id"]==bound["producer_call_id"],
                     "TASK_CONTROL_PRODUCER_LEDGER_CHANGED")
             producer_end=reader.verify_pin(proof["fence"])
-            require(producer_end<=value["native"]["offset"], "TASK_CONTROL_PRODUCER_RETURN_AFTER_CONSUMER")
             returned=native_result(reader,proof["invocation"],producer_request,until=producer_end)
             producer_row=db.execute("SELECT result FROM calls WHERE call_id=?",(bound["producer_call_id"],)).fetchone()
             require(returned is not None and returned["success"] is True and producer_row is not None,
                     "TASK_CONTROL_PRODUCER_RETURN_MISSING")
-            require(parse_time(returned["timestamp"])<=when, "TASK_CONTROL_PRODUCER_RETURN_AFTER_CONSUMER")
+            result_record=returned["result_record"]
+            require(result_record["offset"]+result_record["length"]<=value["native"]["offset"]
+                    and parse_time(returned["timestamp"])<=when, "TASK_CONTROL_PRODUCER_RETURN_AFTER_CONSUMER")
             producer_result=strict_json(producer_row[0])
             require(len(producer_result["contentItems"])==1
                     and strict_json(producer_result["contentItems"][0]["text"])==returned["value"],

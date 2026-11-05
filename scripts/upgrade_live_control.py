@@ -196,6 +196,31 @@ def publish_bootstrap(runtime_ref, campaign_ref, instructions_ref):
                 bootstrap=ref, input_operations=0, native_reception_verified=False)
 
 
+def campaign_task_service(runtime_ref, campaign_ref, client, ledger, enrollment_gate):
+    """Attach the original post-adoption business actor; never launch a task.
+
+    TASK adoption is not yet implemented and therefore still refuses here.
+    Keeping this entry behind real adoption avoids a fixture or callback gate
+    being mistaken for permission to drive live campaign operations.
+    """
+    from upgrade_startup_contract import TASK_SCHEMA
+    _,runtime=validate_live_runtime(runtime_ref)
+    spec=json_ref(runtime["startup"])
+    require(spec.get("schema")==TASK_SCHEMA, "TASK_SERVICE_EXPLICIT_TOPOLOGY_REQUIRED")
+    external_publisher(spec)
+    require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    adoption=file_ref(spec["adoption_path"])
+    validate_adoption(runtime_ref,adoption,runtime=runtime)
+    # This entry belongs to the orchestration adapter, not the private startup
+    # support import closure. Resolve its owner only after actual adoption.
+    from upgrade_task_campaign import campaign_task_service as attach
+    from orchestration_run import Runner
+    runner=Runner(campaign_ref)
+    require(runner.campaign["runtime"]==runtime_ref and runner.campaign["client_isolation"]==adoption,
+            "TASK_SERVICE_CAMPAIGN_ADOPTION_CHANGED")
+    return attach(runner,client,ledger,enrollment_gate)
+
+
 def invocation(runtime_ref, runtime, spec, command, *, spawn=False, persist=True):
     argv = harness_argv(runtime, spec, command, spawn=spawn)
     control = Path(spec["adoption_path"]).parent

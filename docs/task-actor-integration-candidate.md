@@ -71,9 +71,23 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   operation ID. It cannot select a different marker or source.
 - An inner completion that precedes its native outer return leaves the slot
   unbound. `TaskActor.bind_completed` can observe that same original completion
-  later without another effect or response. This is an owning-controller API,
-  not an automatic poller or deployed live loop. The bound operation reader
+  later without another effect or response. The bound operation reader
   rechecks the producer's original native result within its saved fence.
+- `TaskService` now drives that same actor and retained RPC connection in bounded
+  pulses. Idle polls preserve the connection and budgets. Late native results
+  bind before a queued dependent operation; a normal terminal event waits for
+  outstanding original results. Interrupts, conflicts and partial-frame failures
+  close the actor without reconnecting, repeating effects or sending more input.
+  The original pending completion and deferred terminal records remain on disk.
+- The campaign service factory connects the actual Runner, ledger, invocation
+  recorder and completion binder. Its public live entry still requires real
+  adoption; TASK adoption remains unavailable, so this is not a deployed service.
+  The private startup closure does not import the campaign adapter or Runner.
+- The result observer can explicitly pin the last complete native record while
+  a writer appends a partial next line. The default reader remains strict. Tail
+  scanning is bounded and starts with 4 KiB; an oversized partial tail refuses.
+  Consumer order is checked against the producer's actual result record, rather
+  than a later observation fence that may also contain the consumer's call.
 - Offline candidate generation, deferred binding, model-shaped operation choice,
   acceptance and original ledger evidence now run through the actual components.
   This fixture does not prove a real model reviewed the candidate. Concurrent
@@ -99,16 +113,20 @@ verified. Never bypass it by invoking the underlying harness directly.
 Operations-v1/v2 remain fixed. The new v3 binding path currently integrates only
 candidate-to-accept. Generated settle markers and advice hashes have structural
 resolver definitions but the campaign adapter explicitly rejects them until
-their complete producer/reader chain is connected. Real enrollment, the runtime
-controller loop and actual model review of the result remain unverified. Neither
+their complete producer/reader chain is connected. Real enrollment, deployment
+of the runtime service and actual model review remain unverified. Neither
 copying the ledger nor changing its original registration is supported.
+Binding artifact publication and SQLite insertion are separate operations;
+reattachment after interruption between them remains an explicit recovery gap.
+Creating a second service or recreating its exclusive directories is not recovery.
 Typed `advance`/instructions/finish/recovery also remain unconnected. These are
 explicit pending work, not a complete campaign registration interface.
 
 ## Remaining execution order
 
-1. Original S40 accepted the bounded 7f50f8d component review. Review the generated
-   binding increment separately once frozen, retaining the earlier results.
+1. Original S40 accepted the bounded 01bbb7b generated-binding increment (25
+   unique local cases). ROOT verified its 188 referenced artifacts. Review only
+   the new service increment, preserving those earlier tests and recovery limits.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.

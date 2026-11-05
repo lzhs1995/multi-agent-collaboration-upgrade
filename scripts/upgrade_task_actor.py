@@ -9,6 +9,7 @@ governs delivery, cancellation and read-only recovery after a disconnect.
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from orchestration_common import checked_path, json_ref, require, write_json
 from upgrade_rpc_peer import verify_peer
@@ -46,6 +47,11 @@ class TaskActor:
     def step(self, *, timeout=20):
         require(not self.closed, "TASK_ACTOR_CLOSED_NO_REPLAY")
         message, ref = self.client.receive_recorded(timeout)
+        return self.process_recorded(message,ref)
+
+    def process_recorded(self, message, ref):
+        """Process exactly one original recorded receive; never invent input."""
+        require(not self.closed, "TASK_ACTOR_CLOSED_NO_REPLAY")
         self._recorded(message, ref)
         method = message.get("method")
         if method == "item/tool/call":
@@ -82,7 +88,7 @@ class TaskActor:
             self.ledger.inspect(call)
             evidence = write_json(self.directory / (call + "-completed.json"), message, exclusive=True)
             result = self.ledger.complete(message, evidence)
-            if self.completion_observer is not None:
+            if self.completion_observer is not None and result["phase"]=="NATIVE_COMPLETED":
                 result["artifact_binding_observation"] = self.bind_completed(message, ref)
             return result
         if method == "turn/completed":
@@ -138,3 +144,86 @@ class TaskActor:
         self.ledger.inspect(call)
         evidence = write_json(self.directory / (call + "-recovered.json"), message, exclusive=True)
         return self.ledger.complete(message, evidence)
+
+
+class TaskService:
+    """Bounded pulses on the existing actor, including late native results.
+
+    The same object and RPC connection persist between pulses. A pulse ending
+    is not a stopped actor, a new attempt, enrollment or permission to restart.
+    Runtime enrollment and fixed operation handlers are supplied by the owner.
+    There is no new socket, model input, reconnect, retry or response writer.
+    """
+    def __init__(self, actor):
+        require(type(actor) is TaskActor and not actor.closed, "TASK_SERVICE_ORIGINAL_ACTOR_REQUIRED")
+        require(callable(getattr(actor.client,"poll_recorded",None)), "TASK_SERVICE_POLL_REQUIRED")
+        require(getattr(actor,"service_owner",None) is None,"TASK_SERVICE_ALREADY_OWNED")
+        actor.service_owner=self
+        self.actor=actor
+        self.pending={}
+        self.terminal=None
+
+    def _bindings(self):
+        for call,(message,ref) in list(self.pending.items()):
+            result=self.actor.bind_completed(message,ref)
+            if not (isinstance(result,dict) and result.get("status")=="WAITING_ORIGINAL_NATIVE_RESULT"):
+                del self.pending[call]
+
+    def pulse(self, *, seconds=1, max_messages=64):
+        require(type(seconds) in (int,float) and 0 < seconds <= 30
+                and type(max_messages) is int and 0 < max_messages <= 1024,
+                "TASK_SERVICE_PULSE_BUDGET_INVALID")
+        require(not self.actor.closed,"TASK_SERVICE_CLOSED_NO_REPLAY")
+        deadline=time.monotonic()+seconds
+        count=0
+        try:
+            while time.monotonic()<deadline and count<max_messages:
+                self._bindings()
+                if self.terminal is not None and not self.pending:
+                    self.actor.process_recorded(*self.terminal)
+                    break
+                record=self.actor.client.poll_recorded(timeout=min(0.25,max(0,deadline-time.monotonic())))
+                if record is None:
+                    continue
+                message,ref=record
+                self.actor._recorded(message,ref)
+                count+=1
+                method=message.get("method")
+                if method=="turn/completed" and message.get("params",{}).get("turn",{}).get("status") in ("interrupted","failed"):
+                    self.actor.process_recorded(message,ref)
+                    break
+                # A result may have reached disk while waiting for this RPC.
+                # Bind it before a dependent model choice reaches the ledger.
+                self._bindings()
+                if self.terminal is not None:
+                    require("id" not in message and method!="turn/completed",
+                            "TASK_SERVICE_INPUT_AFTER_TERMINAL")
+                    continue
+                if method=="turn/completed":
+                    params=message.get("params",{});turn=params.get("turn",{})
+                    require(params.get("threadId")==self.actor.ledger.registration["thread_id"]
+                            and turn.get("id")==self.actor.ledger.active_turn,
+                            "TASK_ACTOR_FOREIGN_TURN_COMPLETION")
+                    if turn.get("status")=="completed" and self.pending:
+                        write_json(self.actor.directory/"terminal-binding-wait.json",
+                                   dict(received=ref,original_completion=message),exclusive=True)
+                        self.terminal=record
+                        continue
+                result=self.actor.process_recorded(message,ref)
+                require(result.get("phase")!="CONFLICT","TASK_SERVICE_NATIVE_COMPLETION_CONFLICT")
+                observation=result.get("artifact_binding_observation")
+                if isinstance(observation,dict) and observation.get("status")=="WAITING_ORIGINAL_NATIVE_RESULT":
+                    call=message["params"]["item"]["id"]
+                    require(call not in self.pending,"TASK_SERVICE_DUPLICATE_COMPLETION")
+                    write_json(self.actor.directory/(call+"-binding-wait.json"),
+                        dict(received=ref,call_id=call,original_completion=message),exclusive=True)
+                    self.pending[call]=record
+                if self.actor.closed:
+                    break
+        except BaseException:
+            # In particular, a partial-frame timeout is not a safe idle wait.
+            self.actor.close("UNKNOWN")
+            raise
+        return dict(status="CLOSED" if self.actor.closed else "ACTIVE",messages_observed=count,
+            pending_binding_calls=list(self.pending),terminal_received=self.terminal is not None,
+            operation_budget_reset=False,model_inputs_sent=0,business_accepted=False)

@@ -74,5 +74,20 @@ class RPCTests(unittest.TestCase):
         self.assertEqual(message, incoming)
         self.assertEqual(ref, sequence[1])
 
+    def test_idle_poll_does_not_enter_frame_parser_or_send(self):
+        with patch('upgrade_task_rpc.select.select',return_value=([],[],[])), \
+             patch.object(self.client,'receive_recorded',side_effect=AssertionError('must not parse')):
+            self.assertIsNone(self.client.poll_recorded(timeout=0))
+        self.assertEqual(self.client.sent,[])
+
+    def test_poll_keeps_buffered_original_and_partial_frame_timeout_is_fatal(self):
+        record=({'method':'item/completed','params':{}},{'original':'ref'})
+        self.client.pending.append(record)
+        with patch('upgrade_task_rpc.select.select',side_effect=AssertionError('buffered')):
+            self.assertEqual(self.client.poll_recorded(),record)
+        self.client._buffer=bytearray(b'partial')
+        with patch.object(self.client,'receive_recorded',side_effect=TimeoutError('partial frame')):
+            with self.assertRaisesRegex(TimeoutError,'partial frame'):self.client.poll_recorded()
+
 
 if __name__=='__main__':unittest.main()

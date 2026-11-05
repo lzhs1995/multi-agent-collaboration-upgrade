@@ -229,7 +229,7 @@ def campaign_completion_binder(runner, ledger, registration_ref):
         request=control_request(registration_ref,row["operation_id"],controls["evidence_directory"])
         invocation=file_ref(Path(controls["evidence_directory"])/(row["operation_id"]+".json"))
         native_invocation(reader,invocation,request)
-        fence=reader.snapshot()
+        fence=reader.snapshot(complete_records=True)
         returned=native_result(reader,invocation,request,until=fence["offset"])
         if returned is None:
             # The original inner completion can arrive before its native outer
@@ -267,3 +267,44 @@ def campaign_completion_binder(runner, ledger, registration_ref):
                 refs.append(ledger.bind_artifact(name,ref))
         return dict(status="BOUND",call_id=call,bindings=refs)
     return bind
+
+
+def campaign_task_service(runner, client, ledger, enrollment_gate):
+    """Connect the original retained RPC and ledger to the fixed business actor.
+
+    The deployment supplies its live enrollment gate. This adapter never
+    authenticates a caller from file contents and never launches a client.
+    Production Runner validation still requires real adoption, whose TASK
+    branch remains unavailable until its complete deployment checks are ready.
+    """
+    from orchestration_run import Runner
+    from orchestration_native import NativeReader
+    from upgrade_rpc_peer import verify_peer
+    from upgrade_task_actor import TaskActor, TaskService
+    from upgrade_task_control import invocation_recorder
+    from upgrade_task_operations import OperationLedger
+    require(type(runner) is Runner and type(ledger) is OperationLedger and callable(enrollment_gate),
+            "TASK_CAMPAIGN_ORIGINAL_SERVICE_INPUTS_REQUIRED")
+    registration,operations=validate_controls(runner.campaign,fixtures=runner.fixtures)
+    require(registration==ledger.registration and object_sha(registration)==ledger.registration_sha256
+            and client.server==registration["server"], "TASK_CAMPAIGN_SERVICE_IDENTITY_CHANGED")
+    controls=runner.campaign["task_controls"];parent=Path(controls["registration"]["path"]).parent
+    require(ledger.path.parent==parent, "TASK_CAMPAIGN_SERVICE_LEDGER_PATH_CHANGED")
+    if not runner.fixtures:
+        from upgrade_task_readiness import task_startup_result
+        runtime=json_ref(runner.campaign["runtime"])
+        _,startup,_=task_startup_result(json_ref(runtime["startup"]))
+        require(startup["ledger"]==str(ledger.path) and startup["registration_sha256"]==ledger.registration_sha256,
+                "TASK_CAMPAIGN_SERVICE_ORIGINAL_STARTUP_REQUIRED")
+    require(callable(getattr(client,"poll_recorded",None)), "TASK_CAMPAIGN_SERVICE_POLL_REQUIRED")
+    verify_peer(client.sock,client.server,client.process)
+    reader=NativeReader(runner.campaign["sessions"]["codex"],fixtures=runner.fixtures)
+    directory=Path(controls["evidence_directory"])
+    directory.mkdir(mode=0o700,exist_ok=False)
+    handler=campaign_handler(runner,controls["registration"],parent/"campaign-results")
+    completion=(campaign_completion_binder(runner,ledger,controls["registration"])
+                if registration["schema"]=="upgrade-task-operations-v3" else None)
+    actor=TaskActor(client,ledger,{KIND:handler},enrollment_gate,parent/"campaign-actor-events",
+        operation_scope=set(operations),invocation_recorder=invocation_recorder(reader,controls["registration"],directory,
+            after=runner.campaign["sessions"]["codex"]["freeze_fence"]["offset"]),completion_observer=completion)
+    return TaskService(actor)

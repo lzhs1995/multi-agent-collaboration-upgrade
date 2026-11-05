@@ -6,6 +6,7 @@ them. This factory changes neither that original source nor existing attempts.
 The caller journals each input and response intent before requesting a send.
 """
 from collections import deque
+import select
 import time
 
 from orchestration_common import canonical, require
@@ -80,6 +81,27 @@ def task_rpc_type(base):
             self._deadline = time.monotonic() + timeout
             msg = self._receive_json()
             return msg, self.last_received_record
+
+        def poll_recorded(self, *, timeout=1, frame_timeout=20):
+            """Wait before consuming a frame; an idle wait leaves the stream intact.
+
+            Once frame parsing starts, its timeout is a real protocol failure:
+            the base parser can have consumed a partial frame and cannot be
+            restarted. Callers must not catch that failure as an idle poll.
+            """
+            require(type(timeout) in (int,float) and 0 <= timeout <= 1,
+                    "TASK_RPC_POLL_TIMEOUT_INVALID")
+            require(type(frame_timeout) in (int,float) and 0 < frame_timeout <= 20,
+                    "TASK_RPC_FRAME_TIMEOUT_INVALID")
+            verify_peer(self.sock,self.server,self.process)
+            if self.pending:
+                return self.pending.popleft()
+            if not getattr(self,"_buffer",b""):
+                ready,_,_=select.select([self.sock],[],[],timeout)
+                verify_peer(self.sock,self.server,self.process)
+                if not ready:
+                    return None
+            return self.receive_recorded(frame_timeout)
 
         def respond(self, intended_response):
             response = envelope(intended_response)

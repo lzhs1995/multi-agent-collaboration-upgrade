@@ -108,6 +108,32 @@ class NativeEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "copied/non-native"):
             NativeReader(f.session)
 
+    def test_complete_record_snapshot_keeps_original_fence_and_default_strictness(self):
+        f = NativeFixture(self.root, "codex")
+        original = f.reader.snapshot()
+        tail = canonical(dict(type="event_msg", payload={"text": "x" * 9000}))
+        with f.path.open("ab") as stream:
+            stream.write(tail[:-1])
+        with self.assertRaisesRegex(ContractError, "not a record boundary"):
+            f.reader.snapshot()
+        observed = f.reader.snapshot(complete_records=True)
+        self.assertEqual(observed, original)
+        self.assertEqual(f.reader.verify_pin(observed), original["offset"])
+        with f.path.open("ab") as stream:
+            stream.write(tail[-1:])
+        complete = f.reader.snapshot(complete_records=True)
+        self.assertEqual(complete, f.reader.snapshot())
+        self.assertEqual(len(list(f.reader.records(original["offset"], complete["offset"]))), 1)
+
+    def test_complete_record_snapshot_rejects_unbounded_partial_tail(self):
+        from unittest.mock import patch
+        f = NativeFixture(self.root, "codex")
+        with f.path.open("ab") as stream:
+            stream.write(b"x" * 5000)
+        with patch("orchestration_native.MAX_RECORD", 4096):
+            with self.assertRaisesRegex(ContractError, "exceeds observation bound"):
+                f.reader.snapshot(complete_records=True)
+
     def test_missing_fake_or_changed_proof_rejected(self):
         f = NativeFixture(self.root)
         bundle = f.delivery()

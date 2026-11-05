@@ -300,11 +300,32 @@ class NativeReader:
             raise
         return stream
 
-    def snapshot(self):
+    def snapshot(self, *, complete_records=False):
+        require(type(complete_records) is bool, "native snapshot mode invalid")
         with self.open() as stream:
             st = os.fstat(stream.fileno())
             offset = st.st_size
+            if complete_records and offset:
+                # Explicit result observers may pin the last complete record
+                # while the same native writer appends its next line. Existing
+                # callers keep the strict EOF policy; no partial bytes count.
+                lower=max(0,offset-MAX_RECORD-1)
+                cursor=offset
+                while cursor>lower:
+                    start=max(lower,cursor-4096)
+                    stream.seek(start)
+                    suffix=stream.read(cursor-start)
+                    require(len(suffix)==cursor-start,"native journal truncated during snapshot")
+                    last=suffix.rfind(b"\n")
+                    if last>=0:
+                        offset=start+last+1
+                        break
+                    cursor=start
+                else:
+                    require(lower==0,"native partial record exceeds observation bound")
+                    offset=0
             head_size, tail_at = min(offset, 4096), max(0, offset - 4096)
+            stream.seek(0)
             prefix = stream.read(head_size)
             stream.seek(tail_at)
             tail = stream.read(offset - tail_at)
