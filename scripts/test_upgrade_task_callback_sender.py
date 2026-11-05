@@ -109,6 +109,22 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(len(list(self.journal.glob('ingress-*.json'))),1)
         self.assertEqual(len(self.observations),1)
 
+    def test_idle_original_input_gate_runs_before_intent_and_stop_sends_nothing(self):
+        import upgrade_input_gate
+        def stop(identity,*,native_binding):
+            attempt=json_ref(file_ref(self.journal/'attempt-0001.json'))
+            self.assertEqual(attempt['phase'],'PREPARED');self.assertEqual(attempt['events'],[])
+            self.assertEqual(identity,native_binding['identity'])
+            raise ContractError('EXPERIMENT_STOP_REQUESTED')
+        with patch.object(upgrade_input_gate,'check_input',side_effect=stop) as gate:
+            with self.assertRaisesRegex(ContractError,'EXPERIMENT_STOP_REQUESTED'):
+                self.module.deliver(self.bridge,self.pack_path,wait_seconds=0)
+        gate.assert_called_once()
+        attempt=json_ref(file_ref(self.journal/'attempt-0001.json'))
+        self.assertEqual(attempt['phase'],'NO_INPUT');self.assertEqual(attempt['events'],[])
+        self.assertFalse(self.ingress_calls);self.assertFalse(self.f.inputs)
+        self.assertIsNone(sender._current.get())
+
     def test_unknown_ingress_keeps_original_attempt_and_refuses_replay(self):
         self.mode='unknown';attempt=self.deliver_unconfirmed()
         before=file_ref(self.journal/'attempt-0001.json')

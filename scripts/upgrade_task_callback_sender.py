@@ -97,9 +97,13 @@ def send_idle_once(binding,request,text,*,recheck,emit,observe,wait_seconds):
             'TASK_CALLBACK_SENDER_ORIGINAL_REQUEST_REQUIRED')
     from cmux_codex_input import validate_request,rpc_error_details
     from cmux_confirmation import observe_receipt,annotate_error
+    from upgrade_input_gate import check_input
     import cmux_daemon_identity as identity
     validate_request(request,binding,text)
     recheck();owner.check()
+    # This idle route returns before the original direct sender's input gate.
+    # Keep that same membership/kernel/STOP gate before consuming its intent.
+    check_input(binding['identity'],native_binding=binding)
     emit('NATIVE_INPUT_INTENT',evidence=dict(native_request=request))
     owner.sent=True
     attempt=file_ref(owner.attempt_path)
