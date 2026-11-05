@@ -19,6 +19,8 @@ from orchestration_common import (checked_path, count, file_ref, json_ref, objec
 
 REQUEST_SCHEMA = "upgrade-task-control-request-v1"
 EVIDENCE_SCHEMA = "upgrade-task-control-invocation-v1"
+BINDING_REQUEST_SCHEMA = "upgrade-task-control-request-v2"
+BINDING_EVIDENCE_SCHEMA = "upgrade-task-control-invocation-v2"
 
 
 def invocation_script(operation_id):
@@ -28,23 +30,37 @@ def invocation_script(operation_id):
             +json.dumps(operation_id)+'}); text(result);')
 
 
-def control_request(registration_ref, operation_id, evidence_directory):
+def control_request(registration_ref, operation_id, evidence_directory, *, operation=None):
     """Create a descriptor for readers/instructions, not an execution permit."""
     from upgrade_task_operations import validate_registration
     registration=validate_registration(json_ref(registration_ref))
-    require(registration["schema"]=="upgrade-task-operations-v2", "TASK_CONTROL_EXPLICIT_V2_REQUIRED")
+    require(registration["schema"] in ("upgrade-task-operations-v2", "upgrade-task-operations-v3"),
+            "TASK_CONTROL_EXPLICIT_MULTI_REQUIRED")
     invocation_script(operation_id)
     require(operation_id in registration["operations"], "TASK_CONTROL_UNREGISTERED_OPERATION")
     directory=checked_path(evidence_directory)
-    return dict(schema=REQUEST_SCHEMA,registration=registration_ref,operation_id=operation_id,
+    schema = BINDING_REQUEST_SCHEMA if registration["schema"] == "upgrade-task-operations-v3" else REQUEST_SCHEMA
+    request = dict(schema=schema,registration=registration_ref,operation_id=operation_id,
                 evidence_directory=str(directory),script=invocation_script(operation_id))
+    if schema == BINDING_REQUEST_SCHEMA:
+        from upgrade_task_bindings import validate_resolved
+        request["operation"] = validate_resolved(registration, operation_id,
+            registration["operations"][operation_id] if operation is None else operation)
+    else:
+        require(operation is None or operation == registration["operations"][operation_id],
+                "TASK_CONTROL_FIXED_OPERATION_CHANGED")
+    return request
 
 
 def _descriptor(value):
-    require(isinstance(value,dict) and set(value)=={
-        "schema","registration","operation_id","evidence_directory","script"}
-        and value["schema"]==REQUEST_SCHEMA, "TASK_CONTROL_REQUEST_INVALID")
-    require(value==control_request(value["registration"],value["operation_id"],value["evidence_directory"]),
+    require(isinstance(value,dict), "TASK_CONTROL_REQUEST_INVALID")
+    fields={"schema","registration","operation_id","evidence_directory","script"}
+    if value.get("schema") == BINDING_REQUEST_SCHEMA:
+        fields.add("operation")
+    require(set(value)==fields
+        and value["schema"] in (REQUEST_SCHEMA, BINDING_REQUEST_SCHEMA), "TASK_CONTROL_REQUEST_INVALID")
+    require(value==control_request(value["registration"],value["operation_id"],value["evidence_directory"],
+                                  operation=value.get("operation")),
             "TASK_CONTROL_REQUEST_CHANGED")
     return json_ref(value["registration"])
 
@@ -124,11 +140,16 @@ def capture_invocation(reader,request,ledger,message,received_ref,directory,*,af
     native,outer_id=_pending_outer(reader,request,message["params"]["turnId"],after,fence["offset"])
     st=ledger.path.lstat()
     require((st.st_dev,st.st_ino)==ledger.identity, "TASK_CONTROL_LEDGER_REPLACED")
-    value=dict(schema=EVIDENCE_SCHEMA,request=request,native=native,outer_call_id=outer_id,
+    operation, binding = ledger.resolve_operation(request["operation_id"])
+    extended = registration["schema"] == "upgrade-task-operations-v3"
+    require(not extended or request["operation"] == operation, "TASK_CONTROL_BOUND_OPERATION_CHANGED")
+    value=dict(schema=BINDING_EVIDENCE_SCHEMA if extended else EVIDENCE_SCHEMA,request=request,native=native,outer_call_id=outer_id,
         inner_call_id=call,received=received_ref,ledger=dict(path=str(ledger.path),device=st.st_dev,inode=st.st_ino),
         thread_id=registration["thread_id"],turn_id=message["params"]["turnId"],
-        operation=registration["operations"][request["operation_id"]],
+        operation=operation,
         native_window=dict(after=after,fence=fence),execution_authority=False,business_accepted=False)
+    if extended:
+        value["binding"] = binding
     return write_json(directory/(request["operation_id"]+".json"),value,exclusive=True)
 
 
@@ -139,7 +160,8 @@ def invocation_recorder(reader,registration_ref,directory,*,after):
     enrollment gate before recording intent and again before any response.
     """
     def capture(ledger,message,received_ref):
-        request=control_request(registration_ref,message["params"]["arguments"]["operation_id"],directory)
+        name=message["params"]["arguments"]["operation_id"]
+        request=control_request(registration_ref,name,directory,operation=ledger.resolve_operation(name)[0])
         return capture_invocation(reader,request,ledger,message,received_ref,directory,after=after)
     return capture
 
@@ -154,11 +176,14 @@ def native_invocation(reader,evidence_ref,request,*,allow_intended=False):
     require(evidence_ref["path"]==str(Path(request["evidence_directory"])/(request["operation_id"]+".json")),
             "TASK_CONTROL_ORIGINAL_EVIDENCE_PATH_REQUIRED")
     value=json_ref(evidence_ref)
-    require(set(value)=={"schema","request","native","outer_call_id","inner_call_id","received","ledger",
-                         "thread_id","turn_id","operation","native_window","execution_authority","business_accepted"}
-            and value["schema"]==EVIDENCE_SCHEMA and value["request"]==request
+    extended = registration["schema"] == "upgrade-task-operations-v3"
+    fields = {"schema","request","native","outer_call_id","inner_call_id","received","ledger",
+              "thread_id","turn_id","operation","native_window","execution_authority","business_accepted"}
+    if extended:
+        fields.add("binding")
+    require(set(value)==fields
+            and value["schema"]==(BINDING_EVIDENCE_SCHEMA if extended else EVIDENCE_SCHEMA) and value["request"]==request
             and value["thread_id"]==registration["thread_id"]
-            and value["operation"]==registration["operations"][request["operation_id"]]
             and value["execution_authority"] is False and value["business_accepted"] is False,
             "TASK_CONTROL_EVIDENCE_CHANGED")
     message=_original_rpc(json_ref(value["received"]),registration,request["operation_id"])
@@ -182,6 +207,32 @@ def native_invocation(reader,evidence_ref,request,*,allow_intended=False):
         db.execute("BEGIN")
         require(strict_json(db.execute("SELECT body FROM registration WHERE id=1").fetchone()[0])==registration,
                 "TASK_CONTROL_REGISTRATION_CHANGED")
+        operation, binding = registration["operations"][request["operation_id"]], None
+        if extended and request["operation_id"] in registration["binding_slots"]:
+            from upgrade_task_bindings import bound_operation
+            operation, binding = bound_operation(db, registration, request["operation_id"])
+        require(value["operation"] == operation
+                and (not extended or value["binding"] == binding and request["operation"] == operation),
+                "TASK_CONTROL_BOUND_OPERATION_CHANGED")
+        if binding is not None:
+            bound=json_ref(binding);proof=bound["producer_native"]
+            producer_request=control_request(request["registration"],bound["slot"]["producer_operation"],
+                                             request["evidence_directory"])
+            producer_evidence=json_ref(proof["invocation"])
+            require(producer_evidence["ledger"]==value["ledger"]
+                    and producer_evidence["inner_call_id"]==bound["producer_call_id"],
+                    "TASK_CONTROL_PRODUCER_LEDGER_CHANGED")
+            producer_end=reader.verify_pin(proof["fence"])
+            require(producer_end<=value["native"]["offset"], "TASK_CONTROL_PRODUCER_RETURN_AFTER_CONSUMER")
+            returned=native_result(reader,proof["invocation"],producer_request,until=producer_end)
+            producer_row=db.execute("SELECT result FROM calls WHERE call_id=?",(bound["producer_call_id"],)).fetchone()
+            require(returned is not None and returned["success"] is True and producer_row is not None,
+                    "TASK_CONTROL_PRODUCER_RETURN_MISSING")
+            require(parse_time(returned["timestamp"])<=when, "TASK_CONTROL_PRODUCER_RETURN_AFTER_CONSUMER")
+            producer_result=strict_json(producer_row[0])
+            require(len(producer_result["contentItems"])==1
+                    and strict_json(producer_result["contentItems"][0]["text"])==returned["value"],
+                    "TASK_CONTROL_PRODUCER_RETURN_CHANGED")
         row=db.execute("SELECT operation_id,request,phase,result,receipt FROM calls WHERE call_id=?",(call,)).fetchone()
         require(row is not None and row[0]==request["operation_id"] and strict_json(row[1])==message,
                 "TASK_CONTROL_LEDGER_CALL_CHANGED")
@@ -191,6 +242,7 @@ def native_invocation(reader,evidence_ref,request,*,allow_intended=False):
             "SELECT kind,body FROM events WHERE call_id=? ORDER BY sequence",(call,))]
         require(events and events[0][0]=="INTENDED" and events[0][1]["request"]==message
                 and events[0][1]["operation"]==value["operation"], "TASK_CONTROL_INTENT_CHANGED")
+        require(events[0][1].get("binding") == binding, "TASK_CONTROL_INTENT_BINDING_CHANGED")
         # This artifact binds one native call, never merely the current turn.
         count=db.execute("SELECT count(*) FROM events WHERE kind='NATIVE_INVOCATION' AND call_id=?",(call,)).fetchone()[0]
         refs=[event["evidence"] for kind,event in events if kind=="NATIVE_INVOCATION"]

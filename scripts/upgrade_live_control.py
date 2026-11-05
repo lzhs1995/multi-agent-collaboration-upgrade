@@ -112,7 +112,7 @@ def readiness_task_actor(runtime_ref, client):
                 startup["thread_id"], startup["turn_id"], anchor["server"]),
             "TASK_READINESS_REGISTRATION_CHANGED")
     ready = {"ready":{"kind":"readiness","payload":{}}}
-    multi = registration["schema"] == "upgrade-task-operations-v2"
+    multi = registration["schema"] in ("upgrade-task-operations-v2", "upgrade-task-operations-v3")
     require((not multi and registration["operations"] == ready) or
             (multi and registration["initial_operations"] == ["ready"]
              and registration["operations"].get("ready") == ready["ready"]

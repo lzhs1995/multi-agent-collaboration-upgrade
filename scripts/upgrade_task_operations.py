@@ -61,12 +61,14 @@ def tool_definition():
 
 def validate_registration(registration):
     require(isinstance(registration, dict), "TASK_OPERATION_REGISTRATION_INVALID")
-    multi = registration.get("schema") == "upgrade-task-operations-v2"
+    multi = registration.get("schema") in ("upgrade-task-operations-v2","upgrade-task-operations-v3")
     fields = {"schema", "task_id", "thread_id", "turn_id", "controller_id", "authority_ref", "operations"}
     if multi:
         fields |= {"server", "initial_operations", "choice_groups"}
+    if registration.get("schema") == "upgrade-task-operations-v3":
+        fields.add("binding_slots")
     require(set(registration) == fields and registration["schema"] in (
-        "upgrade-task-operations-v1", "upgrade-task-operations-v2"), "TASK_OPERATION_REGISTRATION_INVALID")
+        "upgrade-task-operations-v1", "upgrade-task-operations-v2", "upgrade-task-operations-v3"), "TASK_OPERATION_REGISTRATION_INVALID")
     _name(registration["task_id"]); _uuid(registration["thread_id"]); _uuid(registration["turn_id"])
     _name(registration["controller_id"])
     read_ref(registration["authority_ref"], "new task authority")
@@ -84,6 +86,9 @@ def validate_registration(registration):
         require(isinstance(server, dict) and set(server) == SERVER_KEYS,
                 "TASK_OPERATION_SERVER_PIN_REQUIRED")
         validate_turn_scope(ops, registration["initial_operations"], registration["choice_groups"])
+    if registration["schema"] == "upgrade-task-operations-v3":
+        from upgrade_task_bindings import validate_slots
+        validate_slots(ops,registration["binding_slots"])
     return registration
 
 
@@ -135,11 +140,13 @@ class OperationLedger:
                     kind TEXT NOT NULL, body BLOB NOT NULL);
             ''')
             db.execute("INSERT INTO registration VALUES (1,?)", (canonical(registration),))
-            if registration["schema"] == "upgrade-task-operations-v2":
+            if registration["schema"] in ("upgrade-task-operations-v2","upgrade-task-operations-v3"):
                 db.execute("CREATE TABLE turns (sequence INTEGER PRIMARY KEY, turn_id TEXT UNIQUE NOT NULL, "
                            "scope BLOB NOT NULL, grant BLOB)")
                 db.execute("INSERT INTO turns VALUES (0,?,?,NULL)", (registration["turn_id"],
                            canonical(registration["initial_operations"])))
+            if registration["schema"] == "upgrade-task-operations-v3":
+                db.execute("CREATE TABLE bindings (operation_id TEXT PRIMARY KEY, body BLOB NOT NULL)")
             db.commit()
         finally:
             db.close()
@@ -180,6 +187,9 @@ class OperationLedger:
                 "TASK_OPERATION_REGISTRATION_CHANGED")
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            persisted = self.db.execute("SELECT body FROM registration WHERE id=1").fetchone()
+            require(persisted is not None and strict_json(persisted[0])==self.registration,
+                    "TASK_OPERATION_REGISTRATION_CHANGED")
             yield
             self.db.execute("COMMIT")
         except BaseException:
@@ -207,7 +217,7 @@ class OperationLedger:
         never enrollment authority. Old ledgers cannot acquire this capability.
         No operation, response or model turn is sent here.
         """
-        require(self.registration["schema"] == "upgrade-task-operations-v2",
+        require(self.registration["schema"] in ("upgrade-task-operations-v2","upgrade-task-operations-v3"),
                 "TASK_OPERATION_LEGACY_TURN_FIXED")
         value = json_ref(grant_ref, "original new turn grant")
         require(set(value) == {"schema", "registration_sha256", "previous_turn_id", "turn_id",
@@ -250,7 +260,7 @@ class OperationLedger:
 
     def _scope(self, turn, op):
         require(turn == self.active_turn, "TASK_OPERATION_FOREIGN_TURN")
-        if self.registration["schema"] == "upgrade-task-operations-v2":
+        if self.registration["schema"] in ("upgrade-task-operations-v2","upgrade-task-operations-v3"):
             scope, grant = self.db.execute("SELECT scope,grant FROM turns WHERE turn_id=?", (turn,)).fetchone()
             if grant:
                 read_ref(strict_json(grant), "unchanged turn grant")
@@ -278,17 +288,51 @@ class OperationLedger:
         op = _name(args["operation_id"])
         require(op in self.registration["operations"], "TASK_OPERATION_UNREGISTERED")
         key = json.dumps(request_key(value["id"]))
+        read_ref(self.registration["authority_ref"], "unchanged task authority")
         with self._transaction():
             self._scope(turn, op)
             row = self.db.execute("SELECT call_id FROM calls WHERE call_id=? OR operation_id=? OR request_key=?",
                                   (call, op, key)).fetchone()
             require(row is None, "TASK_OPERATION_ALREADY_INTENDED_NO_REPLAY")
+            operation,binding=self.resolve_operation(op)
             self.db.execute("INSERT INTO calls VALUES (?,?,?,?,?,NULL,NULL)",
                             (call, op, key, canonical(value), "INTENDED"))
-            self._event(call, "INTENDED", {"request": value, "operation": self.registration["operations"][op]})
+            self._event(call, "INTENDED", {"request": value, "operation": operation,
+                        **({"binding":binding} if binding is not None else {})})
         # Only this first return permits the controller to attempt its declared
         # operation. A crash from this point leaves INTENDED/unknown effects.
-        return strict_json(canonical(self.registration["operations"][op]))
+        return strict_json(canonical(operation))
+
+    def resolve_operation(self, operation_id):
+        require(operation_id in self.registration["operations"],"TASK_OPERATION_UNREGISTERED")
+        if (self.registration["schema"]=="upgrade-task-operations-v3"
+                and operation_id in self.registration["binding_slots"]):
+            from upgrade_task_bindings import bound_operation
+            return bound_operation(self.db,self.registration,operation_id)
+        return strict_json(canonical(self.registration["operations"][operation_id])),None
+
+    @contract_errors("TASK_SLOT_BINDING_REFUSED")
+    def bind_artifact(self, operation_id, binding_ref):
+        """Append once after external live authority and business validation.
+
+        Binding supplies data to an existing slot, never another operation or
+        attempt. The caller must verify the original artifact with its frozen
+        resolver and authenticate the live task. This method sends no input.
+        """
+        from upgrade_task_bindings import validate_binding, verify_producer
+        read_ref(self.registration["authority_ref"], "unchanged task authority")
+        binding,_=validate_binding(self.registration,operation_id,binding_ref)
+        with self._transaction():
+            self._scope(self.active_turn,operation_id)
+            require(self.db.execute("SELECT 1 FROM calls WHERE operation_id=?",(operation_id,)).fetchone() is None,
+                    "TASK_SLOT_OPERATION_ALREADY_INTENDED")
+            require(self.db.execute("SELECT 1 FROM bindings WHERE operation_id=?",(operation_id,)).fetchone() is None,
+                    "TASK_SLOT_ALREADY_BOUND")
+            binding,_=validate_binding(self.registration,operation_id,binding_ref)
+            verify_producer(self.db,binding)
+            self.db.execute("INSERT INTO bindings VALUES (?,?)",(operation_id,canonical(binding_ref)))
+            self._event("slot:"+operation_id,"SLOT_BOUND",{"binding":binding_ref})
+        return dict(operation_id=operation_id,binding=binding_ref,execution_authority=False)
 
     def inspect(self, call):
         row = self.db.execute("SELECT operation_id,request,phase,result,receipt FROM calls WHERE call_id=?", (call,)).fetchone()

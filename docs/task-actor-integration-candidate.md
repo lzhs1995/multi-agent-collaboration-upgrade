@@ -58,6 +58,27 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   original fence. Returned bytes do not prove semantic model consumption.
   The business adapter remains in the orchestration source closure; private
   startup support does not acquire Runner dependencies.
+- Explicit startup-plan-v3 and operations-v3 preserve the original operation
+  table and add finite generated-artifact slots. The original SQLite ledger
+  appends one binding per slot and records the resolved operation and binding
+  with its intent. Reopening or moving to a later turn never renews its budget.
+- Campaign-controls-v2 connects candidate-to-accept through the original
+  TaskActor, Runner, Coordinator and typed native readers. The producer must
+  have a successful ledger completion, matching original inner/outer native
+  result, pinned receipt and original candidate verified by the business checker.
+  The actor and coordinator live gates still run before binding. The descriptor
+  carries the exact resolved payload; a model still supplies only its registered
+  operation ID. It cannot select a different marker or source.
+- An inner completion that precedes its native outer return leaves the slot
+  unbound. `TaskActor.bind_completed` can observe that same original completion
+  later without another effect or response. This is an owning-controller API,
+  not an automatic poller or deployed live loop. The bound operation reader
+  rechecks the producer's original native result within its saved fence.
+- Offline candidate generation, deferred binding, model-shaped operation choice,
+  acceptance and original ledger evidence now run through the actual components.
+  This fixture does not prove a real model reviewed the candidate. Concurrent
+  binding attempts, UNKNOWN, STOP, changed sources and mutually exclusive
+  choices preserve the original budgets and refuse new effects.
 
 ## Deliberately unclaimed capabilities
 
@@ -75,20 +96,19 @@ reports `ready=false`, and `startup_ready` is separate. Do not remove that refus
 until the complete business chain and deployment boundary are independently
 verified. Never bypass it by invoking the underlying harness directly.
 
-The initial immutable operation table cannot know result-derived acceptance
-markers or later advice hashes. The current mapper refuses those operations
-unless the exact values were already frozen; it never guesses, uses a wildcard
-or switches back to shell. Live integration needs a separately authenticated,
-append-only binding of predeclared operation slots to original generated
-artifacts, with producer/reader and model review kept together. Neither copying
-the ledger nor changing its original registration is a valid implementation.
+Operations-v1/v2 remain fixed. The new v3 binding path currently integrates only
+candidate-to-accept. Generated settle markers and advice hashes have structural
+resolver definitions but the campaign adapter explicitly rejects them until
+their complete producer/reader chain is connected. Real enrollment, the runtime
+controller loop and actual model review of the result remain unverified. Neither
+copying the ledger nor changing its original registration is supported.
 Typed `advance`/instructions/finish/recovery also remain unconnected. These are
 explicit pending work, not a complete campaign registration interface.
 
 ## Remaining execution order
 
-1. Original S40 accepted the bounded 83dffba component review; review subsequent
-   frozen changes once each, retaining that original result.
+1. Original S40 accepted the bounded 7f50f8d component review. Review the generated
+   binding increment separately once frozen, retaining the earlier results.
 2. Add explicit business actor enrollment and the same typed provenance to both
    producers and readers listed in S40's original integration map. Preserve
    original Claude callback and exact-SHA reask consumers.

@@ -31,6 +31,17 @@ class TaskTopologyTests(unittest.TestCase):
         binaries={k:Path("/usr/bin/true") for k in ("claude","cmux","rtk","node")}
         binaries["codex"]=PACKAGE/"codex-aarch64-apple-darwin"
         binaries.update({p+"_wrapper":WRAPPERS/("cmux-"+p+"-wrapper") for p in ("codex","claude")})
+        task={"task_id":"fixture-task","controller_id":"fixture-root","authority_ref":cls.context,
+            "startup_text":"Use the registered readiness operation once.","base_instructions":"Fixture, no effects.",
+            "operations":{"ready":{"kind":"readiness","payload":{}},
+                "left":{"kind":"route","payload":{"lane":"claude_a"}},
+                "right":{"kind":"route","payload":{"lane":"claude_b"}}},
+            "initial_operations":["ready"],"choice_groups":{"route":["left","right"]}}
+        if getattr(cls,"generated_slots",False):
+            from upgrade_task_bindings import SLOT_SCHEMA
+            task["operations"]["accept"]={"kind":"fixture","payload":{"marker":None}}
+            task["binding_slots"]={"accept":dict(schema=SLOT_SCHEMA,resolver="campaign-accept-marker-v1",
+                source_path=str(cls.root/"candidate.json"),producer_operation="left")}
         cls.runtime_ref=materialize_live(cls.context,"B",binaries=binaries,
             native_policy=SOCKET_POLICY,codex_package=PACKAGE,pre_exec_hold=True,
             provider_configuration=({"model":"fixture-codex","model_provider":"custom"},{"model":"fixture-claude","env":{}}),
@@ -39,12 +50,7 @@ class TaskTopologyTests(unittest.TestCase):
                 "claude":{"station":"linxi","key":"linxi-s1"}},
             goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
             lane_instructions=instructions,
-            task_startup={"task_id":"fixture-task","controller_id":"fixture-root","authority_ref":cls.context,
-                "startup_text":"Use the registered readiness operation once.","base_instructions":"Fixture, no effects.",
-                "operations":{"ready":{"kind":"readiness","payload":{}},
-                    "left":{"kind":"route","payload":{"lane":"claude_a"}},
-                    "right":{"kind":"route","payload":{"lane":"claude_b"}}},
-                "initial_operations":["ready"],"choice_groups":{"route":["left","right"]}})
+            task_startup=task)
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 
@@ -97,6 +103,25 @@ class TaskTopologyTests(unittest.TestCase):
             invoke.assert_not_called()
         self.assertFalse((Path(self.spec["adoption_path"]).parent/"launch-request.json").exists())
         self.assertFalse((Path(self.spec["adoption_path"]).parent/"held-request.json").exists())
+
+
+class SlotTaskTopologyTests(TaskTopologyTests):
+    generated_slots=True
+
+    def test_new_schema_has_empty_origin_tui_and_distinct_server_boundary(self):
+        from upgrade_task_startup import BINDING_PLAN_SCHEMA
+        self.assertEqual(plan_value(self.spec["task_startup"])["schema"],BINDING_PLAN_SCHEMA)
+
+    def test_generated_slot_is_materialized_and_not_launchable(self):
+        from upgrade_task_startup import BINDING_PLAN_SCHEMA
+        plan=plan_value(self.spec["task_startup"])
+        self.assertEqual(plan["schema"],BINDING_PLAN_SCHEMA)
+        self.assertEqual(plan["initial_operations"],["ready"])
+        self.assertIsNone(plan["operations"]["accept"]["payload"]["marker"])
+        root=Path(self.spec["controller"])/"scripts"
+        self.assertTrue((root/"mac_upgrade_task_bindings.py").is_file())
+        self.assertIn("from mac_upgrade_task_bindings import",(root/"mac_upgrade_task_operations.py").read_text())
+        self.test_incomplete_business_chain_cannot_launch_or_hold()
 
 
 if __name__=="__main__":unittest.main()

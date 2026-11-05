@@ -16,13 +16,15 @@ from upgrade_rpc_peer import verify_peer
 
 class TaskActor:
     def __init__(self, client, ledger, handlers, enrollment_gate, evidence_directory, *, operation_scope=None,
-                 invocation_recorder=None):
+                 invocation_recorder=None, completion_observer=None):
         self.client, self.ledger = client, ledger
         self.handlers, self.gate = dict(handlers), enrollment_gate
         self.directory = checked_path(evidence_directory)
         self.closed = False
         require(invocation_recorder is None or callable(invocation_recorder), "TASK_ACTOR_INVOCATION_RECORDER_INVALID")
         self.invocation_recorder = invocation_recorder
+        require(completion_observer is None or callable(completion_observer), "TASK_ACTOR_COMPLETION_OBSERVER_INVALID")
+        self.completion_observer = completion_observer
         operations = ledger.registration["operations"]
         require(operation_scope is None or (isinstance(operation_scope, (list, tuple, set, frozenset))
                 and all(isinstance(name, str) for name in operation_scope)), "TASK_ACTOR_OPERATION_SCOPE_INVALID")
@@ -79,7 +81,10 @@ class TaskActor:
             # inspect() rejects an unrelated call before using it as a path.
             self.ledger.inspect(call)
             evidence = write_json(self.directory / (call + "-completed.json"), message, exclusive=True)
-            return self.ledger.complete(message, evidence)
+            result = self.ledger.complete(message, evidence)
+            if self.completion_observer is not None:
+                result["artifact_binding_observation"] = self.bind_completed(message, ref)
+            return result
         if method == "turn/completed":
             params = message.get("params", {})
             require(params.get("threadId") == self.ledger.registration["thread_id"]
@@ -90,6 +95,31 @@ class TaskActor:
             self.close("UNKNOWN")
             require(False, "TASK_ACTOR_UNOWNED_SERVER_REQUEST_NO_APPROVAL")
         return {"phase": "OBSERVED", "method": method, "record": ref, "business_accepted": False}
+
+    def bind_completed(self, message, original_ref):
+        """Observe the original result later without executing or responding.
+
+        A native inner completion may precede its outer model-visible result.
+        The owner can revisit that original completion under the live gate;
+        successful bindings remain append-once and cannot be rebound.
+        """
+        require(not self.closed and self.completion_observer is not None,
+                "TASK_ACTOR_BINDING_OBSERVER_UNAVAILABLE")
+        self._recorded(message, original_ref)
+        require(message.get("method") == "item/completed", "TASK_ACTOR_NATIVE_COMPLETION_REQUIRED")
+        call=message["params"]["item"]["id"]
+        row=self.ledger.inspect(call)
+        from orchestration_common import strict_json
+        events=self.ledger.db.execute("SELECT body FROM events WHERE call_id=? AND kind='NATIVE_COMPLETED'",(call,)).fetchall()
+        require(row["phase"]=="NATIVE_COMPLETED" and len(events)==1
+                and strict_json(events[0][0])["native"]==message, "TASK_ACTOR_ORIGINAL_COMPLETION_REQUIRED")
+        try:
+            self.gate(self.ledger.registration, message, original_ref)
+            verify_peer(self.client.sock, self.client.server, self.client.process)
+            return self.completion_observer(message, original_ref)
+        except BaseException:
+            self.closed = True
+            raise
 
     def close(self, reason="UNKNOWN"):
         """Seal pending ledger rows; never send an interrupt or replay input."""

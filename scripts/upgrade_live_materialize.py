@@ -45,7 +45,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
            "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
            "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
-           "upgrade_task_readiness.py", "upgrade_task_control.py")
+           "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -100,7 +100,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     if task_startup is not None:
         from upgrade_task_startup import TURN_FIELDS, validate_plan_operations
         task_fields = {"task_id", "controller_id", "authority_ref", "startup_text", "base_instructions", "operations"}
-        require(isinstance(task_startup, dict) and set(task_startup) in (task_fields, task_fields | TURN_FIELDS)
+        require(isinstance(task_startup, dict) and set(task_startup) in (
+                task_fields, task_fields | TURN_FIELDS, task_fields | TURN_FIELDS | {"binding_slots"})
                 and pre_exec_hold and not startup_continuity and goal_startup is not None
                 and station_launchers is not None and codex_package is not None
                 and native_policy == SOCKET_POLICY, "STARTUP_TASK_EXPLICIT_TOPOLOGY_REQUIRED")
@@ -204,13 +205,14 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     task_plan_ref, task_plan_raw = None, None
     if task_startup is not None:
         from orchestration_common import canonical
-        from upgrade_task_startup import PLAN_SCHEMA, MULTI_PLAN_SCHEMA, TURN_FIELDS
+        from upgrade_task_startup import PLAN_SCHEMA, MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA, TURN_FIELDS
         from upgrade_task_readiness import readiness_text
         require(all(isinstance(codex_original.get(k), str) and codex_original[k]
                     for k in ("model", "model_provider")), "STARTUP_TASK_MODEL_CONFIGURATION_REQUIRED")
         plan = dict(task_startup)
         plan["startup_text"] = readiness_text(plan["startup_text"])
-        task_plan_raw = canonical(dict(schema=MULTI_PLAN_SCHEMA if TURN_FIELDS <= set(plan) else PLAN_SCHEMA, **plan,
+        schema = BINDING_PLAN_SCHEMA if "binding_slots" in plan else MULTI_PLAN_SCHEMA if TURN_FIELDS <= set(plan) else PLAN_SCHEMA
+        task_plan_raw = canonical(dict(schema=schema, **plan,
             native_root=str(roots["codex"]), work_root=str(paths["state"] / "work"),
             model=codex_original["model"], model_provider=codex_original["model_provider"]))
         task_plan_ref = dict(path=str(paths["config"] / "task-startup.json"), bytes=len(task_plan_raw),

@@ -4,8 +4,9 @@ The frozen registration declares complete operations; the model selects an ID.
 This is a dispatch/evidence adapter, not a live enrollment gate. Runner retains
 all original identity, adoption, permit, transport and candidate checks. In
 particular this module cannot make the incomplete TASK topology launchable.
-Later-produced markers/decisions must already have their own frozen operation;
-there is no wildcard, mutable binding slot or fallback to an arbitrary command.
+Controls v2 permits an explicitly declared candidate-to-accept slot, bound once
+after the original candidate operation completes. Other generated-artifact
+resolvers remain unavailable in this adapter. There is no arbitrary command.
 This module belongs to the frozen orchestration adapter tree, not the private
 MAC startup controller (which intentionally has no Runner dependencies).
 """
@@ -14,11 +15,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from orchestration_common import checked_path, json_ref, object_sha, require, write_json
+from orchestration_common import checked_path, file_ref, json_ref, object_sha, require, write_json
 from upgrade_task_control import control_request
 from upgrade_task_operations import validate_registration
 
 SCHEMA = "upgrade-task-campaign-controls-v1"
+BINDING_SCHEMA = "upgrade-task-campaign-controls-v2"
 PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "settle", "publish-decision", "bind-unbound"})
@@ -62,9 +64,10 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
     require(campaign.get("version") == 3, "TASK_CAMPAIGN_EXPLICIT_V3_REQUIRED")
     controls = campaign["task_controls"]
     require(isinstance(controls, dict) and set(controls) == {"schema", "registration", "evidence_directory"}
-            and controls["schema"] == SCHEMA, "TASK_CAMPAIGN_CONTROLS_INVALID")
+            and controls["schema"] in (SCHEMA, BINDING_SCHEMA), "TASK_CAMPAIGN_CONTROLS_INVALID")
     registration = validate_registration(json_ref(controls["registration"]))
-    require(registration["schema"] == "upgrade-task-operations-v2"
+    require(registration["schema"] == ("upgrade-task-operations-v3" if controls["schema"] == BINDING_SCHEMA
+                                      else "upgrade-task-operations-v2")
             and registration["thread_id"] == campaign["sessions"]["codex"]["session_id"],
             "TASK_CAMPAIGN_ORIGINAL_TASK_REQUIRED")
     directory = checked_path(controls["evidence_directory"])
@@ -72,12 +75,25 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
             "TASK_CAMPAIGN_EVIDENCE_DIRECTORY_CHANGED")
     found, seen = {}, set()
     decisions = {}
+    slots = registration.get("binding_slots", {})
     for name, operation in registration["operations"].items():
         if operation["kind"] != KIND:
             continue
         value = operation["payload"]
-        expected = operation_payload(campaign, value.get("action"), value.get("run_id"),
-            **{k:value.get(k) for k in ("node_id", "marker", "decision", "decision_fields")})
+        kwargs={k:value.get(k) for k in ("node_id", "marker", "decision", "decision_fields")}
+        if name in slots:
+            slot=slots[name]
+            require(slot["resolver"] == "campaign-accept-marker-v1" and value.get("action") == "accept",
+                    "TASK_CAMPAIGN_RESOLVER_NOT_INTEGRATED")
+            require(slot["source_path"] == str(Path(campaign["root"]) / "runs" / value["run_id"] /
+                    "nodes" / value["node_id"] / "candidate.json"), "TASK_CAMPAIGN_SLOT_PATH_CHANGED")
+            producer=registration["operations"][slot["producer_operation"]]
+            require(producer==dict(kind=KIND,payload=operation_payload(campaign,"candidate",value["run_id"],
+                node_id=value["node_id"])), "TASK_CAMPAIGN_SLOT_PRODUCER_CHANGED")
+            kwargs["marker"]="declared-candidate-marker"
+        expected = operation_payload(campaign, value.get("action"), value.get("run_id"), **kwargs)
+        if name in slots:
+            expected["marker"]=None
         require(value == expected, "TASK_CAMPAIGN_OPERATION_SCOPE_CHANGED")
         fingerprint = object_sha(value)
         require(fingerprint not in seen, "TASK_CAMPAIGN_DUPLICATE_OPERATION")
@@ -85,6 +101,10 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
         if value["action"] == "publish-decision":
             decisions.setdefault((value["run_id"], value["node_id"]), set()).add(name)
     require(found, "TASK_CAMPAIGN_NO_REGISTERED_CONTROLS")
+    require(set(slots) <= set(found), "TASK_CAMPAIGN_FOREIGN_SLOT")
+    # A fixed marker and a slot for the same node cannot provide two attempts.
+    endpoints=[(p["action"],p["run_id"],p["node_id"]) for p in found.values() if p["action"]=="accept"]
+    require(len(endpoints)==len(set(endpoints)), "TASK_CAMPAIGN_DUPLICATE_ACCEPTANCE")
     for choices in decisions.values():
         require(len(choices) == 1 or any(choices <= set(group) for group in registration["choice_groups"].values()),
                 "TASK_CAMPAIGN_DECISION_CHOICE_BUDGET_REQUIRED")
@@ -103,12 +123,41 @@ def campaign_control(campaign, campaign_ref, action, run_id, **kwargs):
     # Caller validators retain their live gates. Static readers never acquire
     # execution authority merely by interpreting this descriptor.
     require(json_ref(campaign_ref) == campaign, "TASK_CAMPAIGN_FROZEN_CAMPAIGN_CHANGED")
-    _, operations = validate_controls(campaign, check_startup=False)
+    registration, operations = validate_controls(campaign, check_startup=False)
     payload = operation_payload(campaign, action, run_id, **kwargs)
     matches = [name for name, value in operations.items() if value == payload]
+    for name in registration.get("binding_slots", {}):
+        from upgrade_task_bindings import resolve_replacement
+        template=operations[name]
+        if payload["action"]==template["action"] and payload["run_id"]==template["run_id"] and payload["node_id"]==template["node_id"]:
+            expected=resolve_replacement(registration,name,_candidate_marker(campaign,registration["binding_slots"][name],template))
+            require(expected==dict(kind=KIND,payload=payload), "TASK_CAMPAIGN_GENERATED_MARKER_CHANGED")
+            matches.append(name)
     require(len(matches) == 1, "TASK_CAMPAIGN_EXACT_OPERATION_NOT_FROZEN")
     controls = campaign["task_controls"]
-    return control_request(controls["registration"], matches[0], controls["evidence_directory"])
+    return control_request(controls["registration"], matches[0], controls["evidence_directory"],
+                           operation=dict(kind=KIND,payload=payload))
+
+
+def _candidate_marker(campaign, slot, payload):
+    """Recompute from the original candidate and original run state, read-only.
+
+    Full business validation stays in Runner and the binding producer. This
+    reconstruction does not acquire live authority or manufacture a new pin.
+    """
+    from orchestration_evidence import marker_for
+    from orchestration_common import read_json
+    root=Path(campaign["root"])/"runs"/payload["run_id"]
+    # Full state replay would recursively reconstruct this same control when
+    # verifying ACCEPTED. Read its immutable claim here; the caller's Runner
+    # and completion binder validate the full state and candidate separately.
+    info=read_json(root/"claims"/(payload["node_id"]+".json"))
+    ref=file_ref(slot["source_path"])
+    candidate=json_ref(ref)
+    require(candidate.get("run_id")==payload["run_id"] and candidate.get("node_id")==payload["node_id"]
+            and candidate.get("task_id")==info.get("task_id")
+            and candidate.get("attempt_id")==info.get("attempt_id"), "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
+    return marker_for(info,candidate)
 
 
 def campaign_handler(runner, registration_ref, receipts):
@@ -129,7 +178,8 @@ def campaign_handler(runner, registration_ref, receipts):
         require(json_ref(registration_ref) == registration, "TASK_CAMPAIGN_HANDLER_REGISTRATION_CHANGED")
         script = campaign_control(runner.campaign, runner.ref, payload["action"], payload["run_id"],
             **{k:payload[k] for k in ("node_id", "marker", "decision", "decision_fields")})
-        require(registration["operations"][script["operation_id"]] == {"kind":KIND, "payload":payload},
+        expected=script.get("operation",registration["operations"][script["operation_id"]])
+        require(expected == {"kind":KIND, "payload":payload},
                 "TASK_CAMPAIGN_HANDLER_SCOPE_CHANGED")
         reader = NativeReader(runner.campaign["sessions"]["codex"], fixtures=runner.fixtures)
         find_control(reader, script, after=runner.campaign["sessions"]["codex"]["freeze_fence"]["offset"])
@@ -147,3 +197,73 @@ def campaign_handler(runner, registration_ref, receipts):
                  request=script, operation=payload, result=result), exclusive=True)
         return {"success":True, "contentItems":[{"type":"inputText", "text":json.dumps(result,ensure_ascii=False)}]}, receipt
     return handle
+
+
+def campaign_completion_binder(runner, ledger, registration_ref):
+    """Append candidate bindings only after a live-gated native completion.
+
+    TaskActor invokes this after recording completion. A failure leaves the
+    original completed operation intact and closes the actor; no retry/input.
+    """
+    from orchestration_run import Runner
+    from upgrade_task_bindings import BINDING_SCHEMA as ARTIFACT_SCHEMA
+    from upgrade_task_control import native_invocation, native_result
+    from orchestration_native import NativeReader
+    require(type(runner) is Runner, "TASK_CAMPAIGN_ORIGINAL_RUNNER_REQUIRED")
+    registration,_=validate_controls(runner.campaign,fixtures=runner.fixtures)
+    require(registration==ledger.registration and runner.campaign["task_controls"]["registration"]==registration_ref
+            and registration["schema"]=="upgrade-task-operations-v3", "TASK_CAMPAIGN_BINDING_REGISTRATION_CHANGED")
+    directory=Path(registration_ref["path"]).parent/"campaign-bindings"
+    directory.mkdir(mode=0o700,exist_ok=False)
+
+    def bind(message, original_rpc):
+        call=message["params"]["item"]["id"]
+        row=ledger.inspect(call)
+        require(row["phase"]=="NATIVE_COMPLETED", "TASK_SLOT_PRODUCER_NOT_COMPLETED")
+        slots=[(name,slot) for name,slot in registration["binding_slots"].items()
+               if slot["producer_operation"]==row["operation_id"]]
+        if not slots or row["result"]["success"] is not True:
+            return []
+        controls=runner.campaign["task_controls"]
+        reader=NativeReader(runner.campaign["sessions"]["codex"],fixtures=runner.fixtures)
+        request=control_request(registration_ref,row["operation_id"],controls["evidence_directory"])
+        invocation=file_ref(Path(controls["evidence_directory"])/(row["operation_id"]+".json"))
+        native_invocation(reader,invocation,request)
+        fence=reader.snapshot()
+        returned=native_result(reader,invocation,request,until=fence["offset"])
+        if returned is None:
+            # The original inner completion can arrive before its native outer
+            # result. Preserve it; the owner may observe the same result later.
+            return dict(status="WAITING_ORIGINAL_NATIVE_RESULT",call_id=call,bindings=[])
+        receipt=json_ref(row["receipt"])
+        require(receipt.get("schema")=="upgrade-task-campaign-result-v1" and receipt.get("campaign")==runner.ref
+                and receipt.get("request")==request
+                and receipt.get("operation")==registration["operations"][row["operation_id"]]["payload"],
+                "TASK_CAMPAIGN_PRODUCER_RESULT_CHANGED")
+        from orchestration_common import strict_json
+        items=row["result"]["contentItems"]
+        require(len(items)==1 and items[0]["type"]=="inputText"
+                and strict_json(items[0]["text"])==receipt["result"]==returned["value"],
+                "TASK_CAMPAIGN_PRODUCER_OUTPUT_CHANGED")
+        refs=[]
+        from orchestration_evidence import validate_candidate, marker_for
+        for name,slot in slots:
+            payload=registration["operations"][name]["payload"]
+            co=runner.co(payload["run_id"])
+            with co.node_locks(payload["node_id"]):
+                co._gate()
+                _,data=co.state();info=data[payload["node_id"]]
+                source=file_ref(slot["source_path"])
+                require(source==receipt["result"].get("candidate") and source==info.get("candidate"),
+                        "TASK_CAMPAIGN_ORIGINAL_CANDIDATE_CHANGED")
+                candidate=validate_candidate(runner.campaign,co.header,co.nodes[payload["node_id"]],info,source,
+                                             fixtures=runner.fixtures,rerun=False)
+                value=dict(schema=ARTIFACT_SCHEMA,registration_sha256=object_sha(registration),operation_id=name,
+                    slot=slot,source=source,producer_call_id=call,producer_result=row["receipt"],
+                    producer_native=dict(invocation=invocation,fence=fence),
+                    replacement=marker_for(info,candidate))
+                ref=write_json(directory/(name+".json"),value,exclusive=True)
+                co._gate()
+                refs.append(ledger.bind_artifact(name,ref))
+        return dict(status="BOUND",call_id=call,bindings=refs)
+    return bind

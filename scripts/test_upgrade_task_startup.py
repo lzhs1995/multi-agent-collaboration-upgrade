@@ -215,6 +215,23 @@ class TaskStartupTests(unittest.TestCase):
             self.assertEqual(self.calls,[])
             self.assertFalse(self.directory.exists())
 
+    def test_explicit_generated_slot_bootstrap_keeps_ready_only_scope(self):
+        from upgrade_task_startup import BINDING_PLAN_SCHEMA
+        from upgrade_task_bindings import SLOT_SCHEMA
+        self.multi_plan()
+        self.plan.update(schema=BINDING_PLAN_SCHEMA,binding_slots={"accept":dict(schema=SLOT_SCHEMA,
+            resolver="campaign-accept-marker-v1",source_path=str(self.root/"candidate.json"),producer_operation="left")})
+        self.plan["operations"]["accept"]=dict(kind="fixture",payload={"marker":None})
+        self.plan_ref=write_json(self.root/"slot-plan.json",self.plan)
+        result=json_ref(self.start());registration=json_ref(result["operations"])
+        self.assertEqual(registration["schema"],"upgrade-task-operations-v3")
+        self.assertEqual(registration["initial_operations"],["ready"])
+        self.assertEqual(registration["binding_slots"],self.plan["binding_slots"])
+        self.assertEqual(self.calls[0][1]["environments"],[])
+        ledger=OperationLedger(result["ledger"],result["registration_sha256"])
+        self.addCleanup(ledger.close)
+        self.assertEqual(ledger.db.execute("SELECT count(*) FROM bindings").fetchone()[0],0)
+
     def test_bootstrapped_actor_stages_share_one_ledger_and_choice_budget(self):
         from upgrade_task_actor import TaskActor
         self.multi_plan()

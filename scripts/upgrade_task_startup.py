@@ -23,6 +23,7 @@ from upgrade_task_thread import journal_evidence
 
 PLAN_SCHEMA = "upgrade-task-startup-plan-v1"
 MULTI_PLAN_SCHEMA = "upgrade-task-startup-plan-v2"
+BINDING_PLAN_SCHEMA = "upgrade-task-startup-plan-v3"
 TURN_FIELDS = {"initial_operations", "choice_groups"}
 
 
@@ -44,15 +45,22 @@ def validate_plan_operations(value):
                 and value["operations"].get("ready") == {"kind":"readiness", "payload":{}}
                 and all("ready" not in members for members in value["choice_groups"].values()),
                 "TASK_STARTUP_INITIAL_READINESS_ONLY")
+    if "binding_slots" in value:
+        from upgrade_task_bindings import validate_slots
+        require(TURN_FIELDS <= set(value) and "ready" not in value["binding_slots"],
+                "TASK_STARTUP_BINDINGS_REQUIRE_MULTI_TURN")
+        validate_slots(value["operations"], value["binding_slots"])
 
 
 def plan_value(ref):
     value = json_ref(ref, "new task bootstrap plan")
     fields = {"schema", "task_id", "controller_id", "authority_ref", "native_root",
               "work_root", "model", "model_provider", "startup_text", "base_instructions", "operations"}
-    if value.get("schema") == MULTI_PLAN_SCHEMA:
+    if value.get("schema") in (MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA):
         fields |= TURN_FIELDS
-    require(set(value) == fields and value["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA),
+    if value.get("schema") == BINDING_PLAN_SCHEMA:
+        fields.add("binding_slots")
+    require(set(value) == fields and value["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA),
             "TASK_STARTUP_PLAN_INVALID")
     read_ref(value["authority_ref"], "original new task authority")
     for key in ("task_id", "controller_id", "model", "model_provider", "startup_text", "base_instructions"):
@@ -71,10 +79,12 @@ def registration_for_plan(plan, thread, turn, server):
     value = dict(schema="upgrade-task-operations-v1", task_id=plan["task_id"],
         thread_id=thread, turn_id=turn, controller_id=plan["controller_id"],
         authority_ref=plan["authority_ref"], operations=plan["operations"])
-    require(plan["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA), "TASK_STARTUP_PLAN_INVALID")
-    if plan["schema"] == MULTI_PLAN_SCHEMA:
+    require(plan["schema"] in (PLAN_SCHEMA, MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA), "TASK_STARTUP_PLAN_INVALID")
+    if plan["schema"] in (MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA):
         value.update(schema="upgrade-task-operations-v2", server=server,
             initial_operations=plan["initial_operations"], choice_groups=plan["choice_groups"])
+    if plan["schema"] == BINDING_PLAN_SCHEMA:
+        value.update(schema="upgrade-task-operations-v3", binding_slots=plan["binding_slots"])
     return validate_registration(value)
 
 
@@ -83,7 +93,7 @@ def thread_parameters(plan):
     value = dict(model=plan["model"], modelProvider=plan["model_provider"], cwd=plan["work_root"],
         approvalPolicy="never", sandbox="read-only", dynamicTools=[tool_definition()],
         baseInstructions=plan["base_instructions"], threadSource="user")
-    if plan["schema"] == MULTI_PLAN_SCHEMA:
+    if plan["schema"] in (MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA):
         value["environments"] = []
     return value
 
