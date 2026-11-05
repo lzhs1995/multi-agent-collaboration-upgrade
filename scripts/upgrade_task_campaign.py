@@ -216,7 +216,7 @@ def campaign_completion_binder(runner, ledger, registration_ref):
     directory=Path(registration_ref["path"]).parent/"campaign-bindings"
     directory.mkdir(mode=0o700,exist_ok=False)
 
-    def bind(message, original_rpc):
+    def bind(message, original_rpc, *, existing_only=False):
         call=message["params"]["item"]["id"]
         row=ledger.inspect(call)
         require(row["phase"]=="NATIVE_COMPLETED", "TASK_SLOT_PRODUCER_NOT_COMPLETED")
@@ -262,10 +262,35 @@ def campaign_completion_binder(runner, ledger, registration_ref):
                     slot=slot,source=source,producer_call_id=call,producer_result=row["receipt"],
                     producer_native=dict(invocation=invocation,fence=fence),
                     replacement=marker_for(info,candidate))
-                ref=write_json(directory/(name+".json"),value,exclusive=True)
+                if existing_only:
+                    # Publication and SQLite insertion are separate. Recovery
+                    # may attach this original complete artifact, never replace
+                    # a missing/truncated one or regenerate its observation fence.
+                    ref=file_ref(directory/(name+".json"))
+                    existing=json_ref(ref)
+                    from upgrade_task_bindings import validate_binding, verify_producer
+                    validate_binding(registration,name,ref)
+                    verify_producer(ledger.db,existing)
+                    original_fence=existing["producer_native"]["fence"]
+                    original_end=reader.verify_pin(original_fence)
+                    original_return=native_result(reader,invocation,request,until=original_end)
+                    require(original_return is not None and original_return["success"] is True
+                            and original_return["value"]==returned["value"],
+                            "TASK_CAMPAIGN_RECOVERY_ORIGINAL_RESULT_MISSING")
+                    value["producer_native"]["fence"]=original_fence
+                    require(existing==value,"TASK_CAMPAIGN_RECOVERY_BINDING_CHANGED")
+                else:
+                    ref=write_json(directory/(name+".json"),value,exclusive=True)
                 co._gate()
-                refs.append(ledger.bind_artifact(name,ref))
-        return dict(status="BOUND",call_id=call,bindings=refs)
+                if existing_only and ledger.db.execute("SELECT 1 FROM bindings WHERE operation_id=?",(name,)).fetchone():
+                    _,bound=ledger.resolve_operation(name)
+                    require(bound==ref,"TASK_CAMPAIGN_RECOVERY_LEDGER_BINDING_CHANGED")
+                    refs.append(dict(operation_id=name,binding=bound,already_attached=True))
+                else:
+                    refs.append(ledger.bind_artifact(name,ref))
+        return dict(status="RECONCILED_ORIGINAL_BINDING" if existing_only else "BOUND",call_id=call,bindings=refs,
+                    **({"actor_reopened":False,"operations_executed":0,"responses_sent":0} if existing_only else {}))
+    bind.reconcile=lambda message,original_rpc:bind(message,original_rpc,existing_only=True)
     return bind
 
 

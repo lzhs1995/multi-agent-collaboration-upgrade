@@ -111,6 +111,16 @@ class TaskActor:
         """
         require(not self.closed and self.completion_observer is not None,
                 "TASK_ACTOR_BINDING_OBSERVER_UNAVAILABLE")
+        self._original_completion(message,original_ref)
+        try:
+            self.gate(self.ledger.registration, message, original_ref)
+            verify_peer(self.client.sock, self.client.server, self.client.process)
+            return self.completion_observer(message, original_ref)
+        except BaseException:
+            self.closed = True
+            raise
+
+    def _original_completion(self,message,original_ref):
         self._recorded(message, original_ref)
         require(message.get("method") == "item/completed", "TASK_ACTOR_NATIVE_COMPLETION_REQUIRED")
         call=message["params"]["item"]["id"]
@@ -119,13 +129,20 @@ class TaskActor:
         events=self.ledger.db.execute("SELECT body FROM events WHERE call_id=? AND kind='NATIVE_COMPLETED'",(call,)).fetchall()
         require(row["phase"]=="NATIVE_COMPLETED" and len(events)==1
                 and strict_json(events[0][0])["native"]==message, "TASK_ACTOR_ORIGINAL_COMPLETION_REQUIRED")
-        try:
-            self.gate(self.ledger.registration, message, original_ref)
-            verify_peer(self.client.sock, self.client.server, self.client.process)
-            return self.completion_observer(message, original_ref)
-        except BaseException:
-            self.closed = True
-            raise
+
+    def reconcile_binding(self,message,original_ref):
+        """Attach only a previously published original artifact after failure.
+
+        The same closed actor and live gate are required. This never reopens
+        service processing, runs an operation or resends a response. Recovery
+        after losing this in-memory owner remains a separate enrollment task.
+        """
+        reconciler=getattr(self.completion_observer,"reconcile",None)
+        require(self.closed and callable(reconciler),"TASK_ACTOR_BINDING_RECOVERY_UNAVAILABLE")
+        self._original_completion(message,original_ref)
+        self.gate(self.ledger.registration,message,original_ref)
+        verify_peer(self.client.sock,self.client.server,self.client.process)
+        return reconciler(message,original_ref)
 
     def close(self, reason="UNKNOWN"):
         """Seal pending ledger rows; never send an interrupt or replay input."""

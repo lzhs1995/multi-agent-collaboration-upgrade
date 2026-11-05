@@ -123,9 +123,14 @@ resolver definitions but the campaign adapter explicitly rejects them until
 their complete producer/reader chain is connected. Real enrollment, deployment
 of the runtime service and actual model review remain unverified. Neither
 copying the ledger nor changing its original registration is supported.
-Binding artifact publication and SQLite insertion are separate operations;
-reattachment after interruption between them remains an explicit recovery gap.
-Creating a second service or recreating its exclusive directories is not recovery.
+Binding artifact publication and SQLite insertion are separate operations. The
+same closed actor can now reconcile a complete original artifact through its
+live gate, original completion, source, native fence and business checker. It
+appends the missing SQLite binding once, or observes an already committed one;
+it never recreates an absent artifact, sends a response or reopens the actor.
+Recovery after losing that in-memory owner and enrollment for a later turn
+remain unimplemented. Creating a second service or recreating its exclusive
+directories is not recovery.
 Typed `advance`/instructions/finish/recovery also remain unconnected. These are
 explicit pending work, not a complete campaign registration interface.
 
