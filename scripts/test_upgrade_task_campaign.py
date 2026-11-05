@@ -25,7 +25,11 @@ class CampaignActorTests(unittest.TestCase):
         self.native=self.c.clients["codex"]
         self.control=f.root/"operations";self.control.mkdir(mode=0o700)
         operations={name:dict(kind=KIND,payload=operation_payload(self.c.campaign,name,"run-01",
-            node_id="local" if name=="claim" else None)) for name in ("start","claim")}
+            node_id=getattr(self,"transport_node","local") if name=="claim" else None)) for name in ("start","claim")}
+        if getattr(self,"transport_node",None):
+            for action in ("prepare","dispatch"):
+                operations[action]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
+                    node_id=self.transport_node))
         self.registration=dict(schema="upgrade-task-operations-v2", task_id="fixture-campaign",
             controller_id="fixture-controller",thread_id=self.native.session["session_id"],turn_id=fixtures.TURN,
             authority_ref=self.c.campaign["authorization"],server=f.client.server,operations=operations,

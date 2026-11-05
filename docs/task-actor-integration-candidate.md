@@ -393,3 +393,27 @@ socket replacement, unknown input and original runtime compatibility. Live
 deployment, source process rows, dispatch and model RPC remain explicit test
 doubles. This endpoint/client is not yet wired into the generated Claude sender;
 the original delivery/pane/target locks and historical readers remain required.
+
+## Typed preparation and dispatch
+
+Frozen `prepare` and `dispatch` operation IDs now select the original
+`Runner.transport` for their exact campaign/run/node. They do not accept argv,
+target overrides or a new retry budget. The original transport retains its
+preparation stages, locks, work/identity gates, pack validation, input intent,
+delivery reader and per-stage `OperationJournal`. The actor's SQLite budget
+also remains in force. Returning an `UNCERTAIN` transport result can complete
+the tool call; it does not prove delivery or permit another submission.
+
+Seven new checks cover both original Claude lanes, stage/pack/dispatch evidence,
+dispatch before preparation, a failed preparation stage, uncertain submission,
+revoked service admission, the original live gate and changed/duplicate scope.
+Six passed initially; one test had an incorrect receipt field assertion, which
+was corrected and passed for both lanes. The twenty affected campaign control
+tests also pass. Logs retain the initial failure. The tests use real local
+service/actor bookkeeping, SQLite, node locks and transport evidence readers;
+harness execution, deployment and Claude records are explicit offline fixtures.
+
+This does not enable TASK launch. `PinnedRuntime.harness` still invokes a
+subprocess and cannot carry the original actor ContextVar into native identity
+checks. Live actor-aware harness identity, preparation/sender provenance and
+adoption/FD isolation remain required before a real collaboration unit.

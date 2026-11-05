@@ -7,6 +7,8 @@ particular this module cannot make the incomplete TASK topology launchable.
 Controls v2 permits explicit candidate-to-accept and failure-to-settle slots.
 Explicit v3 adds the original advisory worker and complete-body read as typed
 controls, with receipt-backed decision slots. There is no arbitrary command.
+Prepare and dispatch select the original node transport; its own gates, stage
+journal and input budget remain authoritative, including after an unknown result.
 This module belongs to the frozen orchestration adapter tree, not the private
 MAC startup controller (which intentionally has no Runner dependencies).
 """
@@ -26,7 +28,7 @@ PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
                      "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
-                     "advice", "read-advice", "callback"})
+                     "advice", "read-advice", "callback", "prepare", "dispatch"})
 READ_ACTIONS = frozenset({"status", "recover", "verify"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
@@ -274,6 +276,8 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
             from orchestration_verify import verify_run
             result = verify_run(runner.ref,run,fixtures=runner.fixtures)
         elif action == "claim": result = runner.claim(run, node)
+        elif action == "prepare": result = runner.transport(runner.co(run), node).prepare()
+        elif action == "dispatch": result = runner.transport(runner.co(run), node).dispatch()
         elif action == "candidate": result = runner.candidate(run, node)
         elif action == "callback": result = runner.transport(runner.co(run), node).callback()
         elif action == "block": result = runner.block(run, node, payload["reason"])
