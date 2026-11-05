@@ -130,7 +130,9 @@ class CallbackInput:
                 and service.actor.ledger is gate.ledger and service._normal_terminal() == self.previous,
                 'TASK_CALLBACK_ORIGINAL_OWNER_CHANGED')
         runtime = getattr(service, 'runtime_owner', None)
-        require(runtime is None or not runtime.running and not runtime.closed,
+        from upgrade_task_callback_ingress import active_context
+        require(runtime is None or not runtime.closed and (not runtime.running
+                or active_context(service,self.connection,self.request)),
                 'TASK_CALLBACK_RUNTIME_BUSY_OR_CLOSED')
         gate._observe(require_normal_idle=True)
         campaign = gate.campaign

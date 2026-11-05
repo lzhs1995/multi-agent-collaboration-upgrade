@@ -24,6 +24,7 @@ class CampaignRuntime:
         require(self.gate.client is self.client and self.gate.ledger is self.ledger
                 and self.actor.service_owner is service,"TASK_RUNTIME_OWNER_CHANGED")
         self.pid=os.getpid();self.closed=False;self.running=False;self.sequence=0
+        self.callback_ingress=None
         self.gate._observe()
         self.root=self.actor.directory/"runtime-owner"
         self.root.mkdir(mode=0o700,exist_ok=False)
@@ -33,6 +34,11 @@ class CampaignRuntime:
                 device=self.ledger.identity[0],inode=self.ledger.identity[1]),
             operation_scope=sorted(self.scope),reconnect_allowed=False,operation_budget_reset=False),exclusive=True)
         service.runtime_owner=self
+
+    def enable_callback_ingress(self):
+        """Explicit endpoint on this existing runtime; never a second owner."""
+        from upgrade_task_callback_ingress import CallbackIngress
+        return CallbackIngress(self)
 
     def _verify(self):
         require(os.getpid()==self.pid==self.service.owner_pid==self.gate.owner_pid,
@@ -80,7 +86,7 @@ class CampaignRuntime:
             intent=write_json(path,dict(owner=self.proof,turn_id=self.ledger.active_turn,
                 seconds=seconds,max_messages=max_messages,max_pulses=max_pulses,
                 max_new_turns=max_new_turns),exclusive=True)
-            began=time.monotonic();pulses=messages=inputs=0;status="YIELDED";continuations=[]
+            began=time.monotonic();pulses=messages=inputs=0;status="YIELDED";continuations=[];callbacks=[]
             while pulses<max_pulses and messages<max_messages and time.monotonic()-began<seconds:
                 self._verify()
                 if self.actor.closed:
@@ -88,6 +94,12 @@ class CampaignRuntime:
                     if not self._remaining():
                         status="SCOPE_EXHAUSTED";self.closed=True;break
                     if inputs>=max_new_turns:break
+                    if self.callback_ingress is not None:
+                        callback=self.callback_ingress.poll(timeout=0)
+                        if callback is not None:
+                            callbacks.append(callback);pulses+=1
+                            inputs+=callback['model_inputs_sent']
+                            continue
                     plan=publish_next_input(self.service)
                     next_turn=self.service.start_next_turn(plan)
                     inputs+=next_turn["model_inputs_sent"]
@@ -103,12 +115,14 @@ class CampaignRuntime:
             result=dict(schema="upgrade-task-runtime-invocation-v1",owner=self.proof,intent=intent,
                 status=status,turn_id=self.ledger.active_turn,pulses=pulses,messages_observed=messages,
                 model_inputs_sent=inputs,continuations=continuations,
+                callback_inputs=callbacks,
                 pending_binding_calls=list(self.service.pending),business_accepted=False,
                 operation_budget_reset=False,reconnects=0,elapsed_seconds=time.monotonic()-began)
             receipt=write_json(path.with_name(path.name.replace("intent","result")),result,exclusive=True)
             return dict(result,receipt=receipt)
         except BaseException as exc:
             self.closed=True
+            if self.callback_ingress is not None:self.callback_ingress.close()
             try:self.actor.close("UNKNOWN")
             except Exception:self.actor.closed=True
             # Preserve the first failure, including a failed diagnostic write.
@@ -117,4 +131,6 @@ class CampaignRuntime:
                 error=str(exc),reconnect_allowed=False),exclusive=True)
             except (OSError,ValueError):pass
             raise
-        finally:self.running=False
+        finally:
+            self.running=False
+            if self.closed and self.callback_ingress is not None:self.callback_ingress.close()

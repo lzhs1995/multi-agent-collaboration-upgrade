@@ -365,8 +365,31 @@ keeps ambiguous results non-replayable. A saved plan alone cannot activate the
 in-memory ingress capability. Generated private readiness support still strips
 both campaign-input methods and keeps its original dependency closure.
 
-This is the service component only. There is no listening endpoint or runtime
-poll integration yet. The generated sender still refuses idle `turn/start`;
+The generated sender still refuses idle `turn/start`; its original lock scope,
 historical idle-callback input attribution and receiver receipt verification
 must be connected before enabling it. Local tests separately mock dispatch,
 live deployment and RPC; they do not prove a live model or callback receipt.
+
+## Retained runtime callback ingress
+
+Explicit `CampaignRuntime.enable_callback_ingress()` creates one Unix listener
+beside the original enrollment. It accepts only original pack/attempt refs and
+runs synchronously on the existing runtime. A pending callback has priority at
+a normal idle boundary and shares `max_new_turns` with normal continuation.
+The endpoint uses an exclusive directory, exact socket inode/mode and original
+owner process; closing it preserves its original records and path.
+
+The one-shot client derives its endpoint from the original startup operations,
+checks the actual kernel peer before sending and after the response, and sends
+one bounded request. Separate immutable transport records preserve uncertainty;
+neither reconnect nor fallback is implemented. A bounded transport ACK keeps
+the Darwin peer available for the response check; it is never native reception
+or model consumption. Runtime service ambiguity closes the same owner without
+another model input.
+
+Twenty-three local checks passed, including actual client/listener exchange,
+original service admission/SQLite enrollment, malformed/partial messages,
+socket replacement, unknown input and original runtime compatibility. Live
+deployment, source process rows, dispatch and model RPC remain explicit test
+doubles. This endpoint/client is not yet wired into the generated Claude sender;
+the original delivery/pane/target locks and historical readers remain required.
