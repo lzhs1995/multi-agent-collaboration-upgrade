@@ -221,7 +221,8 @@ class OperationLedger:
         _operation_subset(value["operation_ids"], self.registration["operations"])
         from upgrade_task_creation import exchange
         sent, result = exchange(value["turn_start"], "turn/start", self.registration["server"])
-        require(sent.get("threadId") == self.registration["thread_id"] and sent.get("input")
+        require(set(sent) == {"threadId", "input"}
+                and sent.get("threadId") == self.registration["thread_id"] and sent.get("input")
                 and result.get("turn", {}).get("id") == value["turn_id"],
                 "TASK_OPERATION_NEW_TURN_RPC_CHANGED")
         previous = json_ref(value["previous_completion"])
@@ -295,6 +296,15 @@ class OperationLedger:
         return dict(operation_id=row[0], request=strict_json(row[1]), phase=row[2],
                     result=strict_json(row[3]) if row[3] else None,
                     receipt=strict_json(row[4]) if row[4] else None)
+
+    def record_native_invocation(self, call, evidence):
+        """Link the actor's exact native/RPC provenance before a side effect."""
+        read_ref(evidence, "original typed invocation")
+        with self._transaction():
+            require(self.inspect(call)["phase"] == "INTENDED", "TASK_OPERATION_INVOCATION_PHASE_INVALID")
+            require(self.db.execute("SELECT 1 FROM events WHERE call_id=? AND kind='NATIVE_INVOCATION'",
+                    (call,)).fetchone() is None, "TASK_OPERATION_INVOCATION_ALREADY_RECORDED")
+            self._event(call, "NATIVE_INVOCATION", {"evidence":evidence})
 
     @contract_errors("TASK_OPERATION_RESULT_REFUSED")
     def operation_result(self, call, result, receipt):

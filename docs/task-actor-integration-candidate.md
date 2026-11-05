@@ -40,13 +40,32 @@ their original evidence. The original user goal remains incomplete: 0/33 runs,
   source's namespace concatenation; live automatic execution remains unverified.
 - The task server profile denies self-connections and physical socket unlink.
   Its inspector uses that exact unlink policy; legacy writers keep their policy.
+- Public official configuration removes shell, apps/plugins and nested-agent
+  tool entrypoints for explicit TASK launches; thread creation sets an empty
+  environment list and later turn grants reject environment/policy overrides.
+  This is a reduction, not a complete tool whitelist or broker/FD boundary.
+- A pre-effect invocation producer binds the exact outer code-mode call, inner
+  received RPC and one ledger intent. Campaign readers accept that explicit
+  descriptor, keeping the original native offset fences. UNKNOWN remains an
+  invocation observation, never completion or permission to execute again.
+- Explicit campaign controls map frozen IDs to the existing Runner's start,
+  claim, candidate, accept, settle, decision-publish and bind entrypoints. The
+  handler checks the original invocation before calling Runner and does not
+  bypass any live identity/adoption/transport gates. Offline start/claim has
+  passed through the actual actor, ledger, Runner and Coordinator.
+- Typed decision-publish and bind-result readers require RPC completion plus
+  the matching native inner event and exact outer JSON output inside the
+  original fence. Returned bytes do not prove semantic model consumption.
+  The business adapter remains in the orchestration source closure; private
+  startup support does not acquire Runner dependencies.
 
 ## Deliberately unclaimed capabilities
 
 The actual same-surface startup sequence has not been run for this candidate.
 TaskActor still receives its business enrollment gate from its caller. The
-campaign/control/advice-chain/transport/input/callback readers do not yet accept
-typed business evidence. Operations-v2 is selected by explicit v2 startup plans;
+campaign controls and the publish/bind result legs have typed evidence branches;
+the advice-body producer/reader, transport, input attribution and callback legs
+remain incomplete. Operations-v2 is selected by explicit v2 startup plans;
 later turn enrollment still needs the live business gate. Broker/remote-exec/MCP/inherited-FD and both Claude
 boundaries remain incomplete. No adoption or exclusive-responder claim follows
 from these modules.
@@ -55,6 +74,16 @@ Accordingly the new task schema refuses formal `launch` and `hold`, its inspecto
 reports `ready=false`, and `startup_ready` is separate. Do not remove that refusal
 until the complete business chain and deployment boundary are independently
 verified. Never bypass it by invoking the underlying harness directly.
+
+The initial immutable operation table cannot know result-derived acceptance
+markers or later advice hashes. The current mapper refuses those operations
+unless the exact values were already frozen; it never guesses, uses a wildcard
+or switches back to shell. Live integration needs a separately authenticated,
+append-only binding of predeclared operation slots to original generated
+artifacts, with producer/reader and model review kept together. Neither copying
+the ledger nor changing its original registration is a valid implementation.
+Typed `advance`/instructions/finish/recovery also remain unconnected. These are
+explicit pending work, not a complete campaign registration interface.
 
 ## Remaining execution order
 

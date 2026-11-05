@@ -45,7 +45,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
            "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
            "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
-           "upgrade_task_readiness.py")
+           "upgrade_task_readiness.py", "upgrade_task_control.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -417,7 +417,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         provider = "codex" if lane == "codex" else "claude"
         if provider == "codex":
             (root / "credential-observations").mkdir(mode=0o700)
-            config_files = {"config.toml": codex_config(codex_original, root, provider_hooks[provider]),
+            config_files = {"config.toml": codex_config(codex_original, root, provider_hooks[provider],
+                                                       task_tools=task_startup is not None),
                             "hooks.json": (json.dumps(provider_hooks[provider], sort_keys=True) + "\n").encode(),
                             "AGENTS.md": policy.encode(),
                             "credential-observations/enabled-v1": b"ccc-request-credentials-v1\n"}

@@ -20,6 +20,8 @@ class CurrentAdapterTests(unittest.TestCase):
         modules = validate_adapter(tree_manifest(root), purpose="campaign")
         self.assertIn("scripts/upgrade_experiment.py", modules)
         self.assertIn("scripts/render_cmux_agent.py", modules)
+        self.assertIn("scripts/upgrade_task_campaign.py", modules)
+        self.assertIn("scripts/upgrade_task_control.py", modules)
 
 
 class AdapterTests(unittest.TestCase):

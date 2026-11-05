@@ -71,6 +71,24 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             clean_child_environment({"CMUX_SURFACE_ID": str(uuid.uuid4())})
 
+    def test_task_configuration_removes_shell_without_claiming_global_allowlist(self):
+        original={"model":"original-model","model_provider":"custom",
+            "model_providers":{"custom":{"base_url":"http://127.0.0.1:3465/v1"}},
+            "features":{"shell_tool":True,"multi_agent":True},"agents":{"enabled":True},
+            "mcp_servers":{"host":{"command":"/outside/command"}},"allowed_tools":["unreal-setting"]}
+        config=tomllib.loads(codex_config(original,self.root,self.hooks,task_tools=True).decode())
+        self.assertEqual(config["model"],original["model"])
+        self.assertEqual(config["model_providers"],original["model_providers"])
+        self.assertFalse(config["features"]["shell_tool"])
+        self.assertFalse(config["features"]["multi_agent_v2"])
+        self.assertTrue(config["features"]["code_mode"])
+        self.assertFalse(config["agents"]["enabled"])
+        self.assertEqual(config["web_search"],"disabled")
+        for key in ("mcp_servers","allowed_tools"):
+            self.assertNotIn(key,config)
+        legacy=tomllib.loads(codex_config(original,self.root,self.hooks).decode())
+        self.assertNotIn("features",legacy)
+
     def test_cli_arguments_are_structured_and_do_not_duplicate_claude_hooks(self):
         odd = self.root / "spaces $(untrusted) `text`"
         args = client_argv("claude", odd, self.root, self.root, session_id=str(uuid.uuid4()))

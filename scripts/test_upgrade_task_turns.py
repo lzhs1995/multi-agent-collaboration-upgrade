@@ -119,5 +119,18 @@ class TaskTurnTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError,"NEW_TURN_RPC_CHANGED"):
             self.ledger.enroll_turn(changed)
 
+    def test_new_turn_cannot_override_environment_or_execution_policy(self):
+        from orchestration_common import json_ref
+        for patch in ({"environments":[{"id":"remote"}]},{"approvalPolicy":"never"},
+                      {"sandboxPolicy":{"type":"dangerFullAccess"}},{"model":"other-model"}):
+            grant,_=self.grant(["other"])
+            value=json_ref(grant)
+            intent=json_ref(value["turn_start"]["intent"])
+            intent["message"]["params"].update(patch)
+            value["turn_start"]["intent"]=self.record("overridden-rpc",intent)
+            changed=self.record("overridden-grant",value)
+            with self.subTest(patch=patch),self.assertRaisesRegex(ContractError,"NEW_TURN_RPC_CHANGED"):
+                self.ledger.enroll_turn(changed)
+
 
 if __name__ == "__main__":unittest.main()

@@ -339,6 +339,16 @@ def decision_publish_evidence(reader, *, fence, until, script) -> dict:
     shared ``codex_stdout`` exactly as the advice read does; ``codex_stdout``
     itself is unchanged.
     """
+    if isinstance(script, dict):
+        from orchestration_campaign import find_control
+        from upgrade_task_control import native_result
+        start = reader.verify_pin(fence) if isinstance(fence,dict) else count(fence,"decision publish fence")
+        ref = find_control(reader,script,after=start)
+        result = native_result(reader,ref["task_invocation"],script,until=until)
+        require(result is not None and result["success"], "DECISION_PUBLISH_TYPED_RESULT_PENDING_OR_FAILED")
+        return dict(kind="DECISION_PUBLISH_OBSERVED",call_id=result["call_id"],call_record=ref,
+                    result_record=result["result_record"],call_timestamp=result["call_timestamp"],
+                    timestamp=result["timestamp"],envelope=result["value"])
     end = count(until, "decision publish window end")
     records = _window(reader, fence, end)
     calls, results, call_ids = [], {}, {}
@@ -462,7 +472,7 @@ def bind_call_evidence(co, key, reader, binding, decision_ref) -> dict:
             "BIND_CALL: the bind call predates this run")
     record = reader.record(pin)
     return dict(kind="BIND_CALL_OBSERVED", call_id=record["payload"].get("call_id"), call_record=pin,
-                timestamp=record.get("timestamp"))
+                timestamp=record.get("timestamp"), **({"task_control":script} if isinstance(script,dict) else {}))
 
 
 def live_bind_call(reader, script, *, after) -> dict:
@@ -485,6 +495,13 @@ def live_bind_call(reader, script, *, after) -> dict:
     A *successful* earlier attempt cannot be among them because its binding
     exists, which ``bind_unbound`` refuses long before reaching here.
     """
+    if isinstance(script,dict):
+        from orchestration_campaign import find_control
+        from upgrade_task_control import native_invocation
+        ref=find_control(reader,script,after=after)
+        proof=native_invocation(reader,ref["task_invocation"],script,allow_intended=True)
+        require(proof["phase"]=="INTENDED", "TASK_BIND_ORIGINAL_INTENT_REQUIRED")
+        return ref
     from orchestration_campaign import native_control
     end = reader.snapshot()["offset"]
     matches, answered = [], set()
@@ -523,6 +540,15 @@ def bind_result_evidence(reader, bind, binding_pin, *, until) -> dict | None:
     journal grows. A second call record re-using the call_id before that output
     makes the pairing ambiguous and refuses.
     """
+    if "task_control" in bind:
+        from upgrade_task_control import native_result
+        result=native_result(reader,bind["call_record"]["task_invocation"],bind["task_control"],until=until)
+        if result is None:
+            return None
+        require(result["success"] and result["value"]==binding_pin,
+                "BIND_RESULT: typed result did not return this executor binding")
+        return dict(kind="BIND_RESULT_OBSERVED",call_id=result["call_id"],
+                    result_record=result["result_record"],timestamp=result["timestamp"])
     call = bind["call_record"]
     start = count(call["offset"], "bind call offset") + count(call["length"], "bind call length")
     end = count(until, "bind result window end")

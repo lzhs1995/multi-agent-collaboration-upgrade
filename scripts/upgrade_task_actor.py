@@ -15,11 +15,14 @@ from upgrade_rpc_peer import verify_peer
 
 
 class TaskActor:
-    def __init__(self, client, ledger, handlers, enrollment_gate, evidence_directory, *, operation_scope=None):
+    def __init__(self, client, ledger, handlers, enrollment_gate, evidence_directory, *, operation_scope=None,
+                 invocation_recorder=None):
         self.client, self.ledger = client, ledger
         self.handlers, self.gate = dict(handlers), enrollment_gate
         self.directory = checked_path(evidence_directory)
         self.closed = False
+        require(invocation_recorder is None or callable(invocation_recorder), "TASK_ACTOR_INVOCATION_RECORDER_INVALID")
+        self.invocation_recorder = invocation_recorder
         operations = ledger.registration["operations"]
         require(operation_scope is None or (isinstance(operation_scope, (list, tuple, set, frozenset))
                 and all(isinstance(name, str) for name in operation_scope)), "TASK_ACTOR_OPERATION_SCOPE_INVALID")
@@ -56,6 +59,9 @@ class TaskActor:
             operation = self.ledger.receive(message)
             call = message["params"]["callId"]
             try:
+                if self.invocation_recorder is not None:
+                    evidence = self.invocation_recorder(self.ledger,message,ref)
+                    self.ledger.record_native_invocation(call,evidence)
                 result, receipt = self.handlers[operation["kind"]](operation["payload"])
                 self.ledger.operation_result(call, result, receipt)
                 self.gate(registration, message, ref)

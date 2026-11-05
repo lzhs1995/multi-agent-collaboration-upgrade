@@ -78,6 +78,16 @@ def registration_for_plan(plan, thread, turn, server):
     return validate_registration(value)
 
 
+def thread_parameters(plan):
+    """Exact supported creation parameters; no implicit execution environment."""
+    value = dict(model=plan["model"], modelProvider=plan["model_provider"], cwd=plan["work_root"],
+        approvalPolicy="never", sandbox="read-only", dynamicTools=[tool_definition()],
+        baseInstructions=plan["base_instructions"], threadSource="user")
+    if plan["schema"] == MULTI_PLAN_SCHEMA:
+        value["environments"] = []
+    return value
+
+
 def _journal_anchor(client, plan, created, creation, *, timeout):
     """Pin only the journal named by the original thread/start response."""
     path = checked_path(created["thread"]["path"])
@@ -124,6 +134,8 @@ def _journal_anchor(client, plan, created, creation, *, timeout):
                 observed = journal_evidence(anchor)
                 original = validate_creation(creation, server=client.server, thread_id=anchor["thread_id"],
                     journal_path=str(path), native_root=str(root), startup_text=plan["startup_text"])
+                require(original["thread_parameters"] == thread_parameters(plan),
+                        "TASK_STARTUP_CREATION_PARAMETERS_CHANGED")
                 require(observed["startup_turn"] == original["turn_id"], "TASK_STARTUP_TURN_CHANGED")
                 return anchor
         require(time.monotonic() < deadline, "TASK_STARTUP_JOURNAL_TIMEOUT_NO_REPLAY")
@@ -154,9 +166,7 @@ def bootstrap_task(client, plan_ref, directory, *, journal_timeout=10):
     write_json(directory / "intent.json", dict(plan=plan_ref, server=client.server,
         socket=client.socket_identity, initialize=initialize, max_thread_starts=1, max_turn_starts=1), exclusive=True)
     try:
-        params = dict(model=plan["model"], modelProvider=plan["model_provider"], cwd=plan["work_root"],
-            approvalPolicy="never", sandbox="read-only", dynamicTools=[tool_definition()],
-            baseInstructions=plan["base_instructions"], threadSource="user")
+        params = thread_parameters(plan)
         created = client.request("thread/start", params)
         thread_exchange = client.last_exchange
         sent, received = exchange(thread_exchange, "thread/start", client.server)

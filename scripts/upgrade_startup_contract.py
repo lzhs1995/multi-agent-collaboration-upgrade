@@ -11,7 +11,7 @@ import shlex
 import stat
 import uuid
 
-from orchestration_common import checked_path, digest, file_ref, json_ref, read_regular, require
+from orchestration_common import checked_path, digest, file_ref, json_ref, read_ref, read_regular, require
 from upgrade_client_isolation import (LANES, NATIVE_POLICY, STATION_LAUNCHERS, claude_ps_wrapper, client_argv,
                                       control_socket, environment, private_native_roots, sandbox_profile,
                                       station_argv, station_config, station_server_argv, verify_client_temp)
@@ -346,6 +346,11 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 and spec["native_policy"] == SOCKET_POLICY and "codex_package" in binding
                 and not startup_continuity_enabled(binding), "STARTUP_TASK_TOPOLOGY_CHANGED")
         require(stage_controller is None, "STARTUP_TASK_LEGACY_STAGE_REFUSED")
+        from upgrade_client_isolation import TASK_TOOL_REDUCTION
+        import upgrade_toml as tomllib
+        config = tomllib.loads(read_ref(spec["pins"]["codex/config.toml"]).decode("utf-8"))
+        require(all(config.get(key) == value for key, value in TASK_TOOL_REDUCTION.items()),
+                "STARTUP_TASK_TOOL_REDUCTION_CHANGED")
     else:
         require("task_startup" not in binding, "STARTUP_TASK_DOWNGRADE_REFUSED")
     if goal_mode:

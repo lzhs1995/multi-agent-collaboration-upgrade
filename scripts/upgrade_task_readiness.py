@@ -104,6 +104,7 @@ def consumption_source(records, startup, completed, consumed, call, output, nonc
 
 
 def task_startup_result(spec):
+    from upgrade_task_startup import plan_value, thread_parameters
     directory = Path(spec["adoption_path"]).parent / "task-startup"
     result_ref = file_ref(directory / "result.json")
     result = json_ref(result_ref)
@@ -112,11 +113,13 @@ def task_startup_result(spec):
             and result.get("ledger") == str(directory / "operations.sqlite")
             and result.get("adoption_proven") is False, "TASK_READINESS_STARTUP_CHANGED")
     anchor = json_ref(result["anchor"])
-    plan = json_ref(spec["task_startup"])
+    plan = plan_value(spec["task_startup"])
     require(anchor["thread_id"] == result["thread_id"] and anchor["native_root"] == plan["native_root"]
             and anchor["startup_text"] == plan["startup_text"], "TASK_READINESS_ANCHOR_CHANGED")
     original = validate_creation(result["creation"], server=anchor["server"], thread_id=result["thread_id"],
         journal_path=anchor["journal"]["path"], native_root=anchor["native_root"], startup_text=anchor["startup_text"])
+    require(original["thread_parameters"] == thread_parameters(plan),
+            "TASK_READINESS_CREATION_PARAMETERS_CHANGED")
     require(journal_evidence(anchor)["startup_turn"] == result["turn_id"] == original["turn_id"],
             "TASK_READINESS_STARTUP_TURN_CHANGED")
     return result_ref, result, anchor

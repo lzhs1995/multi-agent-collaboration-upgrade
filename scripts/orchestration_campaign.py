@@ -148,6 +148,10 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
     they are appended in that frozen order so the reconstructed script and the
     original native call can only ever agree byte for byte.
     """
+    if "task_controls" in campaign:
+        from upgrade_task_campaign import campaign_control
+        return campaign_control(campaign, campaign_ref, action, run_id, node_id=node_id,
+                                marker=marker, decision=decision, decision_fields=decision_fields)
     argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
             str(Path(campaign["adapter"]["path"]) / "scripts" / "orchestration_run.py"),
             "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"],
@@ -171,6 +175,13 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
 
 
 def native_control(reader, ref, script):
+    if isinstance(script,dict):
+        from upgrade_task_control import native_invocation
+        require("task_invocation" in ref, "TASK_CONTROL_TYPED_EVIDENCE_REQUIRED")
+        result=native_invocation(reader,ref["task_invocation"],script,allow_intended=True)
+        require({k:v for k,v in ref.items() if k!="task_invocation"}==result["native"],
+                "TASK_CONTROL_NATIVE_REFERENCE_CHANGED")
+        return result["at"]
     record = reader.record(ref)
     payload = record.get("payload", {})
     require(record.get("type") == "response_item" and payload.get("type") == "custom_tool_call" and
@@ -180,6 +191,12 @@ def native_control(reader, ref, script):
 
 
 def find_control(reader, script, *, after=0):
+    if isinstance(script,dict):
+        from upgrade_task_control import native_invocation
+        evidence=file_ref(Path(script["evidence_directory"])/(script["operation_id"]+".json"))
+        result=native_invocation(reader,evidence,script,allow_intended=True)
+        require(result["native"]["offset"]>=after, "TASK_CONTROL_BEFORE_ORIGINAL_FENCE")
+        return dict(result["native"],task_invocation=evidence)
     end = reader.snapshot()["offset"]
     matches = []
     for ref, record in reader.records(after, end):
@@ -343,6 +360,9 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
             verify_tree(campaign[name])
         read_ref(campaign["python"], "frozen Python")
         require(str(Path(sys.executable).resolve()) == campaign["python"]["path"], "use the frozen Python executable")
+    if "task_controls" in campaign:
+        from upgrade_task_campaign import validate_controls
+        validate_controls(campaign, fixtures=fixtures)
     return campaign
 
 

@@ -57,6 +57,11 @@ class TaskTopologyTests(unittest.TestCase):
         self.assertEqual(plan["schema"],MULTI_PLAN_SCHEMA)
         self.assertEqual(plan["initial_operations"],["ready"])
         self.assertEqual(plan["choice_groups"],{"route":["left","right"]})
+        import upgrade_toml as tomllib
+        config=tomllib.loads(Path(self.spec["pins"]["codex/config.toml"]["path"]).read_text())
+        self.assertFalse(config["features"]["shell_tool"])
+        self.assertTrue(config["features"]["code_mode"])
+        self.assertFalse(config["agents"]["enabled"])
         self.assertEqual(plan["model"],"fixture-codex")
         from upgrade_task_readiness import READY_INSTRUCTION
         self.assertTrue(plan["startup_text"].endswith(READY_INSTRUCTION))

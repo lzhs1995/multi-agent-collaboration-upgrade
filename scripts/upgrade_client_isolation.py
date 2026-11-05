@@ -67,7 +67,16 @@ def private_native_roots(paths):
     return {lane: paths["state"] / "clients" / lane for lane in LANES}
 
 
-def codex_config(original, native_root, hook_config):
+TASK_TOOL_REDUCTION = {
+    "web_search": "disabled",
+    "features": {"shell_tool":False, "code_mode":True, "multi_agent":False,
+                 "multi_agent_v2":False, "apps":False, "plugins":False, "tool_suggest":False},
+    "agents": {"enabled":False},
+    "tools": {"update_plan":{"enabled":False}, "experimental_request_user_input":{"enabled":False}},
+}
+
+
+def codex_config(original, native_root, hook_config, *, task_tools=False):
     """Copy provider/model configuration, never global hooks, tools or policy.
 
     Authentication material is handled as a separate private, mode-0600 file.
@@ -82,6 +91,12 @@ def codex_config(original, native_root, hook_config):
                   allow_login_shell=False, approval_policy="never", sandbox_mode="danger-full-access",
                   shell_environment_policy={"set": {"TMPPREFIX": str(native_root / "tmp" / "zsh")}},
                   projects={str(native_root.parent.parent / "work"): {"trust_level": "trusted"}})
+    require(type(task_tools) is bool, "TASK_TOOL_REDUCTION_MODE_INVALID")
+    if task_tools:
+        # Public official 0.164.0 settings only. These remove shell/optional
+        # entry points; they are NOT an exact tool allowlist or a control-RPC,
+        # MCP/config-layer, inherited-FD or deployment-isolation guarantee.
+        config.update(TASK_TOOL_REDUCTION)
     # zsh creates here-document files under TMPPREFIX, defaulting to /tmp/zsh
     # even when TMPDIR points into the private arm. The native root's tmp
     # directory is prepared before launch and already inside Seatbelt. Pin the
