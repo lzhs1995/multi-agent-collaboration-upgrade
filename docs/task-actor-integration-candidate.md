@@ -349,3 +349,24 @@ result; explicit receiver provenance is always checked when present.
 Six targeted local checks passed, including omitted flags, a false receipt phase,
 missing or mismatched sender results, and the existing typed target reader. These
 checks use local fixtures and original .84 validation, not live callback delivery.
+
+## Idle callback service admission
+
+`TaskService.start_callback_turn` accepts an actual connected Unix socket and
+the original pack/attempt references. The retained campaign gate checks the
+normally completed previous turn, original dispatched Claude lane, report,
+latest one-shot input intent and native EOF fence. Kernel peer/parent process
+observations are repeated; environment selectors provide no identity.
+
+The service preserves an immutable pre-send attempt and provenance, sends the
+exact original callback params through its retained RPC, and enrolls the new
+turn in the same SQLite ledger. It shares the existing next-turn budget and
+keeps ambiguous results non-replayable. A saved plan alone cannot activate the
+in-memory ingress capability. Generated private readiness support still strips
+both campaign-input methods and keeps its original dependency closure.
+
+This is the service component only. There is no listening endpoint or runtime
+poll integration yet. The generated sender still refuses idle `turn/start`;
+historical idle-callback input attribution and receiver receipt verification
+must be connected before enabling it. Local tests separately mock dispatch,
+live deployment and RPC; they do not prove a live model or callback receipt.

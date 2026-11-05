@@ -268,6 +268,11 @@ class TaskService:
                 error=str(exc),retry_allowed=False),exclusive=True)
             raise
 
+    def start_callback_turn(self, connection, request):
+        """One ingress-authenticated idle callback on this same retained owner."""
+        from upgrade_task_callback_turn import deliver
+        return deliver(self, connection, request)
+
     def _bindings(self):
         for call,(message,ref) in list(self.pending.items()):
             result=self.actor.bind_completed(message,ref)

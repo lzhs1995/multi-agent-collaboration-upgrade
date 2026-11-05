@@ -128,8 +128,13 @@ class TaskCampaignGate:
             from upgrade_task_instructions import next_input_value
             fields.add("campaign")
             require(value==next_input_value(service,previous_ref),"TASK_ENROLLMENT_TYPED_INPUT_PLAN_CHANGED")
+        elif value.get("schema")=="upgrade-task-callback-input-plan-v1":
+            from upgrade_task_callback_turn import validate_plan
+            fields.update(("campaign", "callback"))
+            validate_plan(service, plan_ref, previous_ref)
         require(set(value)==fields
-                and value["schema"] in ("upgrade-task-next-input-plan-v1","upgrade-task-next-input-plan-v2")
+                and value["schema"] in ("upgrade-task-next-input-plan-v1","upgrade-task-next-input-plan-v2",
+                                        "upgrade-task-callback-input-plan-v1")
                 and self.registration["schema"] in ("upgrade-task-operations-v2","upgrade-task-operations-v3")
                 and value["registration_sha256"]==self.ledger.registration_sha256
                 and value["authority_ref"]==self.registration["authority_ref"]
@@ -174,6 +179,9 @@ class TaskCampaignGate:
         require(not os.path.lexists(self.spec["stop_path"]),"EXPERIMENT_STOP_REQUESTED")
         params=dict(threadId=self.registration["thread_id"],
             input=[dict(type="text",text=value["text"],text_elements=[])])
+        if value["schema"]=="upgrade-task-callback-input-plan-v1":
+            from upgrade_task_callback_turn import input_parameters
+            params=input_parameters(service,plan_ref)
         started=self.client.request("turn/start",params)
         from upgrade_task_creation import exchange
         from upgrade_task_operations import _uuid
