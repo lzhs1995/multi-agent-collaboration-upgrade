@@ -27,8 +27,9 @@ def caller_in_tree(tree,session):
     return rows[0]
 
 
-def observe(runtime,guard):
-    proof=current_scope();scope=json_ref(proof)
+def observe(runtime,guard,scope_reader=None):
+    read_scope=current_scope if scope_reader is None else scope_reader
+    proof=read_scope();scope=json_ref(proof)
     context=_active.get()
     require(context is not None and type(context[0]) is TaskCampaignGate,
             "TASK_BRIDGE_ORIGINAL_ACTOR_REQUIRED")
@@ -41,17 +42,17 @@ def observe(runtime,guard):
     caller_in_tree(tree,target)
     # Rechecking the scope rechecks live kernel/RPC/adoption/STOP after the tree
     # read. Sequential observations do not claim atomic exclusion of user input.
-    require(current_scope()==proof,"TASK_BRIDGE_OPERATION_CHANGED_DURING_OBSERVATION")
+    require(read_scope()==proof,"TASK_BRIDGE_OPERATION_CHANGED_DURING_OBSERVATION")
     return dict(identity_source=SOURCE,foreground_authentication=False,task_actor=proof,
                 caller=caller,tree=tree,supervisor=sender,target=target)
 
 
 @contextmanager
-def activate(runtime,guard,adapter):
+def activate(runtime,guard,adapter,scope_reader=None):
     require(Path(guard.__file__).resolve().parent==runtime.scripts
             and Path(adapter.__file__).resolve().parent==runtime.scripts,
             "TASK_BRIDGE_MIXED_CONTROLLER")
-    with adapter.activate(lambda:observe(runtime,guard)):
+    with adapter.activate(lambda:observe(runtime,guard,scope_reader)):
         yield
 
 

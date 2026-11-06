@@ -575,6 +575,8 @@ def delivery_identity(receiver, sender):
 
 def check_native_binding(binding, receiver, sender, text, *, fixtures=False, uuid_semantics=False):
     from upgrade_task_target_evidence import check_target
+    from upgrade_task_sender_evidence import verify_source
+    verify_source(binding,sender,receiver,fixtures=fixtures)
     check_target(binding, receiver)
     require(binding.get("provider") == receiver["provider"] and binding.get("session_id") == receiver["session_id"],
             "receiver session mismatch")

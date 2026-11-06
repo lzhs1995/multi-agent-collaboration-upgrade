@@ -17,7 +17,9 @@ from unittest.mock import patch
 from orchestration_common import ContractError, file_ref, write_json
 from upgrade_live_patch import native_readers, live_gates
 from upgrade_task_target_patch import task_target_paths
+from upgrade_task_bridge_patch import task_bridge_paths
 import upgrade_task_target as target
+import upgrade_task_sender as sender
 import test_upgrade_task_thread as thread_fixture
 
 SOURCE = Path('/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/collaboration-maintenance-context-5994-20261011-v1/successor28-from6105-20261012-v1/continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source')
@@ -81,7 +83,8 @@ class TargetTests(unittest.TestCase):
         # Execute original reader functions, preserving their source and fences.
         # Native process discovery is replaced only by explicit test doubles.
         raw=(SOURCE/'scripts/cmux_native_delivery.py').read_text()
-        rendered=task_target_paths('cmux_native_delivery.py',native_readers('cmux_native_delivery.py',raw))
+        rendered=task_bridge_paths('cmux_native_delivery.py',task_target_paths(
+            'cmux_native_delivery.py',native_readers('cmux_native_delivery.py',raw)))
         import cmux_native_delivery as base_native
         self.native=types.ModuleType('fixture_task_delivery')
         self.native.__dict__.update(base_native.__dict__)
@@ -99,6 +102,7 @@ class TargetTests(unittest.TestCase):
         import cmux_daemon_identity
         for p in (
             patch.object(target,'configuration',return_value=(self.binding,{})),
+            patch.object(sender,'configuration',return_value=(self.binding,{})),
             patch.object(target,'task_startup_result',side_effect=lambda *a:(self.result_ref,self.result,self.anchor)),
             patch.object(target,'process_root',return_value=f.root),
             patch.object(target,'observe',side_effect=lambda client,anchor,process:thread_fixture.observe(

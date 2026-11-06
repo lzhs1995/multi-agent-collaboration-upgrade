@@ -142,6 +142,10 @@ class PinnedRuntime:
             return bridge.task_pack_notice(pack)
 
     def submit(self, surface, notice, pack, *, reconcile_only):
+        if "task_controls" in self.campaign:
+            from upgrade_task_dispatch import submit
+            with self.modules("cmux_bridge","cmux_workspace_guard","mac_upgrade_task_bridge_context") as modules:
+                return submit(self,*modules,surface,notice,pack,reconcile_only=reconcile_only)
         with self.modules("cmux_bridge") as (bridge,):
             return bridge.submit_task_pack(surface, notice, pack, confirm_lines=200,
                                            force_compose=False, reconcile_only=reconcile_only)

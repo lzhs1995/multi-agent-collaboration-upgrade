@@ -148,12 +148,14 @@ sys.path.insert(0,sys.argv[1])
 from orchestration_transport import PinnedRuntime
 from orchestration_common import json_ref
 runtime=PinnedRuntime(json_ref(json.loads(sys.argv[2])))
-with runtime.modules('cmux_bridge','cmux_workspace_guard','mac_upgrade_task_bridge_context','cmux_hook_scope','mac_harness') as (bridge,guard,context,hooks,harness):
+with runtime.modules('cmux_bridge','cmux_workspace_guard','mac_upgrade_task_bridge_context','cmux_hook_scope','mac_harness','mac_upgrade_task_sender') as (bridge,guard,context,hooks,harness,sender):
+ assert Path(sender.__file__).resolve().parent==runtime.scripts
  def forbidden(*a,**kw):raise AssertionError('foreground called')
  guard.caller_snapshot=forbidden
  value=json.loads(sys.argv[3])
  with context.activate(lambda:value):
   assert bridge.whoami()['task_actor']==value['task_actor']
+  assert sender.snapshot()['task_actor']==value['task_actor']
   assert harness._workspace_key()==value['caller']['workspace_id']
   assert len(bridge.list_surfaces())==3
   proof=bridge.pin_workspace(value['target']['surface_uuid'])
@@ -161,6 +163,7 @@ with runtime.modules('cmux_bridge','cmux_workspace_guard','mac_upgrade_task_brid
   rows=[dict(role=role,surface_uuid=value[key]['surface_uuid'],provider=value[key]['provider']) for role,key in [('supervisor','supervisor'),('executor','target')]]
   assert hooks.bind_participants(bridge,value['caller']['workspace_id'],rows)[0]['native_session_id']==value['supervisor']['session_id']
  assert context.snapshot() is None
+ assert sender.snapshot() is None
 print('GENERATED84_EXPLICIT_BRIDGE_PASS')
 '''
         f=BridgeTests();f.setUp();self.addCleanup(f.doCleanups)

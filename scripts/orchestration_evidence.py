@@ -401,6 +401,9 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     handshake_notice = read_ref(proof["handshake"]["notice"]).decode()
     handshake_delivery = verify_delivery(proof["handshake"]["delivery"], receiver, sender, handshake_notice, fixtures=fixtures,
                                          uuid_semantics=campaign_version(campaign) == 3)
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_sender_evidence import verify_delivery_source
+        verify_delivery_source(handshake_delivery,file_ref(directory/"operations/preflight/task-actor.json"))
     body = handshake.get("dispatch_body_reference")
     if body:
         require(proof["handshake"].get("body") == {k: body[k] for k in ("path", "sha256", "bytes")}, "handshake body pin changed")
@@ -450,10 +453,18 @@ def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
 @contract_errors("task delivery")
 @native_verification
 def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_dispatch import verify_provenance
+        root=node_directory(campaign,header,node)
+        actor=file_ref(root/"operations/submit-task-pack/task-actor.json")
+        verify_provenance(campaign,header,node,info,actor)
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
     delivered = verify_delivery(bundle, campaign["sessions"][claim_lane(node, info)], campaign["sessions"]["codex"],
                                 prepared["notice"], fixtures=fixtures, uuid_semantics=campaign_version(campaign) == 3)
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_sender_evidence import verify_delivery_source
+        verify_delivery_source(delivered,actor)
     binding = delivered["attempt"]["binding"]
     require(binding.get("task_id") == info["task_id"] and binding.get("marker") == info["task_id"] and
             binding.get("task_pack_sha256") == info["prepared"]["pack"]["sha256"], "dispatch task/pack hash mismatch")
