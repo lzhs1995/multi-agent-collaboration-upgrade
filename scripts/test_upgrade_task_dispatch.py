@@ -21,6 +21,7 @@ import test_upgrade_task_transport as fixtures
 class DispatchTests(unittest.TestCase):
     def setUp(self):
         helper=fixtures.TypedTransportTests();self.addCleanup(helper.doCleanups)
+        helper.typed_inputs=getattr(self,"typed_inputs",False)
         if hasattr(self,"transport_actions"):helper.transport_actions=self.transport_actions
         self.f,self.fake=helper.fixture();f=self.f;self.transport=helper.transport(f)
         f.call("prepare");f.complete("prepare")

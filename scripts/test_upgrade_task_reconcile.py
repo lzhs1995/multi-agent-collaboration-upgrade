@@ -28,6 +28,7 @@ import test_upgrade_task_dispatch as fixtures
 class ReconcileTests(unittest.TestCase):
     def setUp(self):
         helper=fixtures.DispatchTests();helper.transport_actions=("prepare","dispatch","reconcile")
+        helper.typed_inputs=getattr(self,"typed_inputs",False)
         helper.setUp();self.addCleanup(helper.doCleanups);self.helper=helper;f=helper.f;self.f=f
         helper.fake.hide_receipt=True;f.call("dispatch");f.complete("dispatch")
         self.transport=helper.transport;self.runtime=helper.runtime;self.saved=[];self.reads=[]

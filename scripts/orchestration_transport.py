@@ -385,6 +385,8 @@ class Transport:
     def _received(self, info):
         bundle = self._bundle(info)
         verify_dispatched(self.campaign, self.co.header, self.node, info, bundle, fixtures=self.co.fixtures)
+        from upgrade_task_input_provenance import publish
+        publish(self,bundle)
         self.co.transition(self.key, State.DISPATCHED, {"delivery": bundle})
         return bundle
 

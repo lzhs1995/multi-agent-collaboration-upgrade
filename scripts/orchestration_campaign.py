@@ -258,8 +258,9 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
                 and set(registrations) == {r["run_id"] for r in campaign.get("runs") or [] if isinstance(r, dict)},
                 "input provenance needs exactly one frozen producer registration per run")
         from upgrade_input_provenance import registered_producers
+        from upgrade_task_input_provenance import validate_campaign_producers
         for run_id, ref in registrations.items():
-            registered_producers(ref, run_id)
+            validate_campaign_producers(campaign,registered_producers(ref,run_id))
     else:
         require("input_provenance" not in campaign, "input provenance belongs to its own metric definition")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,

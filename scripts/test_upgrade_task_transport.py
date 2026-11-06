@@ -18,6 +18,7 @@ import test_upgrade_task_campaign as fixtures
 class TypedTransportTests(unittest.TestCase):
     def fixture(self, node="review"):
         f=fixtures.CampaignActorTests();f.transport_node=node;f.service_mode=True
+        f.typed_inputs=getattr(self,"typed_inputs",False)
         if hasattr(self,"transport_actions"):f.transport_actions=self.transport_actions
         f.setUp();self.addCleanup(f.doCleanups)
         f.call("start");f.complete("start")

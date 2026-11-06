@@ -198,7 +198,7 @@ def _input_units(co, readers, native_end, allowed_refs, registration, *, not_aft
     provenance = classify_inputs(journal, registration, co.spec["run_id"], readers, starts, native_end,
                                  producer_sessions=lane_producer_sessions(registration, co.spec["run_id"], readers,
                                                                           starts, native_end),
-                                 not_before=co.header["started_at"], not_after=not_after)
+                                 not_before=co.header["started_at"], not_after=not_after,fixtures=co.fixtures)
     # Its journal-level count also treats protocol records and status queries as unknown;
     # the run's one count is _human_interventions below.
     provenance.pop("human_interventions")

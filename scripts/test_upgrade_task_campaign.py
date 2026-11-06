@@ -71,6 +71,16 @@ class CampaignActorTests(unittest.TestCase):
         if not getattr(self,"service_mode",False):self.directory.mkdir(mode=0o700)
         self.c.campaign["task_controls"]=dict(schema=BINDING_SCHEMA if self.registration["schema"]=="upgrade-task-operations-v3" else SCHEMA,registration=self.reg_ref,
                                               evidence_directory=str(self.directory))
+        if getattr(self,"typed_inputs",False):
+            from orchestration_campaign import METRICS_V3_INPUT_PROVENANCE
+            from upgrade_input_provenance import REGISTRATION_SCHEMA
+            controls=self.c.campaign["task_controls"];sender=self.c.campaign["sessions"]["codex"]
+            producer=dict(id="typed-supervisor",kind="lane_agent",
+                session={k:sender[k] for k in ("provider","session_id","transcript")},
+                transport=dict(kind="task_dispatch",campaign_id=self.c.campaign["campaign_id"],campaign_root=self.c.campaign["root"],
+                    controls={k:controls[k] for k in ("registration","evidence_directory")}))
+            ref=write_json(self.control/"input-producers.json",dict(schema=REGISTRATION_SCHEMA,run_id="run-01",producers=[producer]))
+            self.c.campaign.update(metrics=METRICS_V3_INPUT_PROVENANCE,input_provenance=dict(registrations={"run-01":ref}))
         self.c.save();self.runner=Runner(self.c.ref,fixtures=True)
         self.queue=[];self.sent=[];self.gates=[];self.sequence=0
         f.client.receive_recorded=lambda timeout:self.queue.pop(0)
