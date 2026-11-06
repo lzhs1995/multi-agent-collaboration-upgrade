@@ -6,7 +6,7 @@ model, client enrollment or live sender authority is asserted by these fixtures.
 import argparse
 import ast
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager,redirect_stdout,redirect_stderr
+from contextlib import contextmanager,nullcontext,redirect_stdout,redirect_stderr
 from contextvars import copy_context
 import copy
 import io
@@ -105,8 +105,9 @@ class HarnessTests(unittest.TestCase):
             if getattr(self,"fail_phase",None)==argv[0]:raise SystemExit(19)
         @contextmanager
         def modules(runtime,*names):
-            self.assertIs(runtime,self.runtime);self.assertEqual(names,("mac_harness",))
-            yield (SimpleNamespace(main=main),)
+            self.assertIs(runtime,self.runtime)
+            self.assertEqual(names,("mac_harness","cmux_workspace_guard","mac_upgrade_task_bridge_context"))
+            yield (SimpleNamespace(main=main,_UPGRADE_TASK_BRIDGE_PARTICIPANTS=True),None,None)
         def context(runtime,argv,root):
             self.scope_calls+=1
             if getattr(self,"stop_after_initial",False) and self.scope_calls>1:
@@ -117,6 +118,7 @@ class HarnessTests(unittest.TestCase):
         from orchestration_native import NativeReader
         for patcher in (
             patch.object(harness,"_context",side_effect=context),
+            patch("upgrade_task_bridge.activate",side_effect=lambda *a:nullcontext()),
             patch.object(PinnedRuntime,"modules",modules),
             patch("orchestration_native.NativeReader",side_effect=lambda session,**kwargs:NativeReader(session,fixtures=True))):
             patcher.start();self.addCleanup(patcher.stop)

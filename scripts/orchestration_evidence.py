@@ -357,6 +357,9 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
             proof["notice"]["path"] == str(directory / "task-notice.txt"), "prepared task paths changed")
     pack = json_ref(pack_ref, "finalized task pack")
     gate = json_ref(proof["identity_gate"], "identity gate")
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_bridge import verify_gate
+        verify_gate(campaign,header,node,info,gate)
     supervisor = prepared_supervisor(campaign, node, gate, info)
     if campaign_version(campaign) == 3:
         from orchestration_pack_inputs import verify_inputs

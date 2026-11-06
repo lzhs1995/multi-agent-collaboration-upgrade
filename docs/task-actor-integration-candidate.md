@@ -466,6 +466,41 @@ validation now precedes all relevant entry points. Two test selector typos and
 all earlier failures remain in the original logs. The source dependency closure
 check passes. Harness transport/deployment fixtures do not prove actual delivery.
 
-The original bridge, task marker, identity-gate participants and sender readers
-still require explicit actor provenance. This entry does not activate TASK
-launch, alter the immutable .84 source or replace any existing controller.
+This entry does not activate TASK launch, alter the immutable .84 source or
+replace any existing controller. The preparation bridge integration below adds
+actor provenance; the dispatch/sender readers still need their own integration.
+
+## Explicit preparation actor in the generated bridge
+
+During the exact active harness phase, the external service passes an observer
+to the generated controller's explicit bridge context. Each bridge observation
+rechecks the original phase/actor/kernel/RPC/adoption/STOP before and after the
+actual cmux tree read. The task's display endpoint and selected Claude lane come
+from that original registration. No foreground proof, caller environment or
+module replacement is supplied. These remain sequential checks, not an atomic
+lock against user actions, and the adapter is for trusted controller code.
+
+The generated whoami, workspace inventory, workspace guard and participant
+reader use the explicit context while it is active. The original pure workspace
+resolver and designated scope file still narrow the target; an operation cannot
+use another registered Claude lane or another visible surface. Without an actor
+context, the native caller path remains unchanged. Thread/async-task ownership,
+nesting refusal and an expiring lease prevent context reuse. Identity gates,
+participant pins, workspace proofs and task markers record the phase source.
+The prepared reader requires the exact original preflight provenance on every
+gate member; removing it cannot turn a TASK record into legacy evidence.
+
+Original .84 functions and the complete generated controller were exercised
+with an explicit fixture observer inside the original sandbox. Checks cover
+same-pane tabs, exact lane, designated scope, changed tree/phase, expired or
+copied contexts, native fallback and missing gate provenance. A test initially
+used the checkout's older workspace resolver; passing the generated resolver
+explicitly corrected that dependency. An additional compatibility check found
+that .34 lacks native participants. Its legacy path still renders; TASK now
+explicitly refuses that missing participant contract. The fixture's temporary
+path also needed canonicalization. Original failures remain in the evidence.
+
+This covers preparation identity plumbing only. Dispatch outside a harness
+phase, input-gate server/TUI role validation, sender history and manual-input
+accounting, local business execution, TASK adoption and FD/broker isolation
+remain unfinished. No new live experiment or model operation was launched.

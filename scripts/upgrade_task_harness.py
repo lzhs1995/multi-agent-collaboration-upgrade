@@ -78,25 +78,29 @@ def current_scope():
 
 def invoke(runtime,argv,operation_root):
     from orchestration_transport import PinnedRuntime
+    from upgrade_task_bridge import activate as bridge_actor
     require(type(runtime) is PinnedRuntime and "task_controls" in runtime.campaign,
             "TASK_HARNESS_ORIGINAL_RUNTIME_REQUIRED")
     require(_active.get() is None,"TASK_HARNESS_NESTED_PHASE_REFUSED")
     scope=_context(runtime,argv,operation_root)
     proof=write_json(Path(operation_root)/"task-actor.json",scope,exclusive=True)
     stdout,stderr=(Path(operation_root)/(name+".txt") for name in ("stdout","stderr"))
-    with runtime.modules("mac_harness") as (harness,):
+    with runtime.modules("mac_harness","cmux_workspace_guard","mac_upgrade_task_bridge_context") as (harness,guard,adapter):
+        require(getattr(harness,"_UPGRADE_TASK_BRIDGE_PARTICIPANTS",False) is True,
+                "TASK_HARNESS_PARTICIPANT_CONTRACT_REQUIRED")
         with stdout.open("x",encoding="utf-8") as out,stderr.open("x",encoding="utf-8") as err:
             lease=dict(active=True,pid=os.getpid(),owner=execution_owner())
             token=_active.set((runtime,list(argv),Path(operation_root),proof,lease))
             try:
                 with capture(out,err):
                     current_scope()
-                    try:
-                        harness.main(argv[3:])
-                        code=0
-                    except SystemExit as exc:
-                        code=exc.code if type(exc.code) is int else 0 if exc.code is None else 1
-                        if exc.code is not None and type(exc.code) is not int:print(exc.code,file=err)
+                    with bridge_actor(runtime,guard,adapter):
+                        try:
+                            harness.main(argv[3:])
+                            code=0
+                        except SystemExit as exc:
+                            code=exc.code if type(exc.code) is int else 0 if exc.code is None else 1
+                            if exc.code is not None and type(exc.code) is not int:print(exc.code,file=err)
                     current_scope()
             finally:
                 lease["active"]=False
