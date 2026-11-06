@@ -122,6 +122,9 @@ class PinnedRuntime:
                 "--expected-executor-uuid", receiver["surface_uuid"]]
 
     def harness(self, argv, operation_root):
+        if "task_controls" in self.campaign:
+            from upgrade_task_harness import invoke
+            return invoke(self,argv,operation_root)
         verify_tree(self.campaign["controller"])
         read_ref(self.campaign["python"])
         stdout, stderr = operation_root / "stdout.txt", operation_root / "stderr.txt"

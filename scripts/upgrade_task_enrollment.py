@@ -14,6 +14,7 @@ import sys
 
 from orchestration_common import file_ref, json_ref, object_sha, read_ref, require, write_json
 from upgrade_rpc_peer import verify_peer
+from upgrade_task_streams import execution_owner
 
 SCHEMA="upgrade-task-campaign-enrollment-v1"
 IDENTITY_SOURCE="live_kernel_and_original_task_rpc"
@@ -82,6 +83,8 @@ class TaskCampaignGate:
                 and startup["ledger"]==str(ledger.path),"TASK_ENROLLMENT_ORIGINAL_LEDGER_REQUIRED")
         self.pending=None
         self.owner_pid=os.getpid()
+        self.owner_execution=execution_owner()
+        self.active_context=None
         self.proof_path=Path(startup["operations"]["path"]).parent/"campaign-enrollment.json"
         sessions=self._observe()
         self.proof=write_json(self.proof_path,dict(schema=SCHEMA,campaign=runner.ref,
@@ -92,12 +95,19 @@ class TaskCampaignGate:
             controller_pid=self.owner_pid,ledger=dict(path=str(ledger.path),device=ledger.identity[0],inode=ledger.identity[1]),
             foreground_authentication=False,input_operations=0),exclusive=True)
 
+    def _require_owner(self):
+        """Reject copied/stale contexts before touching pending state or SQLite."""
+        require(os.getpid()==self.owner_pid,"TASK_ENROLLMENT_OWNER_PROCESS_CHANGED")
+        require(execution_owner()==self.owner_execution,"TASK_ENROLLMENT_EXECUTION_OWNER_CHANGED")
+        active=_active.get()
+        require(active is None or active is self.active_context,"TASK_ENROLLMENT_ACTIVATION_ENDED_OR_CHANGED")
+
     def _observe(self,*,expected_turn=None,require_normal_idle=False):
+        self._require_owner()
         from orchestration_campaign import (canonical_live_uuids,controller_modules,validate_campaign)
         from upgrade_live_control import external_publisher
         from upgrade_live_runtime import validate_adoption
         from upgrade_task_thread import observe, validate_tui_target
-        require(os.getpid()==self.owner_pid,"TASK_ENROLLMENT_OWNER_PROCESS_CHANGED")
         require(validate_campaign(self.runner.ref)==self.campaign,"TASK_ENROLLMENT_CAMPAIGN_CHANGED")
         external_publisher(self.spec)
         validate_adoption(self.campaign["runtime"],self.campaign["client_isolation"])
@@ -150,6 +160,7 @@ class TaskCampaignGate:
 
     def validate_next_input(self,service,plan_ref,previous_ref):
         """Validate finite scope and original owner before reserving input."""
+        self._require_owner()
         from upgrade_task_actor import TaskService
         from upgrade_task_operations import _operation_subset
         require(type(service) is TaskService and service.actor.service_owner is service
@@ -240,6 +251,7 @@ class TaskCampaignGate:
         unrelated intervening RPCs cannot replace its exchange. A grant file
         alone or a new controller process cannot authorize this transition.
         """
+        self._require_owner()
         require(_active.get() is None,"TASK_ENROLLMENT_TURN_DURING_OPERATION")
         self.pending=None
         read_ref(self.proof,"original actor enrollment")
@@ -267,6 +279,7 @@ class TaskCampaignGate:
                 input_operations=0),exclusive=True)
 
     def __call__(self,registration,message,record):
+        self._require_owner()
         self.pending=None
         require(registration==self.registration,"TASK_ENROLLMENT_REGISTRATION_CHANGED")
         read_ref(self.proof,"original actor enrollment")
@@ -292,12 +305,17 @@ class TaskCampaignGate:
 
     @contextmanager
     def activate(self):
-        require(self.pending is not None and _active.get() is None,"TASK_ENROLLMENT_CONTEXT_UNAVAILABLE")
+        self._require_owner()
+        require(self.pending is not None and _active.get() is None and self.active_context is None,
+                "TASK_ENROLLMENT_CONTEXT_UNAVAILABLE")
         message,record=self.pending
         self(self.registration,message,record)
-        token=_active.set((self,message,record))
+        self.active_context=(self,message,record)
+        token=_active.set(self.active_context)
         try:yield
-        finally:_active.reset(token)
+        finally:
+            self.active_context=None
+            _active.reset(token)
 
 
 def current_identity(campaign):

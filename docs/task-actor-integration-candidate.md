@@ -413,10 +413,9 @@ tests also pass. Logs retain the initial failure. The tests use real local
 service/actor bookkeeping, SQLite, node locks and transport evidence readers;
 harness execution, deployment and Claude records are explicit offline fixtures.
 
-This does not enable TASK launch. `PinnedRuntime.harness` still invokes a
-subprocess and cannot carry the original actor ContextVar into native identity
-checks. Live actor-aware harness identity, preparation/sender provenance and
-adoption/FD isolation remain required before a real collaboration unit.
+This does not enable TASK launch. The scoped in-process harness entry below
+addresses ContextVar ownership. Live actor-aware harness identity, sender
+provenance and adoption/FD isolation remain required before a real collaboration unit.
 
 ## Actor enrollment observes Claude without sender authority
 
@@ -437,3 +436,36 @@ journals, replacement/in-place mutation and a valid complete append. The
 affected enrollment tests also pass. This resolves the identity-observation
 dependency; live harness identity, sender permission and adoption still need
 their separate integration.
+
+## Scoped harness entry in the retained actor process
+
+TASK preparation invokes the frozen generated harness in the original service
+process, using the original parser with explicit argv. It requires the active
+original actor, matching SQLite INTENDED call, native invocation, exact
+campaign/run/node/lane, PREPARING state and original phase intent. Only the
+existing preparation phases and derived argv are accepted. Other campaigns
+retain the original subprocess path. No foreground identity is manufactured.
+
+Each phase writes task-actor.json alongside the original intent/result and
+stdout/stderr. Prepared and preparation-exit readers validate this provenance;
+production TASK records cannot drop it and pass as legacy evidence. Failure
+retains the original phase budget and typed UNKNOWN. A phase lease expires on
+return, and process/thread/async-task ownership prevents copied contexts from
+executing elsewhere. Enrollment checks ownership before pending-state mutation
+or SQLite access. Captured Python output belongs only to the calling execution
+context; other threads/tasks keep their original streams. This is not a
+security boundary against arbitrary code running within the trusted process.
+
+Local checks cover scope/argv changes, STOP after intent, SystemExit, lost or
+retargeted provenance, no replay, stream/context isolation and expired leases.
+The complete generated .84 controller also accepts explicit argv inside its
+original sandbox. Its first test launch omitted that sandbox and was correctly
+refused; the test setup was fixed without relaxing production checks. Another
+test exposed ownership validation occurring after SQLite access; production
+validation now precedes all relevant entry points. Two test selector typos and
+all earlier failures remain in the original logs. The source dependency closure
+check passes. Harness transport/deployment fixtures do not prove actual delivery.
+
+The original bridge, task marker, identity-gate participants and sender readers
+still require explicit actor provenance. This entry does not activate TASK
+launch, alter the immutable .84 source or replace any existing controller.

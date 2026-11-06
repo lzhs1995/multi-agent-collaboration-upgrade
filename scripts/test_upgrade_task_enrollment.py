@@ -148,6 +148,54 @@ class EnrollmentTests(unittest.TestCase):
                 raise RuntimeError('fixture interruption')
         with self.assertRaisesRegex(ContractError,'LIVE_ACTOR_REQUIRED'):current_identity(self.campaign)
 
+    def test_copied_context_cannot_run_on_another_thread_or_after_activation(self):
+        from contextvars import copy_context
+        from concurrent.futures import ThreadPoolExecutor
+        gate=self.gate();gate(self.registration,*self.record())
+        with gate.activate():
+            saved=copy_context()
+            pending=gate.pending
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future=pool.submit(saved.run,current_identity,self.campaign)
+                with self.assertRaisesRegex(ContractError,'EXECUTION_OWNER_CHANGED'):future.result(timeout=5)
+            self.assertIs(gate.pending,pending)
+        with self.assertRaisesRegex(ContractError,'ACTIVATION_ENDED_OR_CHANGED'):
+            saved.run(current_identity,self.campaign)
+        self.assertIs(gate.pending,pending)
+        # A later legitimate activation must not revive the earlier copied one.
+        gate(self.registration,*self.record())
+        with gate.activate():
+            with self.assertRaisesRegex(ContractError,'ACTIVATION_ENDED_OR_CHANGED'):
+                saved.run(current_identity,self.campaign)
+
+    def test_foreign_thread_entrypoints_refuse_before_pending_or_ledger_access(self):
+        from concurrent.futures import ThreadPoolExecutor
+        gate=self.gate();message,ref=self.record();gate(self.registration,message,ref)
+        pending=gate.pending
+        def activate():
+            with gate.activate():pass
+        calls=[lambda:gate(self.registration,message,ref),activate,gate._observe,
+               lambda:gate.validate_next_input(None,None,None),
+               lambda:gate.start_next_input(None,None,None,None),
+               lambda:gate.enroll_next_turn(None,None)]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for call in calls:
+                with self.subTest(entry=call):
+                    with self.assertRaisesRegex(ContractError,'EXECUTION_OWNER_CHANGED'):
+                        pool.submit(call).result(timeout=5)
+                    self.assertIs(gate.pending,pending)
+        self.assertEqual(self.f.ledger.db.execute('SELECT count(*) FROM calls').fetchone()[0],0)
+
+    def test_async_child_cannot_inherit_enrollment_execution(self):
+        import asyncio
+        async def child():return current_identity(self.campaign)
+        async def owner():
+            gate=self.gate();gate(self.registration,*self.record())
+            with gate.activate():
+                with self.assertRaisesRegex(ContractError,'EXECUTION_OWNER_CHANGED'):
+                    await asyncio.create_task(child())
+        asyncio.run(owner())
+
     def test_stop_wrong_tui_and_foreign_turn_refuse_without_operation(self):
         gate=self.gate();message,ref=self.record()
         self.process['argv'][-1]='foreign'

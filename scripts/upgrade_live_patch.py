@@ -814,6 +814,19 @@ def live_gates(name, text):
     return text
 
 
+def explicit_harness_main(text):
+    """Same original parser/dispatch for CLI or a bounded in-process caller."""
+    text = replace_once(text, "def main():\n", "def main(argv=None):\n"
+        "    raw_argv = list(sys.argv[1:] if argv is None else argv)\n"
+        "    if raw_argv and raw_argv[0] in ('experiment-launch', 'experiment-client', 'experiment-inspect'):\n"
+        "        from upgrade_live_entry import main as experiment_main\n"
+        "        raise SystemExit(experiment_main(raw_argv))\n")
+    text = replace_once(text, "    args = p.parse_args()", "    args = p.parse_args(raw_argv)")
+    if "    raw_argv = sys.argv[1:]\n" in text:
+        text = replace_once(text,"    raw_argv = sys.argv[1:]\n","")
+    return text
+
+
 def transform_live(name, text, paths, controller, *, compatibility):
     original = text
     text = native_readers(name, text)
@@ -828,10 +841,7 @@ def transform_live(name, text, paths, controller, *, compatibility):
     if name == "mac_harness.py":
         # This remains the harness double gate, with a structured, pinned
         # startup contract. It never uses the legacy paste-to-shell launcher.
-        text = replace_once(text, "def main():\n", "def main():\n"
-            "    if len(sys.argv) > 1 and sys.argv[1] in ('experiment-launch', 'experiment-client', 'experiment-inspect'):\n"
-            "        from upgrade_live_entry import main as experiment_main\n"
-            "        raise SystemExit(experiment_main(sys.argv[1:]))\n")
+        text = explicit_harness_main(text)
     text, changes = transform_python(name, text, paths, controller, compatibility=compatibility)
     text = replace_once(text, "_upgrade_install_scope()", "_upgrade_install_scope(live=True)")
     text = private_imports(text)

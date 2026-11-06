@@ -243,7 +243,12 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         value = result["value"]
         expected_files = {"intent.json", "result.json"}
         if name in HARNESS_STAGES:
-            require(set(value) == {"returncode", "stdout", "stderr"} and
+            actor_fields = {"task_actor"} if "task_controls" in campaign and not fixtures else set()
+            if "task_actor" in value:
+                from upgrade_task_harness import verify_provenance
+                verify_provenance(campaign,header,node,info,name,value["task_actor"],arguments["argv"],refs["intent"],fixtures=fixtures)
+                actor_fields={"task_actor"};expected_files.add("task-actor.json")
+            require(set(value) == {"returncode", "stdout", "stderr"} | actor_fields and
                     type(value["returncode"]) is int and value["returncode"] == 0,
                     "original harness success and complete stdout/stderr required")
             for stream in ("stdout", "stderr"):

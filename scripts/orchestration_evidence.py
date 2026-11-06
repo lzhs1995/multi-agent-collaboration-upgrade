@@ -343,6 +343,9 @@ def prepared_supervisor(campaign, node, gate, info=None):
 @contract_errors("prepared task")
 @native_verification
 def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_harness import verify_prepared_harness
+        verify_prepared_harness(campaign,header,node,info)
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
             "complete prepared-task evidence required")
     directory = node_directory(campaign, header, node)
