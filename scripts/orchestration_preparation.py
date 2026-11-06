@@ -283,6 +283,8 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
             reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],
                                          receiver=receiver, sender=campaign["sessions"]["codex"],
                                          refusal_context=dict(controller=campaign["controller"], python=campaign["python"]),
+                                         task_scope=(dict(campaign=campaign,run_id=header["run"]["run_id"],node_id=node["id"])
+                                                     if "task_controls" in campaign else None),
                                          **({"state_root": state_root(campaign)} if campaign_version(campaign) == 3 else {}))
     return dict(completed_at=previous.isoformat(), observed_at=proof["observed_at"])
 

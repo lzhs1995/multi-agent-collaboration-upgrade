@@ -22,6 +22,7 @@ _spec = importlib.util.spec_from_file_location(
 _literal = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_literal)
 _RPC = {"terminal.paste", "surface.send_text", "turn/steer", "turn/start"}
+_TASK_TOOL = "upgrade_collaboration__execute"
 _SUFFIX = ("Verify and read the exact UTF-8 body; follow its reply contract within existing authority. "
            "Native receipt proves this notice only; body reading and acceptance are separate.")
 
@@ -302,11 +303,16 @@ def invocation_calls(name, arguments, *, static=None):
             if tool is UNKNOWN:
                 calls.append(unresolved("dynamic native tool invocation"))
             elif args is UNKNOWN:
-                if tool in ("exec_command", "write_stdin", "parallel") or tool in _RPC:
+                if tool in ("exec_command", "write_stdin", "parallel", _TASK_TOOL) or tool in _RPC:
                     calls.append(unresolved("nonliteral native tool arguments"))
             else:
                 calls.extend(invocation_calls(tool, args))
         return calls
+    if name == _TASK_TOOL:
+        if isinstance(arguments,str):arguments=strict_json(arguments,"typed task arguments")
+        require(isinstance(arguments,dict) and set(arguments)=={"operation_id"}
+            and isinstance(arguments["operation_id"],str),"unresolved typed task operation")
+        return [dict(kind="task_control",operation_id=arguments["operation_id"])]
     # Freeform patches, images and report data have no command-argument schema.
     # Filter by the actual tool name before attempting any JSON decoding.
     if name not in ("exec_command", "Bash", "bash", "run_terminal_cmd", "write_stdin", "parallel"):

@@ -388,7 +388,8 @@ class NativeReader:
         return records[0][1]
 
     @contract_errors("undispatched native input")
-    def require_no_task_input(self, start, end, *, task_id, pack, notice, receiver, sender, state_root=None, refusal_context=None):
+    def require_no_task_input(self, start, end, *, task_id, pack, notice, receiver, sender, state_root=None, refusal_context=None,
+                              task_scope=None):
         """Separate actual inbound text and supervisor sender calls from reports."""
         from orchestration_inputs import input_texts
         from orchestration_input_history import sender_history
@@ -399,7 +400,7 @@ class NativeReader:
         require(inbound != outbound, "original sender/receiver lane required")
         if outbound:
             return sender_history(self, start, end, receiver, sender, targets,
-                                  state_root=state_root, refusal_context=refusal_context)
+                                  state_root=state_root, refusal_context=refusal_context,task_scope=task_scope)
         for _, record in self.records(start, end):
             if inbound:
                 for text in user_input_texts(record, self.provider) + queued_texts(record):
