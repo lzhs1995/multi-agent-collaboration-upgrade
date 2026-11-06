@@ -52,7 +52,8 @@ class TaskTopologyTests(unittest.TestCase):
                 "claude":{"station":"linxi","key":"linxi-s1"}},
             goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
             lane_instructions=instructions,
-            task_startup=task,task_model_network=getattr(cls,"model_network",False))
+            task_startup=task,task_model_network=getattr(cls,"model_network",False),
+            task_callback_network=getattr(cls,"callback_network",False))
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 
@@ -160,6 +161,25 @@ class NetworkTaskTopologyTests(TaskTopologyTests):
     def test_network_opt_in_cannot_change_a_legacy_startup(self):
         with self.assertRaisesRegex(ContractError,"TASK_NETWORK_REQUIRES_EXPLICIT_TASK"):
             materialize_live(self.context,"B",binaries={},task_model_network=True)
+
+
+class CallbackNetworkTaskTopologyTests(NetworkTaskTopologyTests):
+    callback_network=True
+
+    def test_callback_exact_new_path_is_frozen_and_cannot_be_retargeted(self):
+        from upgrade_task_network import CALLBACK_SCHEMA, callback_path
+        contract=self.binding['task_model_network']
+        self.assertEqual(contract['schema'],CALLBACK_SCHEMA)
+        self.assertEqual(contract['callback'],callback_path(self.binding['evidence_root']))
+        for key in ('codex_server_sandbox','codex_sandbox','control_sandbox'):
+            self.assertNotIn(contract['callback'],Path(self.spec['pins'][key]['path']).read_text())
+        path=Path(self.spec['controller'])/'upgrade-binding.json';original=path.read_bytes();mode=path.stat().st_mode&0o777
+        value=json.loads(original);value['task_model_network']['callback']+='.other'
+        try:
+            path.chmod(0o600);path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ContractError,'TASK_MODEL_NETWORK_CHANGED'):
+                validate_startup(self.runtime['startup'])
+        finally:path.write_bytes(original);path.chmod(mode)
 
 
 if __name__=="__main__":unittest.main()

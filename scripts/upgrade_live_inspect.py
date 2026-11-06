@@ -300,6 +300,13 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                 client.close()
         except Exception as exc:
             errors["codex-rpc"] = str(exc)
+    roles = None
+    if task_mode and len(sessions) == 3:
+        try:
+            from upgrade_task_roles import verify_roles
+            roles = verify_roles(startup_ref, spec, binding, sessions, process=identity.process)
+        except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+            errors["task-roles"] = str(exc)
     if len(sessions) == 3:
         require(len({s["workspace_uuid"] for s in sessions.values()}) == 1
                 and all(len({s[k] for s in sessions.values()}) == 3
@@ -311,7 +318,7 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                 sessions=sessions, readiness=evidence, kernel=kernels, codex_capability=capability,
                 errors=errors, ready=not task_mode and not errors and len(evidence) == 3 and capability is not None,
                 **({"startup_ready": not errors and len(evidence) == 3 and capability is not None,
-                    "business_adoption_supported": False} if task_mode else {}),
+                    "business_adoption_supported": False, "task_roles": roles} if task_mode else {}),
                 stopped=os.path.lexists(spec["stop_path"]) or (stage is not None and os.path.lexists(
                     Path(stage["control"]) / "stop.json")), input_operations=0,
                 **({"startup_failures": startup_failures}

@@ -352,10 +352,12 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
         require(all(config.get(key) == value for key, value in TASK_TOOL_REDUCTION.items()),
                 "STARTUP_TASK_TOOL_REDUCTION_CHANGED")
         if "task_model_network" in binding:
-            from upgrade_task_network import network_contract
+            from upgrade_task_network import CALLBACK_SCHEMA, network_contract
             for lane in GOAL_LANES:
                 original=json.loads(read_ref(spec["pins"][lane+"/settings.json"]))
-                require(binding["task_model_network"]==network_contract(station,original),
+                callback = binding["task_model_network"].get("schema") == CALLBACK_SCHEMA
+                require(binding["task_model_network"]==network_contract(station,original,
+                        evidence_root=binding["evidence_root"] if callback else None),
                         "STARTUP_TASK_MODEL_NETWORK_CHANGED")
     else:
         require("task_startup" not in binding and "task_model_network" not in binding,

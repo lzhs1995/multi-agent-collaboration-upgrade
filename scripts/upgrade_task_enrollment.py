@@ -153,6 +153,8 @@ class TaskCampaignGate:
                 require(all(expected.get(k)==v for k,v in actual.items()),
                         "TASK_ENROLLMENT_ORIGINAL_LANE_CHANGED:"+lane)
                 observed[lane]=actual
+            from upgrade_task_roles import verify_enrolled_roles
+            verify_enrolled_roles(self.runtime, self.spec, self.campaign["sessions"], process=self.client.process)
             verify_peer(self.client.sock,self.client.server,self.client.process)
             return observed
         finally:

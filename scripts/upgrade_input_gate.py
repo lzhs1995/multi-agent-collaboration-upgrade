@@ -63,6 +63,17 @@ def check_input(proof, *, native_binding=None):
     require(len(by_surface) == 3 and caller in by_surface and target in by_surface and caller != target,
             "EXPERIMENT_ENDPOINT_NOT_ENROLLED")
     import cmux_daemon_identity as identity
+    if "task_startup" in binding:
+        # TASK needs the independent server as well as the two UI endpoints.
+        # Full adoption validation still refuses incomplete TASK deployment;
+        # an external JSON claiming legacy-v2 adoption cannot bypass it.
+        from upgrade_live_runtime import validate_adoption
+        from upgrade_task_roles import verify_roles
+        spec = json_ref(startup)
+        runtime_ref = file_ref(Path(binding["controller_root"]).parents[2] / "runtime-v2.json")
+        require(validate_adoption(runtime_ref, file_ref(control / "adoption.json")) == adoption,
+                "TASK_INPUT_ORIGINAL_ADOPTION_CHANGED")
+        verify_roles(startup, spec, binding, sessions, process=identity.process)
     for endpoint in (caller, target):
         lane, session = by_surface[endpoint]
         require(canonical(proof["workspace_uuid"]) == canonical(session["workspace_uuid"]),

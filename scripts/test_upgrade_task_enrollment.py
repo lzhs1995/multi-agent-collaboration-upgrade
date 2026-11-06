@@ -58,11 +58,17 @@ class EnrollmentTests(unittest.TestCase):
             ('upgrade_live_control.external_publisher',dict(side_effect=lambda *a:self.validation_calls.append('external'))),
             ('upgrade_live_runtime.validate_adoption',dict(side_effect=lambda *a:self.validation_calls.append('adoption'))),
             ('upgrade_task_thread.observe',dict(side_effect=lambda *a:copy.deepcopy(self.observed))),
+            ('upgrade_task_roles.verify_enrolled_roles',dict(side_effect=lambda *a,**k:self.validation_calls.append('roles'))),
             ('orchestration_campaign.controller_modules',dict(return_value=(None,self.native,None,None)))):
             p=patch(target,**kwargs);p.start();self.addCleanup(p.stop)
         f.runner.campaign=self.campaign;f.runner.fixtures=False
 
     def gate(self):return TaskCampaignGate(self.f.runner,self.client,self.f.ledger)
+
+    def test_changed_live_server_role_refuses_before_enrollment(self):
+        with patch('upgrade_task_roles.verify_enrolled_roles', side_effect=ContractError('changed server role')):
+            with self.assertRaisesRegex(ContractError, 'changed server role'):self.gate()
+        self.assertFalse((Path(self.startup['operations']['path']).parent/'campaign-enrollment.json').exists())
 
     def record(self,op='start'):
         message=dict(id=1,method='item/tool/call',params=dict(threadId=self.registration['thread_id'],

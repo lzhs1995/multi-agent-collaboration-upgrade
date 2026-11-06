@@ -44,7 +44,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_stage_fence.py", "upgrade_codex_package.py",
            "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
            "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
-           "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py",
+           "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py", "upgrade_task_roles.py",
            "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py", "upgrade_task_network.py",
            "upgrade_task_descriptors.py", "upgrade_task_target.py", "upgrade_task_target_contract.py",
            "upgrade_task_callback_client.py", "upgrade_task_callback_sender.py", "upgrade_task_callback_route.py",
@@ -101,13 +101,16 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
-                     codex_package=None, task_startup=None, task_model_network=False):
+                     codex_package=None, task_startup=None, task_model_network=False,
+                     task_callback_network=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(task_model_network) is bool and (not task_model_network or task_startup is not None),
             "STARTUP_TASK_NETWORK_REQUIRES_EXPLICIT_TASK")
+    require(type(task_callback_network) is bool and (not task_callback_network or task_model_network),
+            "STARTUP_TASK_CALLBACK_NETWORK_REQUIRES_MODEL_NETWORK")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
@@ -222,7 +225,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     network = None
     if task_model_network:
         from upgrade_task_network import network_contract
-        network = network_contract(station,claude_original)
+        network = network_contract(station,claude_original,
+            evidence_root=paths["evidence"] if task_callback_network else None)
     task_plan_ref, task_plan_raw = None, None
     if task_startup is not None:
         from orchestration_common import canonical
