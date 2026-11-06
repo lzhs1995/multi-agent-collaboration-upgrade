@@ -162,17 +162,30 @@ class PinnedRuntime:
 
     def freeze_disarm(self, task_id):
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
-            return freeze_original(self.campaign, task_id, *modules)
+            frozen=freeze_original(self.campaign, task_id, *modules)
+            if "task_controls" in self.campaign:
+                from upgrade_task_disarm import check_frozen
+                check_frozen(self,frozen)
+            return frozen
 
     def observe_disarm(self, frozen):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return observe_original(self.campaign, frozen, *modules)
 
     def disarm(self, frozen):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return invoke_disarm(self.campaign, frozen, *modules)
 
     def recover_disarm(self, frozen, action):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return invoke_recovery(self.campaign, frozen, action, *modules)
 
@@ -202,6 +215,9 @@ def disarm_sources(campaign, campaign_ref, directory, task_id, terminal):
 @contract_errors("scoped disarm")
 def verify_disarm(co, key, info, terminal):
     """An original return or bounded recovery must prove every reservation gone."""
+    if "task_controls" in co.campaign and not co.fixtures:
+        from upgrade_task_disarm import verify_provenance
+        verify_provenance(co,key,info,terminal)
     lease = co._lease(key, info)
     require(lease["released_at"] is not None and lease["released_by"] == terminal,
             "scoped disarm requires the exact terminal's released lease")
@@ -209,6 +225,9 @@ def verify_disarm(co, key, info, terminal):
     ref = file_ref(checked_path(directory / "disarm.json"))
     record = json_ref(ref)
     args, intent_ref, result_ref = disarm_sources(co.campaign, co.campaign_ref, directory, info["task_id"], terminal)
+    if "task_controls" in co.campaign and not co.fixtures:
+        from upgrade_task_disarm import verify_marker
+        verify_marker(co,key,info,json_ref(args["frozen"]))
     require(set(record) == {"version", "task_id", "terminal", "frozen", "operation_result", "proof_kind", "proof"} and
             type(record["version"]) is int and record["version"] == 3 and
             all(record[k] == v for k, v in args.items()) and record["operation_result"] == result_ref,
@@ -475,55 +494,62 @@ class Transport:
 
     def disarm(self):
         with self.co.node_locks(self.key):
-            state, info = self.current()
-            require(state in (State.ACCEPTED, State.FAILED_PRESERVED), "only a verified terminal task may disarm")
-            if not self.co.fixtures:
-                from orchestration_campaign import require_live_identity
-                require_live_identity(self.campaign)
-            terminal = next(e for e in reversed(self.co.events()) if e["node_id"] == self.key)
-            terminal_ref = file_ref(self.co.root / "events" / f"{terminal['seq']:06d}.json")
-            lease = self.co._lease(self.key, info)
-            require(lease["released_at"] is not None and lease["released_by"] == terminal_ref,
-                    "scoped disarm requires the exact terminal's released lease")
-            path = self.root / "disarm.json"
-            if path.exists():
-                return verify_disarm(self.co, self.key, info, terminal_ref)
-            frozen_path = self.root / "disarm-frozen.json"
-            operation = self.root / "operations/scoped-disarm"
-            recovery_root = self.root / "disarm-recovery"
-            if not frozen_path.exists():
-                require(not operation.exists() and not recovery_root.exists(),
-                        "cannot backfill a frozen marker after original disarm intent")
-                write_json(frozen_path, self.runtime.freeze_disarm(info["task_id"]), exclusive=True)
-            frozen_ref = file_ref(checked_path(frozen_path))
-            frozen = json_ref(frozen_ref)
-            validate_frozen(frozen, info["task_id"], self.campaign["sessions"]["codex"]["workspace_uuid"],
-                            object_sha(self.campaign["controller"]), uuid_semantics=campaign_version(self.campaign) == 3)
-            args = dict(task_id=info["task_id"], terminal=terminal_ref, frozen=frozen_ref)
-            if not (operation / "intent.json").exists():
-                require(not recovery_root.exists(), "recovery has no original disarm intent")
-                try:
-                    self.journal(info).once("scoped-disarm", args, lambda _: self.runtime.disarm(frozen))
-                except PendingOperation:
-                    pass  # Preserve ERROR exactly; recovery is separately numbered.
-            args, intent_ref, result_ref = disarm_sources(self.campaign, self.co.campaign_ref, self.root,
-                                                        info["task_id"], terminal_ref)
-            proof, kind = None, None
-            if result_ref is not None and not recovery_root.exists():
-                result = json_ref(result_ref)
-                if result["status"] == "RETURNED":
-                    try:
-                        validate_result(result["value"], frozen)
-                        require(parse_time(json_ref(intent_ref)["created_at"]) <=
-                                parse_time(result["value"]["before"]["observed_at"]) <=
-                                parse_time(result["value"]["observed_at"]) <= parse_time(result["completed_at"]),
-                                "disarm result outside original operation")
-                        proof, kind = result["value"], "ORIGINAL_RETURN"
-                    except (ContractError, KeyError, TypeError):
-                        pass
-            if kind is None:
-                proof = Recovery(recovery_root, frozen_ref, intent_ref, result_ref, self.runtime).run()
-                kind = "BOUNDED_RECOVERY"
-            record = dict(version=3, **args, operation_result=result_ref, proof_kind=kind, proof=proof)
-            write_json(path, record, exclusive=True)
+            if "task_controls" in self.campaign and not self.co.fixtures:
+                from upgrade_task_disarm import run
+                return run(self)
+            return self._disarm_locked()
+
+    def _disarm_locked(self):
+        """Caller holds the original node locks across action and recovery."""
+        state, info = self.current()
+        require(state in (State.ACCEPTED, State.FAILED_PRESERVED), "only a verified terminal task may disarm")
+        if not self.co.fixtures:
+            from orchestration_campaign import require_live_identity
+            require_live_identity(self.campaign)
+        terminal = next(e for e in reversed(self.co.events()) if e["node_id"] == self.key)
+        terminal_ref = file_ref(self.co.root / "events" / f"{terminal['seq']:06d}.json")
+        lease = self.co._lease(self.key, info)
+        require(lease["released_at"] is not None and lease["released_by"] == terminal_ref,
+                "scoped disarm requires the exact terminal's released lease")
+        path = self.root / "disarm.json"
+        if path.exists():
             return verify_disarm(self.co, self.key, info, terminal_ref)
+        frozen_path = self.root / "disarm-frozen.json"
+        operation = self.root / "operations/scoped-disarm"
+        recovery_root = self.root / "disarm-recovery"
+        if not frozen_path.exists():
+            require(not operation.exists() and not recovery_root.exists(),
+                    "cannot backfill a frozen marker after original disarm intent")
+            write_json(frozen_path, self.runtime.freeze_disarm(info["task_id"]), exclusive=True)
+        frozen_ref = file_ref(checked_path(frozen_path))
+        frozen = json_ref(frozen_ref)
+        validate_frozen(frozen, info["task_id"], self.campaign["sessions"]["codex"]["workspace_uuid"],
+                        object_sha(self.campaign["controller"]), uuid_semantics=campaign_version(self.campaign) == 3)
+        args = dict(task_id=info["task_id"], terminal=terminal_ref, frozen=frozen_ref)
+        if not (operation / "intent.json").exists():
+            require(not recovery_root.exists(), "recovery has no original disarm intent")
+            try:
+                self.journal(info).once("scoped-disarm", args, lambda _: self.runtime.disarm(frozen))
+            except PendingOperation:
+                pass  # Preserve ERROR exactly; recovery is separately numbered.
+        args, intent_ref, result_ref = disarm_sources(self.campaign, self.co.campaign_ref, self.root,
+                                                    info["task_id"], terminal_ref)
+        proof, kind = None, None
+        if result_ref is not None and not recovery_root.exists():
+            result = json_ref(result_ref)
+            if result["status"] == "RETURNED":
+                try:
+                    validate_result(result["value"], frozen)
+                    require(parse_time(json_ref(intent_ref)["created_at"]) <=
+                            parse_time(result["value"]["before"]["observed_at"]) <=
+                            parse_time(result["value"]["observed_at"]) <= parse_time(result["completed_at"]),
+                            "disarm result outside original operation")
+                    proof, kind = result["value"], "ORIGINAL_RETURN"
+                except (ContractError, KeyError, TypeError):
+                    pass
+        if kind is None:
+            proof = Recovery(recovery_root, frozen_ref, intent_ref, result_ref, self.runtime).run()
+            kind = "BOUNDED_RECOVERY"
+        record = dict(version=3, **args, operation_result=result_ref, proof_kind=kind, proof=proof)
+        write_json(path, record, exclusive=True)
+        return verify_disarm(self.co, self.key, info, terminal_ref)

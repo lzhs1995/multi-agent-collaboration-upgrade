@@ -28,7 +28,7 @@ PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
                      "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
-                     "advice", "read-advice", "callback", "prepare", "dispatch"})
+                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm"})
 READ_ACTIONS = frozenset({"status", "recover", "verify"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
@@ -278,6 +278,7 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
         elif action == "claim": result = runner.claim(run, node)
         elif action == "prepare": result = runner.transport(runner.co(run), node).prepare()
         elif action == "dispatch": result = runner.transport(runner.co(run), node).dispatch()
+        elif action == "disarm": result = runner.transport(runner.co(run), node).disarm()
         elif action == "candidate": result = runner.candidate(run, node)
         elif action == "callback": result = runner.transport(runner.co(run), node).callback()
         elif action == "block": result = runner.block(run, node, payload["reason"])

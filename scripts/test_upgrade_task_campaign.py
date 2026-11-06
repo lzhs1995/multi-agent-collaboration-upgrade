@@ -27,7 +27,7 @@ class CampaignActorTests(unittest.TestCase):
         operations={name:dict(kind=KIND,payload=operation_payload(self.c.campaign,name,"run-01",
             node_id=getattr(self,"transport_node","local") if name=="claim" else None)) for name in ("start","claim")}
         if getattr(self,"transport_node",None):
-            for action in ("prepare","dispatch"):
+            for action in getattr(self,"transport_actions",("prepare","dispatch")):
                 operations[action]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
                     node_id=self.transport_node))
         self.registration=dict(schema="upgrade-task-operations-v2", task_id="fixture-campaign",
@@ -36,13 +36,14 @@ class CampaignActorTests(unittest.TestCase):
             initial_operations=list(operations),choice_groups={})
         if getattr(self,"binding_mode",False):
             from upgrade_task_bindings import SLOT_SCHEMA
-            operations["candidate"]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"candidate","run-01",node_id="local"))
-            template=operation_payload(self.c.campaign,"accept","run-01",node_id="local",marker="template")
+            binding_node=getattr(self,"binding_node","local")
+            operations["candidate"]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"candidate","run-01",node_id=binding_node))
+            template=operation_payload(self.c.campaign,"accept","run-01",node_id=binding_node,marker="template")
             template["marker"]=None
             operations["accept"]=dict(kind=KIND,payload=template)
             self.registration.update(schema="upgrade-task-operations-v3",initial_operations=list(operations),
                 binding_slots={"accept":dict(schema=SLOT_SCHEMA,resolver="campaign-accept-marker-v1",
-                    source_path=str(self.c.root/"runs/run-01/nodes/local/candidate.json"),producer_operation="candidate")})
+                    source_path=str(self.c.root/"runs/run-01/nodes"/binding_node/"candidate.json"),producer_operation="candidate")})
         if getattr(self,"failure_mode",False):
             from upgrade_task_bindings import SLOT_SCHEMA
             operations["block"]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"block","run-01",
