@@ -74,6 +74,13 @@ After publish-decision, bind-unbound precedes claim. A binding_slot remains unus
 until its original producer and complete native result have been verified. Do not
 guess its marker or digest. Reading a summary does not prove complete body reading.
 
+For a local claim, select its registered local-execute operation once. It executes
+only the original frozen workload and returns the original subprocess result.
+Claim alone does not run it. A nonzero return code is a failed business action;
+an RPC success does not make that work successful. Never rerun after result loss.
+In the TASK profile, advance is a bounded read-only scheduling observation. It
+returns unconsumed registered actions; invoke each selected action in its own
+native call. Advance never borrows another action's identity or execution budget.
 After work, inspect the original reports, tests and results before selecting accept.
 A callback or report alone is not acceptance. Use only a provable original terminal
 boundary for failure settlement. Retain uncertain leases. Finish and verify require

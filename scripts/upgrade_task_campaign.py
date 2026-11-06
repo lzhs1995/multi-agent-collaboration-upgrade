@@ -28,8 +28,8 @@ PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
                      "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
-                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm", "reconcile"})
-READ_ACTIONS = frozenset({"status", "recover", "verify"})
+                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm", "reconcile", "local-execute", "advance"})
+READ_ACTIONS = frozenset({"status", "recover", "verify", "advance"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
 ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation", "advisory_registration")
@@ -45,6 +45,7 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
     """Exact finite command, suitable for freezing before its model invocation."""
     from orchestration_campaign import DECISION_ARGUMENTS
     require(action in ACTIONS, "TASK_CAMPAIGN_ACTION_NOT_REGISTERABLE")
+    require(action != "advance" or campaign.get("arm") == "B", "TASK_ADVANCE_B_ONLY")
     require(run_id in {r["run_id"] for r in campaign["runs"]}, "TASK_CAMPAIGN_UNKNOWN_RUN")
     if action in RUN_ACTIONS:
         require(node_id is None, "TASK_CAMPAIGN_RUN_CONTROL_HAS_NO_NODE")
@@ -269,6 +270,7 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
         if action == "start": result = runner.start(run)
         elif action == "status": result = runner.status(run)
         elif action == "recover": result = runner.recover(run)
+        elif action == "advance": result = runner.advance(run)
         elif action == "finish":
             from orchestration_verify import finish_run
             result = finish_run(runner.co(run))
@@ -276,6 +278,9 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
             from orchestration_verify import verify_run
             result = verify_run(runner.ref,run,fixtures=runner.fixtures)
         elif action == "claim": result = runner.claim(run, node)
+        elif action == "local-execute":
+            from upgrade_task_local import execute
+            result = execute(runner, run, node)
         elif action == "prepare": result = runner.transport(runner.co(run), node).prepare()
         elif action == "dispatch": result = runner.transport(runner.co(run), node).dispatch()
         elif action == "disarm": result = runner.transport(runner.co(run), node).disarm()

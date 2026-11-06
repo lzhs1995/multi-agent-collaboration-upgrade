@@ -22,6 +22,8 @@ class CampaignActorTests(unittest.TestCase):
     def setUp(self):
         f=fixtures.TaskStartupTests();f.setUp();self.addCleanup(f.doCleanups);self.f=f
         self.c=CampaignFixture(f.root,version=3)
+        configure=getattr(self,"configure_campaign",None)
+        if configure is not None:configure(self.c)
         self.native=self.c.clients["codex"]
         self.control=f.root/"operations";self.control.mkdir(mode=0o700)
         operations={name:dict(kind=KIND,payload=operation_payload(self.c.campaign,name,"run-01",
@@ -30,6 +32,11 @@ class CampaignActorTests(unittest.TestCase):
             for action in getattr(self,"transport_actions",("prepare","dispatch")):
                 operations[action]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
                     node_id=self.transport_node,**({"observation":"original-receipt"} if action=="reconcile" else {})))
+        for action in getattr(self,"local_actions",()):
+            operations[action]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
+                node_id=getattr(self,"transport_node","local")))
+        for label in getattr(self,"advance_observations",()):
+            operations["advance-"+label]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"advance","run-01",observation=label))
         self.registration=dict(schema="upgrade-task-operations-v2", task_id="fixture-campaign",
             controller_id="fixture-controller",thread_id=self.native.session["session_id"],turn_id=fixtures.TURN,
             authority_ref=self.c.campaign["authorization"],server=f.client.server,operations=operations,

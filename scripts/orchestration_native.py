@@ -410,7 +410,7 @@ class NativeReader:
 
     @contract_errors("native actions")
     def action_summary(self, start, end, *, task_id, output_root, allow_empty=False,
-                       allow_incomplete=False, include_evidence=False, effect_policy=None):
+                       allow_incomplete=False, include_evidence=False, effect_policy=None, task_campaign=None):
         """Derive useful action, model, retries and interventions from raw records."""
         require(effect_policy in (None, OUTPUT_EFFECT_POLICY), "unregistered output effect policy")
         scoped = task_work if effect_policy is None else output_scoped_call
@@ -418,6 +418,7 @@ class NativeReader:
         tool_calls, completed_calls = {}, {}
         call_refs, result_refs, pending_refs, last_result_at = {}, {}, {}, {}
         effects = {}
+        typed_calls = set()
         user_texts = []
         prior = None
         for _, r in self.records(0, start):
@@ -453,6 +454,25 @@ class NativeReader:
                     model_seen.add(p["model"])
                 if r.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
                     args = p.get("arguments", p.get("input", ""))
+                    # Operation IDs contain no output path. Join them through
+                    # the original registration/ledger, never a synthetic shell
+                    # record. The reader also rejects missing campaign scope.
+                    typed = None
+                    if task_campaign is not None or isinstance(args, str) and "upgrade_collaboration__execute" in args:
+                        from upgrade_task_local_reader import action as typed_action
+                        typed = typed_action(self, ref, r, end, task_campaign, output_root)
+                    if typed is not None:
+                        key = p["call_id"]
+                        require(key not in tool_calls, "duplicate native tool call id")
+                        typed_calls.add(key)
+                        tool_calls[key] = parse_time(r["timestamp"])
+                        call_refs[key] = ref
+                        if effect_policy is not None: effects[key] = "WRITE"
+                        returned = typed["returned"]
+                        if returned is not None:
+                            completed_calls[key] = (parse_time(returned["timestamp"]), typed["failed"])
+                            result_refs[key] = returned["result_record"]
+                        continue
                     if effect_policy is not None and output_scoped_call(
                             args if isinstance(args, str) else json.dumps(args, ensure_ascii=False), output_root):
                         require(isinstance(args, str), "task-bound native arguments must be text")
@@ -469,7 +489,8 @@ class NativeReader:
                             effects[p["call_id"]] = call_output_effect(self.provider, p.get("name"), decoded)
                 if r.get("type") == "response_item" and p.get("type") in ("function_call_output", "custom_tool_call_output"):
                     output = p.get("output")
-                    complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
+                    if p.get("call_id") not in typed_calls:
+                        complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
                 if r.get("type") == "event_msg" and p.get("type") == "error":
                     failed_api += 1
             else:

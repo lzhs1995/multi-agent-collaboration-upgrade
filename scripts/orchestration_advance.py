@@ -139,6 +139,9 @@ def _timings(began, action_began, finalization_began=None):
 
 
 def advance(runner, run_id, *, max_steps=1, max_seconds=45):
+    if "task_controls" in runner.campaign:
+        from upgrade_task_advance import advance as typed_advance
+        return typed_advance(runner, run_id, max_steps=max_steps, max_seconds=max_seconds)
     require(runner.campaign.get("version") == 3 and runner.campaign.get("arm") == "B",
             "advance requires the B arm of a v3 campaign")
     require(type(max_steps) is int and 1 <= max_steps <= 32, "max-steps must be an integer from 1 to 32")

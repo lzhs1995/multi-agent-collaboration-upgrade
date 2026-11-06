@@ -71,7 +71,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
             require(ends[other] >= readers[other].verify_pin(evidence["native_end"][other]), "run ends before terminal evidence")
         after = readers[lane].action_summary(evidence["native_end"][lane]["offset"], ends[lane],
                     task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                    effect_policy=campaign_effect_policy(co.campaign))
+                    effect_policy=campaign_effect_policy(co.campaign),
+                    task_campaign=co.campaign if "task_controls" in co.campaign else None)
         attempts = "attempted_potential_write_calls" if campaign_effect_policy(co.campaign) else "attempted_task_calls"
         require(after[attempts] == 0, "task output actions continued after terminal boundary")
         if info["verification"].get("first_action_at"):
@@ -102,7 +103,8 @@ def derive_run(co, native_end, *, closeout_clock=None):
         start = reader.verify_pin(co.header["native_start"][lane])
         observations[lane] = reader.action_summary(start, ends[lane], task_id=co.spec["run_id"],
                                       output_root=str(co.root / "work"), allow_empty=True,
-                                      effect_policy=campaign_effect_policy(co.campaign))
+                                      effect_policy=campaign_effect_policy(co.campaign),
+                    task_campaign=co.campaign if "task_controls" in co.campaign else None)
         if registration is not None:
             # v5 classifies every input unit below, after the closeout clock bounds the run.
             continue

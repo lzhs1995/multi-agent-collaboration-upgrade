@@ -277,7 +277,7 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         end = reader.verify_pin(ends[lane])
         require(start <= reader.verify_pin(proof["native_end"][lane]) <= end, "preparation native fences changed")
         actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                                        effect_policy=campaign_effect_policy(campaign))
+                                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         require(actions["attempted_task_calls"] == 0, "business action contradicts preparation exit")
         if lane in ("codex", lane_id):
             reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],

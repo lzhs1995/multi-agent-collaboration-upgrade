@@ -139,7 +139,7 @@ def node_timeline(co, key, info, events, files, lease, snapshots):
             actions = reader.action_summary(reader.verify_pin(info["native_start"]),
                 reader.verify_pin(native_ends[lane]), task_id=info["task_id"],
                 output_root=info["output_root"], allow_empty=True, allow_incomplete=True, include_evidence=True,
-                effect_policy=campaign_effect_policy(campaign))
+                effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
             completed = [a for a in actions["actions"] if a["status"] != "PENDING"]
             successes = [a for a in completed if a["status"] == "COMPLETED"]
             if successes:

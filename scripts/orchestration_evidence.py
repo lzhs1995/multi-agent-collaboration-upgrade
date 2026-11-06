@@ -563,7 +563,7 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rer
     else:
         require(evidence["review_kind"] == "solo_self_review", "local work must use solo_self_review")
     readers[lane].action_summary(lower, ends[lane], task_id=info["task_id"],
-        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     return evidence
 
 
@@ -674,7 +674,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         # this boundary, even when the transport claims it did not send input.
         observation = readers[lane].action_summary(info["native_start"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         require(observation["attempted_task_calls"] == 0, "business action contradicts zero-input claim")
         require(not value["output_tree"]["files"] and not value["output_tree"]["directories"],
                 "zero-input settlement requires genuinely empty output")
@@ -685,7 +685,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         require(protocol["callback_at"] <= at, "failure settlement precedes original callback")
         observation = readers[lane].action_summary(protocol["delivery_record"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         last = observation["last_potential_write_at" if campaign_effect_policy(campaign) else "last_action_at"]
         require(last is None or parse_time(last) <= protocol["callback_at"],
                 "output work continued after callback")
@@ -693,7 +693,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         require(reason == "local_boundary" and info["mode"] == "local_cli", "no proven terminal write boundary")
         readers["codex"].action_summary(info["native_start"]["offset"], value["failure_native"]["offset"],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     return dict(status="FAILED_PRESERVED", evidence_class=evidence_class(campaign, "verified_cli_failure", fixtures),
                 **task_identity(campaign, header, node), settled_at=at.isoformat(), boundary=reason)
 
@@ -741,7 +741,7 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
                 "local work requires honest solo_self_review; no invented self ACK/callback")
         action_start, action_end = start, acceptance["offset"]
     action = readers[lane].action_summary(action_start, action_end, task_id=info["task_id"],
-        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     first = parse_time(action["first_action_at"])
     require(parse_time(info["started_at"]) <= first <= accepted_at, "useful action lies outside node lifetime")
     if protocol:
