@@ -652,6 +652,11 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
             or task_callback and not sender_confirmed):
         from upgrade_task_callback import verify_receiver
         verify_receiver(receipt, receiver, sender)
+    if ("task_reconciler" in receipt or b.get("task_sender") is not None
+            and (not sender_confirmed or receipt.get("reconciled_read_only") is True)
+            and "completion_callback" not in attempt.get("binding",{})):
+        from upgrade_task_reconcile import verify_receipt
+        verify_receipt(receipt,bundle,sender,receiver,fixtures=fixtures)
     # Task receipts store `binding`; callback receipts flatten the binding fields
     # and retain identity in the original attempt/native binding.
     if "binding" in receipt:

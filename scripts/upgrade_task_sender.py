@@ -64,3 +64,18 @@ def require_live(binding):
 def check(binding,*,read_only=False):
     if read_only:validate(binding)
     else:require_live(binding)
+
+
+def reconciliation_source(path,attempt):
+    """Record the active zero-input observer, never a sender capability."""
+    value=snapshot()
+    if value is None:
+        require(not _task_caller(attempt["native_binding"]),"TASK_RECONCILE_ACTIVE_OBSERVER_REQUIRED")
+        return {}
+    proof=json_ref(value["task_actor"])
+    require(proof.get("schema")=="upgrade-task-reconcile-operation-v1"
+        and file_ref(path)==proof["attempts"][-1] and json_ref(proof["attempts"][-1])==attempt,
+        "TASK_RECONCILE_ORIGINAL_ATTEMPT_CHANGED")
+    require(attempt["native_binding"].get("task_sender",{}).get("task_actor")==proof["original_dispatch"],
+            "TASK_RECONCILE_ORIGINAL_DISPATCH_CHANGED")
+    return dict(task_reconciler=value["task_actor"],input_operations=0)

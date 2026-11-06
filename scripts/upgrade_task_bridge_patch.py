@@ -50,6 +50,27 @@ def task_bridge_paths(name,text):
             '    _validate_binding(b, text)\n'
             '    from upgrade_task_sender import check as check_task_sender\n'
             '    check_task_sender(b, read_only=read_only)\n')
+    elif name=="cmux_task_journal.py":
+        text=replace_once(text,'        if not native.receipt_evidence(bridge, surface, text, attempt, receipt):',
+            '        if not native.receipt_evidence(bridge, surface, text, attempt, receipt, read_only=True):')
+        text=replace_once(text,"            attempt.update(phase='CONFIRMED', ended_at_epoch=time.time())",
+            "            if attempt['native_binding'].get('task_sender') is not None:\n"
+            "                attempt['result'] = dict(result)\n"
+            "            attempt.update(phase='CONFIRMED', ended_at_epoch=time.time())")
+        call="bridge, surface, text, attempts[-1], old.get('native_binding'))"
+        text=replace_once(text,call,call[:-1]+", read_only=True)")
+        legacy='        if not native.receipt_evidence(bridge, surface, text, json.loads(read_bytes(attempt_path)), result):'
+        if legacy in text:
+            text=replace_once(text,legacy,
+                '        original = json.loads(read_bytes(attempt_path))\n'
+                '        if not native.receipt_evidence(bridge, surface, text, original, result):')
+        text=replace_once(text,'        if not native.receipt_evidence(bridge, surface, text, original, result):',
+            '        if not native.receipt_evidence(bridge, surface, text, original, result, read_only=reconcile_only):')
+        text=replace_once(text,'        result = dict(result, binding=binding, attempt=str(attempt_path), at_epoch=time.time())',
+            '        if reconcile_only:\n'
+            '            from upgrade_task_sender import reconciliation_source\n'
+            '            result.update(reconciliation_source(attempt_path, original))\n'
+            '        result = dict(result, binding=binding, attempt=str(attempt_path), at_epoch=time.time())')
     elif name=="cmux_hook_scope.py":
         text=_entry(text,"bind_participants","from upgrade_task_bridge_context import participants as task_participants\n"
             "    task_rows = task_participants(workspace, rows)\n    if task_rows is not None:return task_rows")

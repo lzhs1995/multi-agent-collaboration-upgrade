@@ -160,6 +160,11 @@ class PinnedRuntime:
             # Never invoke the executor's submit_completion_callback here.
             return callback.reconcile_received(pack, bridge, transcript=transcript, line=line)
 
+    def reconcile_task(self,surface,notice,pack,operation_root):
+        from upgrade_task_reconcile import reconcile
+        with self.modules("cmux_bridge","cmux_workspace_guard","mac_upgrade_task_bridge_context") as modules:
+            return reconcile(self,*modules,surface,notice,pack,operation_root)
+
     def freeze_disarm(self, task_id):
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             frozen=freeze_original(self.campaign, task_id, *modules)
@@ -446,9 +451,13 @@ class Transport:
                 original_attempts([file_ref(p) for p in sorted(directory.glob("attempt-*.json"))])
                 pack, notice = info["prepared"]["pack"], info["prepared"]["notice"]
                 args = dict(pack=pack, notice=notice, reconcile_only=True)
-                self.journal(info).observation("reconcile-task", args, lambda _: self.runtime.submit(
-                    self.receiver["surface_uuid"], read_ref(notice).decode(),
-                    pack["path"], reconcile_only=True))
+                def observe_original(operation_root):
+                    if "task_controls" in self.campaign and not self.co.fixtures:
+                        return self.runtime.reconcile_task(self.receiver["surface_uuid"],read_ref(notice).decode(),
+                                                           pack["path"],operation_root)
+                    return self.runtime.submit(self.receiver["surface_uuid"],read_ref(notice).decode(),
+                                               pack["path"],reconcile_only=True)
+                self.journal(info).observation("reconcile-task", args, observe_original)
                 return self._received(info)
             return self._uncertain("original dispatch result is absent; no new input")
         except Exception as exc:

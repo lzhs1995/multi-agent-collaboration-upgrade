@@ -224,7 +224,7 @@ class SourceCompatibilityTests(unittest.TestCase):
                for release in ('0.4.34-d333557fb498','0.4.58-cf3f6175840b')]
         for root in roots:
             if not root.is_dir():continue
-            for name in ('cmux_bridge.py','cmux_workspace_guard.py','cmux_hook_scope.py','mac_harness.py'):
+            for name in ('cmux_bridge.py','cmux_workspace_guard.py','cmux_hook_scope.py','mac_harness.py','cmux_task_journal.py'):
                 path=root/'scripts'/name
                 if not path.is_file():continue
                 with self.subTest(release=root.parent.name,file=name):

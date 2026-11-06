@@ -28,7 +28,7 @@ PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
                      "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
-                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm"})
+                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm", "reconcile"})
 READ_ACTIONS = frozenset({"status", "recover", "verify"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
@@ -87,7 +87,7 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
         extra["reason"] = reason
     else:
         require(reason is None, "TASK_CAMPAIGN_UNEXPECTED_BLOCKER")
-    if action in READ_ACTIONS:
+    if action in READ_ACTIONS or action=="reconcile":
         import re
         require(isinstance(observation,str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",observation),
                 "TASK_CAMPAIGN_FIXED_OBSERVATION_REQUIRED")
@@ -279,6 +279,7 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
         elif action == "prepare": result = runner.transport(runner.co(run), node).prepare()
         elif action == "dispatch": result = runner.transport(runner.co(run), node).dispatch()
         elif action == "disarm": result = runner.transport(runner.co(run), node).disarm()
+        elif action == "reconcile": result = runner.transport(runner.co(run), node).reconcile()
         elif action == "candidate": result = runner.candidate(run, node)
         elif action == "callback": result = runner.transport(runner.co(run), node).callback()
         elif action == "block": result = runner.block(run, node, payload["reason"])

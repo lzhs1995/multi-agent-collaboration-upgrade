@@ -29,7 +29,7 @@ class CampaignActorTests(unittest.TestCase):
         if getattr(self,"transport_node",None):
             for action in getattr(self,"transport_actions",("prepare","dispatch")):
                 operations[action]=dict(kind=KIND,payload=operation_payload(self.c.campaign,action,"run-01",
-                    node_id=self.transport_node))
+                    node_id=self.transport_node,**({"observation":"original-receipt"} if action=="reconcile" else {})))
         self.registration=dict(schema="upgrade-task-operations-v2", task_id="fixture-campaign",
             controller_id="fixture-controller",thread_id=self.native.session["session_id"],turn_id=fixtures.TURN,
             authority_ref=self.c.campaign["authorization"],server=f.client.server,operations=operations,
