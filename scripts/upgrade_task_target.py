@@ -47,6 +47,12 @@ def _observe(spec, anchor, target, process):
     from cmux_codex_rpc import DaemonRPC
     _display(target, process)
     validate_tui_target(process, process_root("codex", process), spec, anchor)
+    from upgrade_task_network import OBSERVER_SCHEMA
+    if configuration()[0].get('task_model_network', {}).get('schema') == OBSERVER_SCHEMA:
+        from upgrade_task_observer_routes import task_proof
+        proxied = task_proof(anchor)
+        if proxied is not None:
+            return proxied
     # This connection only reads the exact task. It never receives ownership of
     # dynamic tools, responds to a model operation, or creates/resumes a thread.
     with DaemonRPC(anchor["socket"]["path"], timeout=8) as client:
@@ -87,6 +93,10 @@ def require_client(client, binding):
         require_legacy(binding)
         return
     _, anchor = validate_saved(binding)
+    from upgrade_task_observer_routes import ObserverMetadata
+    if type(client) is ObserverMetadata:
+        client.require_binding(binding, anchor)
+        return
     import cmux_daemon_identity as identity
     socket_evidence(client, anchor["socket"])
     verify_peer(client.sock, anchor["server"], identity.process)

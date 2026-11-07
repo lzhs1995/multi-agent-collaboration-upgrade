@@ -27,7 +27,8 @@ def verify_enrolled_roles(runtime, spec, sessions, *, process):
     return verify_roles(runtime["startup"], spec, binding, sessions, process=process)
 
 
-def verify_roles(startup_ref, spec, binding, sessions, *, process):
+def verify_roles(startup_ref, spec, binding, sessions, *, process, root_reader=None):
+    root_reader = root_reader or process_root
     require(spec.get("schema") == "upgrade-startup-task-v1"
             and spec.get("task_startup") == binding.get("task_startup")
             and spec.get("controller") == binding.get("controller_root")
@@ -48,21 +49,21 @@ def verify_roles(startup_ref, spec, binding, sessions, *, process):
             require(server_pin(row, uid=os.geteuid()) == anchor["server"]
                     and row["argv"] == spec["rpc"]["argv"]
                     and row["executable"] == spec["pins"]["codex"]["path"]
-                    and str(process_root("codex", row)) == anchor["native_root"],
+                    and str(root_reader("codex", row)) == anchor["native_root"],
                     "TASK_ROLES_EXECUTION_SERVER_CHANGED")
         else:
             session = sessions[lane]
             provider = "codex" if lane == "codex" else "claude"
             require(session["provider"] == provider
                     and {key: row[key] for key in session["process"]} == session["process"]
-                    and str(process_root(provider, row)) == session["native_config_root"]
+                    and str(root_reader(provider, row)) == session["native_config_root"]
                     == spec["clients"][lane]["native_root"], "TASK_ROLES_SESSION_CHANGED:" + lane)
             for field, env in (("surface_uuid", "CMUX_SURFACE_ID"),
                                ("workspace_uuid", "CMUX_WORKSPACE_ID")):
                 require(uuid.UUID(row["env"][env]) == uuid.UUID(session[field])
                         == uuid.UUID(launch[field]), "TASK_ROLES_ENDPOINT_CHANGED:" + lane)
             if lane == "codex":
-                validate_tui_target(row, process_root(provider, row), spec, anchor)
+                validate_tui_target(row, root_reader(provider, row), spec, anchor)
                 require(session["session_id"] == result["thread_id"]
                         and all(session["transcript"][k] == anchor["journal"][k]
                                 for k in ("path", "device", "inode")), "TASK_ROLES_TASK_JOURNAL_CHANGED")

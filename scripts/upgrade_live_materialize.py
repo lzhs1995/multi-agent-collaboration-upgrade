@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -48,7 +49,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_task_readiness.py", "upgrade_task_control.py", "upgrade_task_bindings.py", "upgrade_task_network.py",
            "upgrade_task_descriptors.py", "upgrade_task_target.py", "upgrade_task_target_contract.py",
            "upgrade_task_callback_client.py", "upgrade_task_callback_sender.py", "upgrade_task_callback_route.py",
-           "upgrade_task_callback_contract.py", "upgrade_task_bridge_context.py", "upgrade_task_sender.py")
+           "upgrade_task_callback_contract.py", "upgrade_task_bridge_context.py", "upgrade_task_sender.py",
+           "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -74,6 +76,20 @@ def render_private_support(support):
                 '        require(False,"TASK_SERVICE_EXTERNAL_CAMPAIGN_INPUT_REQUIRED")\n\n')+source[end:]
             raw=source.encode()
             transformations.append("private_readiness_service_no_campaign_input")
+        if name == 'upgrade_input_gate.py':
+            # The external full-adoption validator is deliberately not a
+            # private support module. Until the TASK producer/reader pair is
+            # implemented, refuse explicitly rather than hitting an absent
+            # import or silently accepting legacy adoption in a confined lane.
+            from upgrade_controller_patch import edit_nodes
+            source=raw.decode()
+            nodes=[n for n in ast.walk(ast.parse(source)) if isinstance(n,ast.If)
+                   and ast.unparse(n.test) == "'task_startup' in binding"]
+            require(len(nodes)==1, 'TASK_PRIVATE_INPUT_GATE_SOURCE_CHANGED')
+            raw=edit_nodes(source,[(nodes[0],
+                'if "task_startup" in binding:\n'
+                '        require(False, "TASK_INPUT_ADOPTION_CONSUMER_UNAVAILABLE")')]).encode()
+            transformations.append('private_task_input_explicit_adoption_refusal')
         if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py", "upgrade_child_hook.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
@@ -102,7 +118,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
                      codex_package=None, task_startup=None, task_model_network=False,
-                     task_callback_network=False):
+                     task_callback_network=False, task_observer_network=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -111,6 +127,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             "STARTUP_TASK_NETWORK_REQUIRES_EXPLICIT_TASK")
     require(type(task_callback_network) is bool and (not task_callback_network or task_model_network),
             "STARTUP_TASK_CALLBACK_NETWORK_REQUIRES_MODEL_NETWORK")
+    require(type(task_observer_network) is bool and (not task_observer_network or task_callback_network),
+            "STARTUP_TASK_OBSERVER_NETWORK_REQUIRES_CALLBACK_NETWORK")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
@@ -226,7 +244,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     if task_model_network:
         from upgrade_task_network import network_contract
         network = network_contract(station,claude_original,
-            evidence_root=paths["evidence"] if task_callback_network else None)
+            evidence_root=paths["evidence"] if task_callback_network else None, observer=task_observer_network)
     task_plan_ref, task_plan_raw = None, None
     if task_startup is not None:
         from orchestration_common import canonical

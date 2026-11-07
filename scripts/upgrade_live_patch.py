@@ -22,7 +22,8 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_task_readiness", "upgrade_task_control", "upgrade_task_bindings", "upgrade_task_network",
     "upgrade_task_descriptors", "upgrade_task_target", "upgrade_task_target_contract",
     "upgrade_task_callback_client", "upgrade_task_callback_sender", "upgrade_task_callback_route",
-    "upgrade_task_callback_contract", "upgrade_task_bridge_context", "upgrade_task_sender")}
+    "upgrade_task_callback_contract", "upgrade_task_bridge_context", "upgrade_task_sender",
+    "upgrade_task_observer_protocol", "upgrade_task_observer_client", "upgrade_task_observer_routes")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -841,6 +842,8 @@ def transform_live(name, text, paths, controller, *, compatibility):
     from upgrade_task_bridge_patch import task_bridge_paths
     before_bridge = text
     text = task_bridge_paths(name,text)
+    from upgrade_task_observer_patch import task_observer_paths
+    text = task_observer_paths(name,text)
     task_bridge_changed = text != before_bridge
     if name == "mac_harness.py":
         # This remains the harness double gate, with a structured, pinned

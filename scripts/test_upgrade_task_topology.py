@@ -53,7 +53,8 @@ class TaskTopologyTests(unittest.TestCase):
             goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
             lane_instructions=instructions,
             task_startup=task,task_model_network=getattr(cls,"model_network",False),
-            task_callback_network=getattr(cls,"callback_network",False))
+            task_callback_network=getattr(cls,"callback_network",False),
+            task_observer_network=getattr(cls,"observer_network",False))
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 

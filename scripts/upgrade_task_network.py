@@ -16,6 +16,7 @@ from orchestration_common import require
 
 SCHEMA = "upgrade-task-model-network-v1"
 CALLBACK_SCHEMA = "upgrade-task-model-callback-network-v2"
+OBSERVER_SCHEMA = "upgrade-task-observer-network-v3"
 
 
 def callback_path(evidence_root):
@@ -27,6 +28,13 @@ def callback_path(evidence_root):
             and all(ord(c) >= 32 and ord(c) != 127 for c in str(path)),
             "TASK_CALLBACK_NETWORK_EXACT_PATH_REQUIRED")
     return str(path)
+
+
+def observer_path(evidence_root):
+    # Same canonical/length checks, separate fixed endpoint. The observer is
+    # read-only and is never an alias for the callback or raw cmux socket.
+    callback_path(evidence_root)
+    return str(Path(evidence_root) / "live-control/task-observer/s")
 
 
 def gateway_port(url):
@@ -46,23 +54,29 @@ def gateway_port(url):
     return port
 
 
-def network_contract(station, claude, *, evidence_root=None):
+def network_contract(station, claude, *, evidence_root=None, observer=False):
     """Derive ports from original frozen routing, never from a peer's payload."""
     codex_port=gateway_port(station["codex"]["base_url"])
     claude_port=gateway_port(claude.get("env",{}).get("ANTHROPIC_BASE_URL"))
     require(codex_port!=claude_port, "TASK_MODEL_DISTINCT_PROVIDER_ROUTES_REQUIRED")
     value = dict(schema=SCHEMA, ports=dict(codex=codex_port,claude_a=claude_port,claude_b=claude_port))
+    require(type(observer) is bool and (not observer or evidence_root is not None),
+            "TASK_OBSERVER_NETWORK_REQUIRES_CALLBACK_CONTRACT")
     if evidence_root is not None:
         value.update(schema=CALLBACK_SCHEMA, callback=callback_path(evidence_root))
+    if observer:
+        value.update(schema=OBSERVER_SCHEMA, observer=observer_path(evidence_root))
     return value
 
 
 def model_only_profile(profile, contract, lane):
     require(isinstance(profile,bytes) and profile.startswith(b"(version 1)\n") and profile.endswith(b"\n"),
             "TASK_MODEL_BASE_PROFILE_REQUIRED")
-    callback = isinstance(contract, dict) and contract.get("schema") == CALLBACK_SCHEMA
-    require(isinstance(contract,dict) and set(contract)==({"schema","ports","callback"} if callback else {"schema","ports"})
-            and contract["schema"] in (SCHEMA, CALLBACK_SCHEMA)
+    observer = isinstance(contract, dict) and contract.get("schema") == OBSERVER_SCHEMA
+    callback = isinstance(contract, dict) and contract.get("schema") in (CALLBACK_SCHEMA, OBSERVER_SCHEMA)
+    keys = {"schema", "ports"} | ({"callback"} if callback else set()) | ({"observer"} if observer else set())
+    require(isinstance(contract,dict) and set(contract)==keys
+            and contract["schema"] in (SCHEMA, CALLBACK_SCHEMA, OBSERVER_SCHEMA)
             and isinstance(contract["ports"],dict) and set(contract["ports"])=={"codex","claude_a","claude_b"}
             and all(type(p) is int and 1024<=p<=65535 for p in contract["ports"].values())
             and contract["ports"]["claude_a"]==contract["ports"]["claude_b"]!=contract["ports"]["codex"]
@@ -81,4 +95,8 @@ def model_only_profile(profile, contract, lane):
         if lane in ("claude_a", "claude_b"):
             result += ('(allow network-outbound (remote unix-socket (literal %s)))\n'
                        % json.dumps(str(path))).encode()
+        if observer:
+            require(contract["observer"] == observer_path(path.parents[3]), "TASK_OBSERVER_NETWORK_PATH_CHANGED")
+            result += ('(allow network-outbound (remote unix-socket (literal %s)))\n'
+                       % json.dumps(contract["observer"])).encode()
     return result

@@ -92,6 +92,17 @@ assert "upgrade_task_campaign" not in sys.modules
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ModuleNotFoundError: No module named 'mac_upgrade_toml_re'", result.stderr)
 
+    def test_private_task_gate_explicitly_refuses_missing_adoption_consumer(self):
+        import ast
+        raw=(self.scripts/'mac_upgrade_input_gate.py').read_text()
+        nodes=[n for n in ast.walk(ast.parse(raw)) if isinstance(n,ast.If)
+               and ast.unparse(n.test)=="'task_startup' in binding"]
+        self.assertEqual(len(nodes),1)
+        from orchestration_common import require,ContractError
+        with self.assertRaisesRegex(ContractError,'TASK_INPUT_ADOPTION_CONSUMER_UNAVAILABLE'):
+            exec(compile(ast.Module(body=nodes,type_ignores=[]),'private-task-adoption','exec'),
+                 dict(binding={'task_startup':{}},require=require))
+
 
 if __name__ == "__main__":
     unittest.main()
