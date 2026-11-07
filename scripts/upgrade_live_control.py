@@ -47,6 +47,17 @@ def external_publisher(spec):
             "CLIENT_CANNOT_PUBLISH_ADOPTION")
 
 
+def task_lifecycle(runtime_ref, client):
+    """Retain the original observer, RPC and ledger through all task phases.
+
+    This explicit entry is used only after an independently authorized launch.
+    Construction sends no model input; bootstrap/adoption/attachment remain
+    separate guarded actions on the returned same owner.
+    """
+    from upgrade_task_lifecycle import TaskLifecycle
+    return TaskLifecycle(runtime_ref, client)
+
+
 def bootstrap_task_thread(runtime_ref, client):
     """New topology only: one task creation on a TUI-first pinned connection.
 
