@@ -183,6 +183,6 @@ def annotate_metadata(client, metadata):
 
 def require_input_route(client, request):
     if type(client) is ObserverMetadata:
-        # Idle uses the retained callback ingress. Until its busy path exists,
-        # fail BEFORE an input intent, never send steer on a read connection.
-        require(request['method'] == 'turn/start', 'TASK_OBSERVER_BUSY_CALLBACK_ROUTE_UNAVAILABLE')
+        # Both input methods must leave the read-only projection and enter the
+        # original callback owner; descriptor validation occurs before intent.
+        require(request['method'] in ('turn/start','turn/steer'), 'TASK_OBSERVER_CALLBACK_ROUTE_UNAVAILABLE')

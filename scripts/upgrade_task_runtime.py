@@ -35,10 +35,10 @@ class CampaignRuntime:
             operation_scope=sorted(self.scope),reconnect_allowed=False,operation_budget_reset=False),exclusive=True)
         service.runtime_owner=self
 
-    def enable_callback_ingress(self):
+    def enable_callback_ingress(self, *, allow_busy=False):
         """Explicit endpoint on this existing runtime; never a second owner."""
         from upgrade_task_callback_ingress import CallbackIngress
-        return CallbackIngress(self)
+        return CallbackIngress(self,allow_busy=allow_busy)
 
     def _verify(self):
         require(os.getpid()==self.pid==self.service.owner_pid==self.gate.owner_pid,
@@ -107,6 +107,13 @@ class CampaignRuntime:
                     continue
                 remaining=seconds-(time.monotonic()-began)
                 if remaining<=0:break
+                if (self.callback_ingress is not None and self.callback_ingress.busy_enabled
+                        and inputs<max_new_turns):
+                    callback=self.callback_ingress.poll(timeout=0)
+                    if callback is not None:
+                        callbacks.append(callback);pulses+=1
+                        inputs+=callback['model_inputs_sent']
+                        continue
                 observed=self.service.pulse(seconds=min(1,remaining),max_messages=max_messages-messages)
                 pulses+=1;messages+=observed["messages_observed"]
                 # Do not label interrupted/failed/unresolved completion as a

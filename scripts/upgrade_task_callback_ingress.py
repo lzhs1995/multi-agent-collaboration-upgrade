@@ -52,13 +52,20 @@ def active_context(service, connection, request):
 
 
 class CallbackIngress:
-    def __init__(self, runtime):
+    def __init__(self, runtime, *, allow_busy=False):
         from upgrade_task_runtime import CampaignRuntime
         require(type(runtime) is CampaignRuntime and not runtime.closed and not runtime.running
                 and getattr(runtime, 'callback_ingress', None) is None,
                 'TASK_CALLBACK_INGRESS_ORIGINAL_IDLE_OWNER_REQUIRED')
         runtime._verify(); runtime.gate._observe()
         self.runtime = runtime; self.pid = os.getpid(); self.closed = False
+        require(type(allow_busy) is bool,'TASK_CALLBACK_BUSY_OPT_IN_REQUIRED')
+        self.busy_enabled=allow_busy
+        if allow_busy:
+            from upgrade_task_network import OBSERVER_SCHEMA
+            binding=json_ref(file_ref(Path(runtime.gate.spec['controller'])/'upgrade-binding.json'))
+            require(binding.get('task_model_network',{}).get('schema')==OBSERVER_SCHEMA,
+                    'TASK_CALLBACK_BUSY_OBSERVER_CONTRACT_REQUIRED')
         self.sequence = 0
         self.process = runtime.client.process
         self.owner = process_pin(self.process, self.pid)
@@ -76,12 +83,14 @@ class CallbackIngress:
             self.listener.set_inheritable(False)
             self.listener.bind(str(self.path)); self.path.chmod(0o600)
             self.socket = socket_pin(self.path)
-            self.proof = write_json(self.root/'descriptor.json', dict(schema=SCHEMA,
+            from upgrade_task_callback_contract import BUSY_SCHEMA
+            self.proof = write_json(self.root/'descriptor.json', dict(schema=BUSY_SCHEMA if self.busy_enabled else SCHEMA,
                 enrollment=runtime.gate.proof, campaign=runtime.gate.runner.ref,
                 registration=runtime.gate.campaign['task_controls']['registration'],
                 runtime_owner=runtime.proof, owner=self.owner, socket=self.socket,
                 task_thread_id=runtime.ledger.registration['thread_id'],
-                allowed_request=REQUEST_SCHEMA, reconnect_allowed=False), exclusive=True)
+                allowed_request=REQUEST_SCHEMA, reconnect_allowed=False,
+                **(dict(allowed_input_methods=['turn/start','turn/steer']) if self.busy_enabled else {})), exclusive=True)
             self.listener.listen(4)
             self.listener_fd = self.listener.fileno()
             runtime.callback_ingress = self
@@ -104,7 +113,7 @@ class CallbackIngress:
     def poll(self, *, timeout=0):
         """At most one request on the owner's thread and current turn budget."""
         require(type(timeout) in (int,float) and 0 <= timeout <= 1
-                and self.runtime.running and self.runtime.actor.closed,
+                and self.runtime.running and (self.runtime.actor.closed or self.busy_enabled),
                 'TASK_CALLBACK_INGRESS_RUNTIME_DISPATCH_REQUIRED')
         self._verify()
         ready, _, _ = select.select([self.listener], [], [], timeout)
@@ -145,7 +154,11 @@ class CallbackIngress:
                 token = _dispatch.set((self, connection, request))
                 try:
                     called = True
-                    result = self.runtime.service.start_callback_turn(connection, request)
+                    if self.runtime.actor.closed:
+                        result = self.runtime.service.start_callback_turn(connection, request)
+                    else:
+                        from upgrade_task_callback_busy import deliver_busy
+                        result = deliver_busy(self.runtime.service, connection, request)
                 finally:
                     _dispatch.reset(token)
                 # The source result preserves enrollment independently of this

@@ -66,13 +66,19 @@ def scope(bridge,pack_path,attempt_path,locks):
 def route_request(binding,request,text):
     """Describe the exact callback route without sending or consuming intent."""
     owner=_current.get()
-    require(type(owner) is CallbackSender and request.get('method')=='turn/start'
-            and request.get('observed_status')=='idle' and owner.value['completion_callback']==text,
+    busy=request.get('method')=='turn/steer'
+    require(type(owner) is CallbackSender and request.get('method') in ('turn/start','turn/steer')
+            and request.get('observed_status')==('active' if busy else 'idle') and owner.value['completion_callback']==text,
             'TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED')
     old=owner.check()
     require(old['native_binding']==binding and old['phase']=='PREPARED' and old['events']==[],
             'TASK_CALLBACK_SENDER_FRESH_ATTEMPT_REQUIRED')
-    ref,_=ingress_client.descriptor(binding)
+    ref,endpoint=ingress_client.descriptor(binding)
+    if busy:
+        from upgrade_task_callback_contract import BUSY_SCHEMA
+        require(endpoint.get('schema')==BUSY_SCHEMA
+                and endpoint['allowed_input_methods']==['turn/start','turn/steer'],
+                'TASK_CALLBACK_BUSY_DESCRIPTOR_REQUIRED')
     result=copy.deepcopy(request)
     result['task_callback_route']=dict(schema=ROUTE_SCHEMA,ingress=ref,pack=owner.pack,
                                       attempt=str(owner.attempt_path))
@@ -93,6 +99,7 @@ def submit_callback(bridge,pack_path,attempt_path,locks,*args,**kwargs):
 def send_idle_once(binding,request,text,*,recheck,emit,observe,wait_seconds):
     """Called only by the new generated sender while original locks are held."""
     owner=_current.get()
+    method=request['method']
     require(type(owner) is CallbackSender and not owner.sent and owner.request==request,
             'TASK_CALLBACK_SENDER_ORIGINAL_REQUEST_REQUIRED')
     from cmux_codex_input import validate_request,rpc_error_details
@@ -129,16 +136,18 @@ def send_idle_once(binding,request,text,*,recheck,emit,observe,wait_seconds):
         response=ingress_client.submit_once(binding,owner.pack,attempt,
                     process=identity.process,recheck=check,record=record)
         turn=response['result']['turn_id'];result_ref=response['result']['callback_input']
+        if method=='turn/steer':
+            require(turn==request['params']['expectedTurnId'],'TASK_CALLBACK_BUSY_RESPONSE_TURN_CHANGED')
         outcome='RPC_ACCEPTED'
-        diagnostic=dict(method='turn/start',turn_id=turn,rpc_outcome=outcome,
+        diagnostic=dict(method=method,turn_id=turn,rpc_outcome=outcome,
                         callback_input=result_ref)
     except (OSError,RuntimeError,ValueError,KeyError,TypeError) as exc:
-        diagnostic=dict(rpc_error_details(exc),method='turn/start',rpc_outcome=outcome)
+        diagnostic=dict(rpc_error_details(exc),method=method,rpc_outcome=outcome)
     journal_error=None
     try:emit('NATIVE_INPUT_RESULT',evidence=diagnostic)
     except (OSError,RuntimeError,ValueError,TypeError) as exc:
         journal_error=dict(error_type=type(exc).__name__,error=str(exc)[:1000])
-    fields=dict(transport='codex-native-input-v1',native_method='turn/start',
+    fields=dict(transport='codex-native-input-v1',native_method=method,
         native_rpc_outcome=outcome,native_rpc_diagnostic=diagnostic,
         native_metadata=request['native_metadata'],native_turn_id=turn,
         native_result_journal_error=journal_error,terminal_input_operations=0,

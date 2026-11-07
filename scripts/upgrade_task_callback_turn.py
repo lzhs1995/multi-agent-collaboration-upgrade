@@ -20,7 +20,7 @@ SCHEMA = 'upgrade-task-callback-input-plan-v1'
 _incoming = ContextVar('original_task_callback_input', default=None)
 
 
-def idle_intent(attempt, binding, text, receiver, sender, previous_turn, socket_pin):
+def idle_intent(attempt, binding, text, receiver, sender, previous_turn, socket_pin, *, busy=False):
     """Read a proposed idle intent; this grants no generated-sender capability.
 
     The existing generated sender continues to refuse idle input. This reader
@@ -48,18 +48,21 @@ def idle_intent(attempt, binding, text, receiver, sender, previous_turn, socket_
         from upgrade_task_callback_route import proposed
         proposed(binding,request)
         fields.add('task_callback_route')
+    method,status,turn_status=('turn/steer','active','inProgress') if busy else ('turn/start','idle','completed')
+    params=dict(threadId=receiver['session_id'],input=[dict(type='text',text=text)])
+    if busy:params['expectedTurnId']=previous_turn
     require(set(request) == fields
             and request['transport'] == 'codex-native-input-v1'
-            and request['method'] == 'turn/start' and request['observed_status'] == 'idle'
+            and request['method'] == method and request['observed_status'] == status
             and request['observed_turn_id'] == previous_turn and request['socket'] == socket_pin
-            and request['params'] == dict(threadId=receiver['session_id'],
-                input=[dict(type='text', text=text)]), 'TASK_CALLBACK_ORIGINAL_IDLE_INPUT_CHANGED')
+            and request['params'] == params,
+            'TASK_CALLBACK_ORIGINAL_BUSY_INPUT_CHANGED' if busy else 'TASK_CALLBACK_ORIGINAL_IDLE_INPUT_CHANGED')
     metadata=request['native_metadata']
     require(isinstance(metadata,dict) and all(metadata.get(k) == v for k,v in dict(
-                thread_id=receiver['session_id'],thread_status='idle',can_accept_direct_input=True,
-                latest_turn_id=previous_turn,latest_turn_status='completed',
+                thread_id=receiver['session_id'],thread_status=status,can_accept_direct_input=True,
+                latest_turn_id=previous_turn,latest_turn_status=turn_status,
                 latest_turn_interrupted=False,latest_turn_error=None,provider_error_source=None,
-                metadata_rpc_status='AVAILABLE',available_input_method='turn/start').items()),
+                metadata_rpc_status='AVAILABLE',available_input_method=method).items()),
             'TASK_CALLBACK_ORIGINAL_IDLE_METADATA_CHANGED')
     fence = event.get('native_input_fence', {})
     require(fence.get('schema') == 'native-input-fence-v1'
@@ -110,7 +113,7 @@ def caller_ancestry(connection, sender, process):
 
 class CallbackInput:
     """In-memory request bound to one original service and live sender socket."""
-    def __init__(self, service, connection, request):
+    def __init__(self, service, connection, request, *, busy=False):
         from upgrade_task_actor import TaskService
         from upgrade_task_enrollment import TaskCampaignGate
         require(type(service) is TaskService and type(service.actor.gate) is TaskCampaignGate,
@@ -119,7 +122,9 @@ class CallbackInput:
                 'TASK_CALLBACK_INPUT_REQUEST_INVALID')
         self.service, self.connection, self.request = service, connection, copy.deepcopy(request)
         self.gate = service.actor.gate
-        self.previous = service._normal_terminal()
+        self.busy=busy
+        self.previous = None if busy else service._normal_terminal()
+        self.turn=service.actor.ledger.active_turn
         self.owner_pid = os.getpid()
         self.initial = self.observe()
         self.plan = None
@@ -132,14 +137,23 @@ class CallbackInput:
         service, gate = self.service, self.gate
         require(os.getpid() == self.owner_pid == service.owner_pid == gate.owner_pid
                 and service.actor.gate is gate and service.actor.client is gate.client
-                and service.actor.ledger is gate.ledger and service._normal_terminal() == self.previous,
+                and service.actor.ledger is gate.ledger and gate.ledger.active_turn==self.turn
+                and ((not service.actor.closed and service.terminal is None and service.normal_completion is None)
+                     if self.busy else service._normal_terminal() == self.previous),
                 'TASK_CALLBACK_ORIGINAL_OWNER_CHANGED')
         runtime = getattr(service, 'runtime_owner', None)
         from upgrade_task_callback_ingress import active_context
         require(runtime is None or not runtime.closed and (not runtime.running
                 or active_context(service,self.connection,self.request)),
                 'TASK_CALLBACK_RUNTIME_BUSY_OR_CLOSED')
-        gate._observe(require_normal_idle=True)
+        gate._observe(require_normal_idle=not self.busy)
+        if self.busy:
+            from upgrade_task_thread import observe
+            live=observe(gate.client,gate.anchor,gate.client.process)
+            require(live['latest_turn_id']==self.turn and live['thread_status']=='active'
+                    and live['latest_turn_status']=='inProgress'
+                    and live['observed_input_method']=='turn/steer',
+                    'TASK_CALLBACK_ORIGINAL_ACTIVE_TURN_REQUIRED')
         campaign = gate.campaign
         pack = json_ref(self.request['pack'])
         # Resolve only an originally claimed, dispatched node in this campaign.
@@ -184,7 +198,8 @@ class CallbackInput:
         require(bridge.validate_task_pack_contract(Path(self.request['pack']['path'])) == pack,
                 'TASK_CALLBACK_ORIGINAL_PACK_CHANGED')
         request = idle_intent(attempt, bound, pack['completion_callback'], receiver, sender,
-                              gate.ledger.active_turn, gate.anchor['socket'])
+                              gate.ledger.active_turn, gate.anchor['socket'],
+                              **({'busy':True} if self.busy else {}))
         if 'task_callback_route' in request:
             route=request['task_callback_route']
             require(route['pack']==self.request['pack'] and route['attempt']==self.request['attempt']['path'],
@@ -201,6 +216,7 @@ class CallbackInput:
                     text=pack['completion_callback'], request=request)
 
     def value(self):
+        require(not self.busy,'TASK_CALLBACK_BUSY_CANNOT_ENROLL_NEW_TURN')
         from upgrade_task_instructions import remaining_operations
         require(self.observe() == self.initial, 'TASK_CALLBACK_INPUT_CHANGED')
         require(json_ref(self.origin) == dict(schema='upgrade-task-callback-input-source-v1',
@@ -219,6 +235,7 @@ class CallbackInput:
             operation_ids=ids, text=self.initial['text'], callback=self.origin)
 
     def publish(self):
+        require(not self.busy,'TASK_CALLBACK_BUSY_CANNOT_ENROLL_NEW_TURN')
         require(self.plan is None, 'TASK_CALLBACK_PLAN_ALREADY_PUBLISHED')
         ledger = self.gate.ledger; directory = self.service.actor.directory
         # Same transition budget as the ordinary next turn; no replacement ID.

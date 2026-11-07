@@ -46,10 +46,11 @@ class ObserverMetadataTests(unittest.TestCase):
             client.request('thread/read',dict(threadId=SID,includeTurns=False))
         self.assertFalse(hasattr(client,'sock'))
 
-    def test_busy_refusal_is_explicit_before_input_and_idle_not_direct_rpc(self):
+    def test_only_callback_methods_can_leave_readonly_projection(self):
         client=ObserverMetadata(self.response)
-        with self.assertRaisesRegex(ContractError,'BUSY_CALLBACK_ROUTE_UNAVAILABLE'):
-            require_input_route(client,dict(method='turn/steer'))
+        with self.assertRaisesRegex(ContractError,'CALLBACK_ROUTE_UNAVAILABLE'):
+            require_input_route(client,dict(method='thread/resume'))
+        require_input_route(client,dict(method='turn/steer'))
         require_input_route(client,dict(method='turn/start'))
         result=annotate_metadata(client,{'metadata_rpc_status':'AVAILABLE'})
         self.assertFalse(result['requester_direct_rpc_peer'])

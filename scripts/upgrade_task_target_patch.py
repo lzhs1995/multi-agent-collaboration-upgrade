@@ -39,7 +39,8 @@ def task_target_paths(name, text):
         if '    event, fence = original_input_event(attempt.get("events"), binding, text)' in text:
             text = replace_once(text,'    event, fence = original_input_event(attempt.get("events"), binding, text)',
                 '    event, fence = original_input_event(attempt.get("events"), binding, text)\n'
-                '    if binding.get("schema") == task_target.SCHEMA and event.get("native_request", {}).get("method") == "turn/start":\n'
+                '    if binding.get("schema") == task_target.SCHEMA and (event.get("native_request", {}).get("method") == "turn/start"\n'
+                '            or "task_callback_route" in event.get("native_request", {})):\n'
                 '        from upgrade_task_callback_route import verify_input\n'
                 '        verify_input(binding,event["native_request"],attempt)')
     elif name == "cmux_codex_input.py":
@@ -81,7 +82,8 @@ def task_target_paths(name, text):
         if 'def _send_native_once(' in text:
             text = replace_once(text,'        request = prepare(client, binding, text)',
                 '        request = prepare(client, binding, text)\n'
-                '        if binding.get("schema") == task_target.SCHEMA and request["method"] == "turn/start":\n'
+                '        if binding.get("schema") == task_target.SCHEMA and (request["method"] == "turn/start"\n'
+                '                or request.get("native_metadata", {}).get("requester_direct_rpc_peer") is False):\n'
                 '            from upgrade_task_callback_sender import route_request, send_idle_once\n'
                 '            request = route_request(binding,request,text)\n'
                 '            return send_idle_once(binding,request,text,recheck=recheck,emit=emit,\n'

@@ -7,6 +7,7 @@ from pathlib import Path
 from orchestration_common import file_ref,json_ref,require
 
 SCHEMA='upgrade-task-callback-ingress-v1'
+BUSY_SCHEMA='upgrade-task-callback-ingress-v2'
 REQUEST_SCHEMA='upgrade-task-callback-request-v1'
 
 
@@ -17,7 +18,7 @@ def descriptor_value(binding,anchor):
     enrollment_ref=file_ref(parent/'campaign-enrollment.json')
     enrollment=json_ref(enrollment_ref)
     owner=json_ref(value['runtime_owner'])
-    require(value.get('schema')==SCHEMA and value['enrollment']==enrollment_ref
+    require(value.get('schema') in (SCHEMA,BUSY_SCHEMA) and value['enrollment']==enrollment_ref
             and value['registration']==startup['operations']==enrollment['registration']
             and value['campaign']==enrollment['campaign']==owner['campaign']
             and value['task_thread_id']==anchor['thread_id']
@@ -30,6 +31,11 @@ def descriptor_value(binding,anchor):
             and enrollment['startup']==binding['task_target']['startup']
             and value['socket']['path']==str(parent/'callback-ingress/s'),
             'TASK_CALLBACK_CLIENT_ORIGINAL_DESCRIPTOR_REQUIRED')
+    if value['schema']==BUSY_SCHEMA:
+        require(value.get('allowed_input_methods')==['turn/start','turn/steer'],
+                'TASK_CALLBACK_CLIENT_BUSY_CONTRACT_CHANGED')
+    else:
+        require('allowed_input_methods' not in value,'TASK_CALLBACK_CLIENT_BUSY_DOWNGRADE')
     return ref,value
 
 

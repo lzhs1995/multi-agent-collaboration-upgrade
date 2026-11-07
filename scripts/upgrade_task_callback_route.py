@@ -30,11 +30,18 @@ def proposed(binding,request):
         valid_previous=isinstance(previous,str) and str(uuid.UUID(previous))==previous
     except ValueError:
         valid_previous=False
+    busy=request.get('method')=='turn/steer'
+    params=dict(threadId=binding['session_id'],input=[dict(type='text',text=pack['completion_callback'])])
+    if busy:
+        from upgrade_task_callback_contract import BUSY_SCHEMA
+        require(value['schema']==BUSY_SCHEMA and value['allowed_input_methods']==['turn/start','turn/steer'],
+                'TASK_CALLBACK_BUSY_DESCRIPTOR_REQUIRED')
+        params['expectedTurnId']=previous
     require(valid_previous
-            and request.get('method')=='turn/start' and request.get('observed_status')=='idle'
+            and request.get('method') in ('turn/start','turn/steer')
+            and request.get('observed_status')==('active' if busy else 'idle')
             and request.get('socket')==binding['task_target']['socket']
-            and request.get('params')==dict(threadId=binding['session_id'],
-                input=[dict(type='text',text=pack['completion_callback'])])
+            and request.get('params')==params
             and pack['executor_uuid'].upper()==binding['identity']['caller_surface_uuid'].upper()
             and pack['callback_target'].upper()==binding['identity']['target_surface_uuid'].upper()
             and attempt.parent==receipt.with_name(receipt.stem+'-attempts')
@@ -46,6 +53,9 @@ def proposed(binding,request):
 def verify_input(binding,request,attempt):
     """Read an existing service result. Never manufacture receipt or authority."""
     route,endpoint,pack=proposed(binding,request)
+    if request['method']=='turn/steer':
+        from upgrade_task_busy_evidence import verify_busy_input
+        return verify_busy_input(binding,request,attempt,route,endpoint,pack)
     parent=Path(endpoint['registration']['path']).parent
     directory=parent/'campaign-actor-events'
     previous=request['observed_turn_id']

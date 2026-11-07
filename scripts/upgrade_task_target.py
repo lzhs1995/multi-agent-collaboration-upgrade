@@ -113,8 +113,11 @@ def require_request(request, binding):
         require("task_callback_route" in request, "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
         proposed(binding,request)
     else:
-        require(request.get("method") == "turn/steer" and "task_callback_route" not in request,
+        require(request.get("method") == "turn/steer",
                 "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")
+        if 'task_callback_route' in request:
+            from upgrade_task_callback_route import proposed
+            proposed(binding,request)
 
 
 def checked_request(client, binding, method, params):

@@ -43,11 +43,22 @@ cancellation. `stop()` reports an alive thread when a read has not yet returned.
 Original socket directories, failure records and used nonces are retained;
 restart/replacement of that instance is refused.
 
-This increment does **not** enable live TASK adoption or formal launch. Busy
-callback input is explicitly refused before an input intent, pending its owner
-route. Idle metadata can reach the existing callback sender, but the generated
+This increment does **not** enable live TASK adoption or formal launch. Both
+busy and idle metadata can reach the retained callback sender, but the generated
 TASK input gate now reports `TASK_INPUT_ADOPTION_CONSUMER_UNAVAILABLE` instead
 of importing an unshipped external validator. The external full validator stays
 intact. The final adoption producer/reader must replace this explicit refusal
 together, with real hooks, broker/Mach/native-helper/FD evidence and both input
 paths. Passing observer component tests is not callback or business acceptance.
+
+An explicitly enabled v2 callback ingress can service a busy callback between
+original actor operations, on that same owner's thread and RPC connection. It
+sends the exact `turn/steer` with the original expected turn, preserves the
+registered turn/operation scope, and records its own original source, attempt
+snapshot, input intent, RPC exchange and result. The historical reader verifies
+that chain separately from native user reception or model consumption. Unknown
+results close the runtime and never fall back to a fresh idle start. V1 ingress
+remains idle-only. A long synchronous actor operation may still delay service;
+the current client deadline may expire, and this implementation does not claim
+that such callbacks can be retried or that every busy callback meets a latency
+target. End-to-end adoption and scheduling validation remain required.
