@@ -19,6 +19,11 @@ still runs the portable socket and original-reader tests; Darwin-only kernel
 integration is skipped there. Nested fixture cleanup is registered before setup,
 and the shared target fixture cleans up even when called directly and setup fails.
 The observation-source fixture patches the module actually used by the reader.
+The runtime-policy tests also capture the real kernel reader before suite
+mocks. Local workload tests supply a private, temporary `rtk proxy` forwarding
+fixture; the frozen Python workload still runs as a real subprocess with real
+exit status and streams. These tests do not validate RTK itself or require a
+user-installed RTK on CI.
 
 These checks exercise source dependencies, local processes, sockets, generated
 readers and fixture RPC/results. They do not establish live model adoption,

@@ -1,4 +1,4 @@
-"""Real frozen workload subprocess/ledger with explicit offline identity fixtures."""
+"""Real workload subprocess/ledger; identity and RTK forwarding are fixtures."""
 import copy
 import os
 from pathlib import Path
@@ -37,7 +37,16 @@ class LocalTests(unittest.TestCase):
                 adapter=tree_manifest(scripts.parent),workload=file_ref(scripts/"orchestration_workload.py"),
                 checker=file_ref(checker))
             c.save()
-        f.configure_campaign=configure;f.setUp();self.addCleanup(f.doCleanups)
+        f.configure_campaign=configure;self.addCleanup(f.doCleanups);f.setUp()
+        # CI has no user-installed RTK. Model only its `proxy` forwarding here;
+        # execute the actual frozen Python/workload and preserve its real exit
+        # status and streams. This does not attest RTK installation or behavior.
+        bin_dir=f.c.root/"fixture-bin";bin_dir.mkdir()
+        proxy=bin_dir/"rtk"
+        proxy.write_text('#!/bin/sh\n[ "$1" = proxy ] || exit 64\nshift\nexec "$@"\n')
+        proxy.chmod(0o700)
+        env=patch.dict(os.environ,{"PATH":str(bin_dir)+os.pathsep+os.environ.get("PATH","")})
+        env.start();self.addCleanup(env.stop)
         f.call("start");f.complete("start");f.call("claim");f.complete("claim")
         enrollment=dict(schema="upgrade-task-campaign-enrollment-v1",campaign=f.runner.ref,
             registration=f.reg_ref,authority=f.c.campaign["authorization"],runtime=f.c.campaign["runtime"],

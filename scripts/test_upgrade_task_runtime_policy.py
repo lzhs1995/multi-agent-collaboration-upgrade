@@ -10,13 +10,12 @@ from unittest.mock import patch
 
 from orchestration_common import ContractError
 import upgrade_task_runtime_policy as policy
+from cmux_daemon_identity import process as kernel_process
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'Darwin kernel required')
 class RuntimePolicyTests(unittest.TestCase):
     def test_actual_external_query_distinguishes_unsandboxed_and_confined_process(self):
-        import test_upgrade_task_observer_transport  # Fixed original native reader import path.
-        import cmux_daemon_identity as identity
         self.assertEqual(policy.default_decisions(os.getpid()), {k:0 for k in policy.OPERATIONS})
         profile = '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote tcp "localhost:3445"))(deny mach-lookup)(deny appleevent-send)'
         code = 'import os,sys;print(os.getpid(),flush=True);sys.stdin.readline()'
@@ -24,13 +23,13 @@ class RuntimePolicyTests(unittest.TestCase):
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,close_fds=True)
         try:
             self.assertEqual(int(child.stdout.readline()),child.pid)
-            row = identity.process(child.pid)
-            observed = policy.observe([row],process=identity.process)
+            row = kernel_process(child.pid)
+            observed = policy.observe([row],process=kernel_process)
             self.assertEqual(policy.verify(observed,[row]),observed)
             self.assertFalse(observed['all_exceptions_proven'])
             self.assertFalse(observed['inherited_mach_rights_proven'])
             with self.assertRaisesRegex(ContractError,'DEFAULT_ALLOW'):
-                policy.observe([identity.process(os.getpid())],process=identity.process)
+                policy.observe([kernel_process(os.getpid())],process=kernel_process)
             changed = copy.deepcopy(observed)
             changed['processes'][0]['default_decisions']['network-outbound'] = 0
             with self.assertRaises(ContractError):policy.verify(changed,[row])
@@ -41,9 +40,7 @@ class RuntimePolicyTests(unittest.TestCase):
                 child.communicate('\n',timeout=10)
 
     def test_pid_change_during_query_refuses(self):
-        import test_upgrade_task_observer_transport
-        import cmux_daemon_identity as identity
-        row=identity.process(os.getpid());changed=dict(row,birth=[1,1])
+        row=kernel_process(os.getpid());changed=dict(row,birth=[1,1])
         with patch.object(policy,'default_decisions',return_value={k:1 for k in policy.OPERATIONS}):
             with self.assertRaisesRegex(ContractError,'CHANGED_DURING_READ'):
                 policy.observe([row],process=unittest.mock.Mock(side_effect=[row,changed]))
