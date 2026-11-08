@@ -311,7 +311,7 @@ def inspect(startup_ref, spec, binding, *, stage=None):
         require(len({s["workspace_uuid"] for s in sessions.values()}) == 1
                 and all(len({s[k] for s in sessions.values()}) == 3
                         for k in ("surface_uuid", "pane_uuid", "session_id")), "CLIENT_ENDPOINTS_NOT_DISTINCT")
-    return dict(schema="upgrade-live-inspection-task-v1" if task_mode else "upgrade-live-inspection-v2",
+    result = dict(schema="upgrade-live-inspection-task-v1" if task_mode else "upgrade-live-inspection-v2",
                 startup=startup_ref, observed_at=utc_now(),
                 observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),
                 launch_intent=intent_ref, launch_result=result_ref, launches=launch_refs,
@@ -325,3 +325,13 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                    if stage is None and (startup_failures or startup_continuity_enabled(binding)) else {}),
                 **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}),
                 **({"recovery": recovery_ref} if recovery_ref is not None else {}))
+    if task_mode and not errors and result['startup_ready']:
+        from upgrade_task_fd_contract import enabled as descriptors_enabled
+        if descriptors_enabled(binding):
+            from upgrade_task_adoption_evidence import collect
+            try:
+                result['task_startup_evidence'] = collect(startup_ref, spec, binding, result, native=native)
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+                errors['task-startup-evidence'] = str(exc)
+                result['startup_ready'] = False
+    return result

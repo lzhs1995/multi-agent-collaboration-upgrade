@@ -25,7 +25,8 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_task_callback_contract", "upgrade_task_bridge_context", "upgrade_task_sender",
     "upgrade_task_busy_evidence",
     "upgrade_task_observer_protocol", "upgrade_task_observer_client", "upgrade_task_observer_routes",
-    "upgrade_task_observer_evidence", "upgrade_task_mach_policy", "upgrade_task_fd_contract")}
+    "upgrade_task_observer_evidence", "upgrade_task_mach_policy", "upgrade_task_fd_contract",
+    "upgrade_task_adoption_evidence")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
