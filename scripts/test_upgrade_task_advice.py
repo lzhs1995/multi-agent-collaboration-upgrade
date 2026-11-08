@@ -62,6 +62,7 @@ class AdviceTests(unittest.TestCase):
             ops['accept']=dict(kind=KIND,payload=accept)
             slots['accept']=dict(schema=SLOT_SCHEMA,resolver='campaign-accept-marker-v1',
                 source_path=str(self.c.root/'runs/run-01/nodes/local/candidate.json'),producer_operation='candidate')
+        self.extend_operations(ops, slots)
         self.registration=dict(schema='upgrade-task-operations-v3',task_id='fixture-advice',controller_id='fixture',
             thread_id=self.native.session['session_id'],turn_id=fixtures.TURN,server=f.client.server,
             authority_ref=self.c.campaign['authorization'],operations=ops,initial_operations=list(ops),
@@ -79,6 +80,9 @@ class AdviceTests(unittest.TestCase):
         self.service=campaign_task_service(self.runner,f.client,self.ledger,lambda *a:None,advice_connections=self.held)
         self.actor=self.service.actor
         self.call('start');self.complete('start')
+
+    def extend_operations(self, operations, slots):
+        """Optional fixture extension before the real immutable ledger exists."""
 
     def transport(self,request):
         self.calls.append(copy.deepcopy(request))

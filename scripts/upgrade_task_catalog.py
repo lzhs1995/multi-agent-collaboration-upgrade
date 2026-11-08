@@ -41,6 +41,8 @@ def catalog(campaign, task_directory, *, observations=4,
     require(set(failures) <= endpoints, 'TASK_CATALOG_FOREIGN_FAILURE')
     operations = {'ready': dict(kind='readiness', payload={})}
     slots, choices = {}, {}
+    from upgrade_task_semantic import samples as semantic_samples, node_for
+    semantic = semantic_samples(campaign)
 
     def add(run, action, node=None, *, suffix=None, **kwargs):
         # Names are opaque IDs. Labels and alternatives carry no priority.
@@ -60,6 +62,17 @@ def catalog(campaign, task_directory, *, observations=4,
     for run in runs:
         add(run, 'start')
         add(run, 'finish')
+        if semantic:
+            dp2_node = node_for(campaign)
+            add(run, 'semantic-order', dp2_node)
+            for index in range(observations):
+                label = f'observation-{index + 1:02d}'
+                add(run, 'semantic-status', dp2_node, suffix=label, observation=label)
+            for sample in (s for s in semantic if s['run_id'] == run):
+                # IDs stay short; exact original request IDs remain in payloads.
+                for action in ('semantic-read', 'semantic-disposition'):
+                    add(run, action, dp2_node, suffix=f"message-{sample['position'] + 1}",
+                        semantic_request=sample['request_id'])
         for action in ('status', 'recover', 'verify') + (('advance',) if campaign['arm'] == 'B' else ()):
             for index in range(observations):
                 label = f'observation-{index + 1:02d}'

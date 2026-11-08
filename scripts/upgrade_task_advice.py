@@ -134,13 +134,17 @@ def advice_handler(runner,registration,connections):
         run,node=payload["run_id"],payload["node_id"]
         name,producer=one_operation(registration,"advice",run,node)
         co=runner.co(run)
-        if payload["action"]=="advice":
+        if payload["action"] in ("advice", "semantic-order"):
             # Same-process scoped gate is retained by the campaign handler.
             # Credentials never enter registration, operation or result files.
             from jev_advice_run import record_advice,STOP_REASON
             from orchestration_common import ContractError
             connection,credential=capability_for(name)
             try:
+                if payload['action'] == 'semantic-order':
+                    from jev_advice_run import record_inbox_order
+                    return record_inbox_order(co, node, 'semantic-' + run, None,
+                        registration=producer['advisory_registration'], connection=connection, credential=credential)
                 return record_advice(co,node,registration=producer["advisory_registration"],
                     connection=connection,credential=credential)
             except ContractError as exc:

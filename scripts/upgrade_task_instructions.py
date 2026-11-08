@@ -11,6 +11,22 @@ from upgrade_task_control import invocation_script
 PLAN_SCHEMA="upgrade-task-next-input-plan-v2"
 
 
+def compact_catalog(registration, operation_ids):
+    """Factor identical payload fields without omitting any action or choice."""
+    operations = [registration['operations'][name] for name in operation_ids]
+    shared = {k:v for k,v in operations[0]['payload'].items()
+              if all(k in op['payload'] and op['payload'][k] == v for op in operations)}
+    rows = []
+    for name, op in zip(operation_ids, operations):
+        row = dict(operation_id=name, operation=dict(kind=op['kind'],
+            payload={k:v for k,v in op['payload'].items() if k not in shared}),
+            exact_exec_script=invocation_script(name))
+        if name in registration.get('binding_slots', {}):
+            row['binding_slot'] = registration['binding_slots'][name]
+        rows.append(row)
+    return dict(shared_payload_fields=shared, entries=rows)
+
+
 def remaining_operations(registration,scope,used):
     """All unconsumed original choices, in a neutral deterministic order."""
     scope=set(scope);used=set(used)
@@ -39,13 +55,7 @@ def render(campaign_ref,registration,operation_ids,*,previous_completion=None):
         if selected.intersection(members):
             require(set(members)<=selected,"TASK_INSTRUCTIONS_CHOICE_HIDDEN")
     def encoded(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)
-    catalog=[]
-    for name in operation_ids:
-        entry=dict(operation_id=name,operation=registration["operations"][name],
-                   exact_exec_script=invocation_script(name))
-        if name in registration.get("binding_slots",{}):
-            entry["binding_slot"]=registration["binding_slots"][name]
-        catalog.append(entry)
+    catalog=compact_catalog(registration,operation_ids)
     choices={name:members for name,members in registration["choice_groups"].items()
              if selected.intersection(members)}
     identities={lane:{k:s[k] for k in ("provider","session_id","surface_uuid")}
@@ -61,6 +71,24 @@ unchanged. Read its complete result before choosing another action. If it yields
 collect the original running call. A lost, failed, or uncertain return never grants
 another attempt. Observe the original evidence; preserve UNKNOWN and STOP.
 Do not create another operation ID, renew a budget, or substitute a shell command.
+
+For registered S2 semantic inputs, original claude_a alone sends its three frozen
+messages after native run start and before business work, using the original sender
+duties. Never send them for Claude or replace missing messages. Use a declared
+semantic-status observation to inspect readiness; only when all original inputs
+are ready select semantic-order once. The off arm uses arrival order and zero
+advisory requests; the on arm keeps its original shared advisory budget. Read the
+complete order result, then select each semantic-read in that returned order.
+After each complete body result, emit one assistant message containing only a JSON
+object with schema "upgrade-task-semantic-decision-v1", run_id, request_id,
+inner_body_sha256 (all copied from that original read), disposition ("adopt",
+"defer" or "refuse"), reason (your own concrete explanation, at most 2000 characters),
+and work (an array of distinct existing plan node IDs affected by this message).
+Then select its semantic-disposition operation once. The statement itself grants
+no work and is not acceptance; later named work still needs its original acceptance.
+Never invent a disposition before reading, repeat the statement, or use a tool/user
+echo as the model decision. Record failures and missing samples in the original
+denominator. The 99 semantic slots and 192 ordinary-message samples stay separate.
 
 For each run, inspect its original state and permit before start. Never restart a
 started or closed run. Dependencies, live identity, leases and admission remain
@@ -104,7 +132,10 @@ Previous normal completion (null for initial instructions):
 Mutually exclusive registered choices:
 {encoded(choices)}
 Complete typed operation catalog:
-{encoded(catalog)}
+Every entry's complete payload is shared_payload_fields merged with that entry's
+operation.payload. This lossless factoring removes repeated fields only; all
+actions and alternatives remain listed, with their unchanged exact_exec_script.
+{json.dumps(catalog, ensure_ascii=False, sort_keys=True)}
 '''
     require(len(text.encode())<=256*1024,"TASK_INSTRUCTIONS_TEXT_BUDGET_EXHAUSTED")
     return text
