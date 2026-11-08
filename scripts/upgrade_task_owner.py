@@ -149,6 +149,7 @@ class TaskOwner:
         self.registration_ref = driver.registration_ref
         self.driver_ref = driver_ref
         self.driver_config = driver.config
+        self.driver = driver
         group = group_registration(self.registration_ref, self.group,
                                    self.runtime['context'], self.runtime['arm'])
         require(self.campaign_path == campaign_root/group['campaign_id']/'campaign.json',
@@ -168,7 +169,7 @@ class TaskOwner:
         # Start before release so the original Claude startup hooks already
         # have their bounded observation endpoint when native exec begins.
         from upgrade_task_observer import start_observer
-        self.observer = start_observer(runtime_ref)
+        self.observer = start_observer(runtime_ref, driver_ref=driver_ref)
 
     def _verify(self):
         require(not self.closed and os.getpid() == self.pid, 'TASK_OWNER_CLOSED_OR_REPLACED')
@@ -188,6 +189,7 @@ class TaskOwner:
     def _schedule(self):
         from upgrade_schedule import status
         require(json_ref(self.driver_ref) == self.driver_config, 'TASK_OWNER_ORIGINAL_DRIVER_CHANGED')
+        self.driver._check_overall_deadline()
         return status(self.registration_ref)
 
     def _connect(self):

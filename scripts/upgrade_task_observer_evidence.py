@@ -34,12 +34,14 @@ def verify(ref, binding, startup, lane, *, pid=None, parents=None):
     descriptor_ref = file_ref(root/'descriptor.json')
     descriptor = json_ref(descriptor_ref)
     runtime_ref = file_ref(Path(binding['controller_root']).parents[2]/'runtime-v2.json')
+    from upgrade_task_observer_budget import verify_descriptor_budget
+    verify_descriptor_budget(descriptor, runtime_ref)
     require(saved['request']['path'] == str(path.parent/'request.json')
             and request['kind'] == expected_kind
             and response['schema'] == RESPONSE and response['kind'] == expected_kind
             and response['nonce'] == request['nonce'] and response['status'] == 'OBSERVED'
             and response['descriptor'] == descriptor_ref and response['input_operations'] == 0
-            and descriptor['schema'] == SCHEMA and descriptor['runtime'] == runtime_ref
+            and descriptor['runtime'] == runtime_ref
             and descriptor['startup'] == startup and descriptor['socket']['path'] == str(root/'s')
             and descriptor['allowed_kinds'] == list(allowed_kinds(binding))
             and descriptor['input_operations'] == 0 and descriptor['restart_allowed'] is False

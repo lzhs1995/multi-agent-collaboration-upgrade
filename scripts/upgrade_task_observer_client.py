@@ -25,12 +25,12 @@ def descriptor(binding):
     startup=file_ref(Path(binding['config_root'])/'startup-v2.json')
     runtime=file_ref(Path(binding['controller_root']).parents[2]/'runtime-v2.json')
     ref=file_ref(path.parent/'descriptor.json');value=json_ref(ref)
-    require(value.get('schema')==SCHEMA and value['runtime']==runtime and value['startup']==startup
+    from upgrade_task_observer_budget import verify_descriptor_budget
+    verify_descriptor_budget(value, runtime)
+    require(value['runtime']==runtime and value['startup']==startup
             and value['socket']['path']==str(path) and value['allowed_kinds']==list(allowed_kinds(binding))
             and value['input_operations']==0 and value['restart_allowed'] is False
             and value['adoption_proven'] is False
-            and type(value['maximum_seconds']) in (int,float) and 0<value['maximum_seconds']<=1800
-            and type(value['maximum_requests']) is int and 0<value['maximum_requests']<=2048
             and value['maximum_observation_seconds']==30
             and set(value['owner'])==set(PROCESS_FIELDS),
             'TASK_OBSERVER_DESCRIPTOR_CHANGED')

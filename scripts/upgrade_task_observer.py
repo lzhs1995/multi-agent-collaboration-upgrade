@@ -15,13 +15,22 @@ from orchestration_common import canonical, file_ref, require, write_json
 from upgrade_task_observation import ObservationSource
 from upgrade_task_observer_protocol import (SCHEMA, REQUEST, RESPONSE, MAX_REPLY, allowed_kinds,
     socket_pin, request_value, frame)
+from upgrade_task_observer_budget import (SCHEMA as SCHEDULED_SCHEMA, schedule_budget,
+                                         require_schedule_open)
 
 
 class ReadOnlyObserver:
-    def __init__(self, source, *, seconds=1800, max_requests=2048):
+    def __init__(self, source, *, seconds=1800, max_requests=2048, driver_ref=None):
         require(type(source) is ObservationSource,"TASK_OBSERVER_ORIGINAL_SOURCE_REQUIRED")
-        require(type(seconds) in (int,float) and 0<seconds<=1800
-                and type(max_requests) is int and 0<max_requests<=2048,"TASK_OBSERVER_BUDGET_INVALID")
+        self.budget = None
+        if driver_ref is not None:
+            require(seconds == 1800 and max_requests == 2048, 'TASK_OBSERVER_SCHEDULE_OVERRIDE_REFUSED')
+            self.budget = schedule_budget(driver_ref, source.runtime_ref)
+            seconds, max_requests = self.budget['maximum_seconds'], self.budget['maximum_requests']
+            require_schedule_open(self.budget)
+        else:
+            require(type(seconds) in (int,float) and 0<seconds<=1800
+                    and type(max_requests) is int and 0<max_requests<=2048,"TASK_OBSERVER_BUDGET_INVALID")
         source.verify()
         self.source=source;self.pid=os.getpid();self.seconds=seconds;self.max_requests=max_requests
         self.path=Path(source.binding['task_model_network']['observer']);self.root=self.path.parent
@@ -33,12 +42,13 @@ class ReadOnlyObserver:
         try:
             self.listener.set_inheritable(False);self.listener.bind(str(self.path));self.path.chmod(0o600)
             self.socket=socket_pin(self.path)
-            self.descriptor=write_json(self.root/'descriptor.json',dict(schema=SCHEMA,
+            self.descriptor=write_json(self.root/'descriptor.json',dict(schema=SCHEDULED_SCHEMA if self.budget else SCHEMA,
                 runtime=source.runtime_ref,startup=source.runtime['startup'],owner=source.owner,
                 socket=self.socket,allowed_kinds=list(allowed_kinds(source.binding)),input_operations=0,
                 maximum_seconds=seconds,maximum_requests=max_requests,
                 maximum_observation_seconds=30,
-                restart_allowed=False,adoption_proven=False),exclusive=True)
+                restart_allowed=False,adoption_proven=False,
+                **({'schedule_budget':self.budget} if self.budget else {})),exclusive=True)
             self.listener.listen(8)
         except BaseException:
             self.closed=True;self.listener.close();raise
@@ -54,6 +64,7 @@ class ReadOnlyObserver:
         return self.descriptor
 
     def _verify_endpoint(self):
+        require_schedule_open(self.budget)
         require(os.getpid()==self.pid and not self.closed
                 and file_ref(self.descriptor['path'])==self.descriptor
                 and socket_pin(self.path)==self.socket
@@ -133,14 +144,14 @@ class ReadOnlyObserver:
                     input_operations=0)
 
 
-def start_observer(runtime_ref, *, seconds=1800, max_requests=2048):
+def start_observer(runtime_ref, *, seconds=1800, max_requests=2048, driver_ref=None):
     """Explicit external-owner entry; no automatic enrollment or model launch.
 
     The returned object must be retained and stopped by that same owner. A
     terminated instance cannot take over its exclusive original directory.
     """
     observer = ReadOnlyObserver(ObservationSource(runtime_ref), seconds=seconds,
-                                max_requests=max_requests)
+                                max_requests=max_requests, driver_ref=driver_ref)
     try:
         observer.start()
     except BaseException:

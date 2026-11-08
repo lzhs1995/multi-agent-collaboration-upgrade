@@ -3,6 +3,7 @@
 Only native model startup and adoption are doubles; no installed client launch.
 """
 from pathlib import Path
+from types import MethodType, SimpleNamespace
 from unittest.mock import patch
 import unittest
 
@@ -96,6 +97,20 @@ class OwnerFlowTests(unittest.TestCase):
             bootstrap.assert_not_called()
         self.assertFalse(self.owner.closed)
         self.assertTrue(self.owner.observer.thread.is_alive())
+
+    def test_original_overall_deadline_stops_owner_before_readiness(self):
+        self.owner.driver_config = {'fixture': 'original driver'}
+        self.owner.driver_ref = write_json(self.owner.root/'driver.json', self.owner.driver_config)
+        def expired():
+            raise ContractError('original overall deadline reached')
+        self.owner.driver = SimpleNamespace(_check_overall_deadline=expired)
+        self.owner._schedule = MethodType(TaskOwner._schedule, self.owner)
+        with patch.object(self.f.owner, 'bootstrap') as bootstrap:
+            with self.assertRaisesRegex(ContractError, 'overall deadline'):
+                self.owner.tick()
+            bootstrap.assert_not_called()
+        self.assertTrue(self.owner.closed)
+        self.assertFalse(self.owner.observer.thread.is_alive())
 
 
 if __name__ == '__main__':

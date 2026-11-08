@@ -90,15 +90,22 @@ raise AssertionError('direct scope escalation')
 from orchestration_common import json_ref,file_ref
 from types import SimpleNamespace
 from unittest.mock import patch
+from test_upgrade_task_observer_budget import fixture_driver
 runtime=json_ref(runtime_ref)
 binding=json_ref(file_ref(Path(runtime['controller']['path'])/'upgrade-binding.json'))
 # Only the absent benchmark registration is a fixture. Private imports,
 # observer, process identity, kernel boundaries and shutdown are real.
-driver=SimpleNamespace(config={'runtimes':{'fixture-group':runtime_ref}},registration_ref={'fixture':True})
+driver_ref=fixture_driver(Path(binding['tmp_root'])/'benchmark',runtime_ref)
+config=json_ref(driver_ref)
+driver=SimpleNamespace(config=config,registration_ref=config['registration'],_check_overall_deadline=lambda:None)
 with patch('upgrade_driver.Driver',return_value=driver), patch('upgrade_benchmark.group_registration',return_value={'campaign_id':'original'}):
- owner=TaskOwner(runtime_ref, str(Path(binding['campaign_root'])/'original/campaign.json'),driver_ref={'fixture':'driver'})
-owner._schedule=lambda:dict(status='ACTIVE',active=dict(group='fixture-group',run_id='fixture-run'))
+ owner=TaskOwner(runtime_ref, str(Path(binding['campaign_root'])/'original/campaign.json'),driver_ref=driver_ref)
+owner._schedule=lambda:dict(status='ACTIVE',active=dict(group='g0',run_id='fixture-run'))
 try:
+ from mac_upgrade_task_observer_client import descriptor
+ actual_descriptor=descriptor(binding)[1]
+ assert actual_descriptor['schema']=='upgrade-task-observer-endpoint-v2'
+ assert actual_descriptor['maximum_requests']==8192
  value=owner.tick()
  assert value['status']=='WAITING_ORIGINAL_SERVER',value
  assert owner.observer.thread.is_alive()
