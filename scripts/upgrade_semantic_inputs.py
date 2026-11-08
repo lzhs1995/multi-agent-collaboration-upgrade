@@ -218,6 +218,9 @@ def send_body(campaign, run_id, request_id):
         return 75
     # Shared locks, original intents/fences and deduplication remain helper-owned.
     # Inherit the helper result verbatim, even if pending. No manufactured receipt.
+    if 'task_controls' in campaign:
+        from upgrade_task_message_source import send
+        return send(campaign,sample,'semantic')
     return subprocess.run(sample["helper_argv"], check=False).returncode
 
 

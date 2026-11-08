@@ -8,6 +8,7 @@ from orchestration_common import file_ref,json_ref,require
 
 SCHEMA='upgrade-task-callback-ingress-v1'
 BUSY_SCHEMA='upgrade-task-callback-ingress-v2'
+MESSAGE_SCHEMA='upgrade-task-registered-input-ingress-v3'
 REQUEST_SCHEMA='upgrade-task-callback-request-v1'
 
 
@@ -18,7 +19,7 @@ def descriptor_value(binding,anchor):
     enrollment_ref=file_ref(parent/'campaign-enrollment.json')
     enrollment=json_ref(enrollment_ref)
     owner=json_ref(value['runtime_owner'])
-    require(value.get('schema') in (SCHEMA,BUSY_SCHEMA) and value['enrollment']==enrollment_ref
+    require(value.get('schema') in (SCHEMA,BUSY_SCHEMA,MESSAGE_SCHEMA) and value['enrollment']==enrollment_ref
             and value['registration']==startup['operations']==enrollment['registration']
             and value['campaign']==enrollment['campaign']==owner['campaign']
             and value['task_thread_id']==anchor['thread_id']
@@ -31,11 +32,17 @@ def descriptor_value(binding,anchor):
             and enrollment['startup']==binding['task_target']['startup']
             and value['socket']['path']==str(parent/'callback-ingress/s'),
             'TASK_CALLBACK_CLIENT_ORIGINAL_DESCRIPTOR_REQUIRED')
-    if value['schema']==BUSY_SCHEMA:
+    if value['schema'] in (BUSY_SCHEMA,MESSAGE_SCHEMA):
         require(value.get('allowed_input_methods')==['turn/start','turn/steer'],
                 'TASK_CALLBACK_CLIENT_BUSY_CONTRACT_CHANGED')
     else:
         require('allowed_input_methods' not in value,'TASK_CALLBACK_CLIENT_BUSY_DOWNGRADE')
+    if value['schema']==MESSAGE_SCHEMA:
+        from upgrade_task_message_wire import REQUEST_SCHEMA as message_schema
+        require(value.get('allowed_message_request')==message_schema,
+                'TASK_MESSAGE_INGRESS_CONTRACT_CHANGED')
+    else:
+        require('allowed_message_request' not in value,'TASK_MESSAGE_INGRESS_DOWNGRADE')
     return ref,value
 
 

@@ -735,11 +735,12 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
         if b["schema"] == "native-delivery-task-v1":
             require(req.get("socket") == b["task_target"]["socket"],
                     "TASK_TARGET_ORIGINAL_INPUT_CHANGED")
-            if req.get("method")=="turn/start":
+            if 'task_message_route' in req:
+                from upgrade_task_message_route import verify_input
+                verify_input(b,req,attempt)
+            elif req.get("method")=="turn/start" or 'task_callback_route' in req:
                 from upgrade_task_callback_route import verify_input
                 verify_input(b,req,attempt)
-            else:
-                require("task_callback_route" not in req,"TASK_TARGET_ORIGINAL_INPUT_CHANGED")
         require(fence.get("native_request_sha256") == digest(json.dumps(req, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()), "native request hash mismatch")
         peer = req.get("socket", {})
         for name in ("uid", "peer_uid", "mode", "device", "inode"):

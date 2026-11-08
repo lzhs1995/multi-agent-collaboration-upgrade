@@ -274,7 +274,7 @@ class Observer:
 
     def native(self, attempt, payload, receiver, candidates=(), *, command=None):
         binding = attempt['native_binding']
-        need(binding.get('schema') == 'native-delivery-v1'
+        need(binding.get('schema') in ('native-delivery-v1','native-delivery-task-v1')
              and binding.get('payload_sha256') == sha(payload)
              and binding.get('session_id') == receiver['session_id']
              and binding.get('provider') == receiver['provider']
@@ -288,6 +288,9 @@ class Observer:
         need(path.resolve() == path and path.is_relative_to(Path(receiver['native_config_root']))
              and path.name.endswith(binding['session_id'] + '.jsonl'), 'PRIVATE_NATIVE_PATH_INVALID')
         event, fence = original_event(attempt, binding, payload)
+        if binding['schema']=='native-delivery-task-v1':
+            from upgrade_task_message_route import verify_input
+            verify_input(binding,event['native_request'],attempt)
         need(wire_reference(payload) is not None, 'EXACT_REFERENCE_NOTICE_REQUIRED')
         results, records = [], []
         retained_bytes = 0

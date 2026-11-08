@@ -108,6 +108,10 @@ def require_request(request, binding):
         return
     _, anchor = validate_saved(binding)
     require(request.get("socket") == anchor["socket"], "TASK_TARGET_REQUEST_SOCKET_CHANGED")
+    if 'task_message_route' in request:
+        from upgrade_task_message_route import proposed
+        proposed(binding,request)
+        return
     if request.get("method") == "turn/start":
         from upgrade_task_callback_route import proposed
         require("task_callback_route" in request, "TASK_TARGET_EXTERNAL_TURN_ENROLLMENT_REQUIRED")

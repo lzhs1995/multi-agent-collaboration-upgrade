@@ -48,6 +48,10 @@ def idle_intent(attempt, binding, text, receiver, sender, previous_turn, socket_
         from upgrade_task_callback_route import proposed
         proposed(binding,request)
         fields.add('task_callback_route')
+    if 'task_message_route' in request:
+        from upgrade_task_message_route import proposed
+        proposed(binding,request)
+        fields.add('task_message_route')
     method,status,turn_status=('turn/steer','active','inProgress') if busy else ('turn/start','idle','completed')
     params=dict(threadId=receiver['session_id'],input=[dict(type='text',text=text)])
     if busy:params['expectedTurnId']=previous_turn
@@ -113,12 +117,17 @@ def caller_ancestry(connection, sender, process):
 
 class CallbackInput:
     """In-memory request bound to one original service and live sender socket."""
+    REQUEST_KEYS={'pack','attempt'}
+    PLAN_SCHEMA=SCHEMA
+    SOURCE_SCHEMA='upgrade-task-callback-input-source-v1'
+    SOURCE_FIELD='callback'
+    LABEL='callback'
     def __init__(self, service, connection, request, *, busy=False):
         from upgrade_task_actor import TaskService
         from upgrade_task_enrollment import TaskCampaignGate
         require(type(service) is TaskService and type(service.actor.gate) is TaskCampaignGate,
                 'TASK_CALLBACK_ORIGINAL_SERVICE_REQUIRED')
-        require(isinstance(request, dict) and set(request) == {'pack', 'attempt'},
+        require(isinstance(request, dict) and set(request) == self.REQUEST_KEYS,
                 'TASK_CALLBACK_INPUT_REQUEST_INVALID')
         self.service, self.connection, self.request = service, connection, copy.deepcopy(request)
         self.gate = service.actor.gate
@@ -219,7 +228,7 @@ class CallbackInput:
         require(not self.busy,'TASK_CALLBACK_BUSY_CANNOT_ENROLL_NEW_TURN')
         from upgrade_task_instructions import remaining_operations
         require(self.observe() == self.initial, 'TASK_CALLBACK_INPUT_CHANGED')
-        require(json_ref(self.origin) == dict(schema='upgrade-task-callback-input-source-v1',
+        require(json_ref(self.origin) == dict(schema=self.SOURCE_SCHEMA,
                     enrollment=self.gate.proof, original=self.initial,
                     original_attempt_snapshot=self.snapshot,
                     native_user_receipt=False, model_consumption=False)
@@ -229,10 +238,10 @@ class CallbackInput:
         with ledger._transaction():
             used = [r[0] for r in ledger.db.execute('SELECT operation_id FROM calls')]
             ids = remaining_operations(ledger.registration, self.service.actor.scope, used)
-        return dict(schema=SCHEMA, campaign=self.gate.runner.ref,
+        return dict(schema=self.PLAN_SCHEMA, campaign=self.gate.runner.ref,
             registration_sha256=ledger.registration_sha256, authority_ref=ledger.registration['authority_ref'],
             previous_turn_id=ledger.active_turn, previous_completion=self.previous,
-            operation_ids=ids, text=self.initial['text'], callback=self.origin)
+            operation_ids=ids, text=self.initial['text'], **{self.SOURCE_FIELD:self.origin})
 
     def publish(self):
         require(not self.busy,'TASK_CALLBACK_BUSY_CANNOT_ENROLL_NEW_TURN')
@@ -242,12 +251,12 @@ class CallbackInput:
         require(not (directory/(ledger.active_turn+'-next-turn-intent.json')).exists(),
                 'TASK_CALLBACK_TRANSITION_ALREADY_ATTEMPTED')
         raw = read_ref(self.request['attempt'])
-        self.snapshot = write_bytes_once(directory/(ledger.active_turn+'-callback-attempt.json'), raw)
-        self.origin = write_json(directory/(ledger.active_turn+'-callback-source.json'),
-            dict(schema='upgrade-task-callback-input-source-v1', enrollment=self.gate.proof,
+        self.snapshot = write_bytes_once(directory/(ledger.active_turn+'-'+self.LABEL+'-attempt.json'), raw)
+        self.origin = write_json(directory/(ledger.active_turn+'-'+self.LABEL+'-source.json'),
+            dict(schema=self.SOURCE_SCHEMA, enrollment=self.gate.proof,
                 original=self.initial, original_attempt_snapshot=self.snapshot,
                 native_user_receipt=False, model_consumption=False), exclusive=True)
-        self.plan = write_json(directory/(ledger.active_turn+'-callback-plan.json'), self.value(), exclusive=True)
+        self.plan = write_json(directory/(ledger.active_turn+'-'+self.LABEL+'-plan.json'), self.value(), exclusive=True)
         return self.plan
 
     @contextmanager

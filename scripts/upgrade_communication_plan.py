@@ -324,6 +324,9 @@ def send_sample(campaign, request_id):
     # The helper owns all original input intents, deduplication, shared locks,
     # native checks and receipts. Inherit stdout/stderr without reconstructing
     # its result. The caller collects this one process, even after exit 75.
+    if 'task_controls' in campaign:
+        from upgrade_task_message_source import send
+        return send(campaign,sample,'ordinary')
     return subprocess.run(shlex.split(sample["helper_command"]), check=False).returncode
 
 

@@ -75,8 +75,8 @@ def route_request(binding,request,text):
             'TASK_CALLBACK_SENDER_FRESH_ATTEMPT_REQUIRED')
     ref,endpoint=ingress_client.descriptor(binding)
     if busy:
-        from upgrade_task_callback_contract import BUSY_SCHEMA
-        require(endpoint.get('schema')==BUSY_SCHEMA
+        from upgrade_task_callback_contract import BUSY_SCHEMA, MESSAGE_SCHEMA
+        require(endpoint.get('schema') in (BUSY_SCHEMA,MESSAGE_SCHEMA)
                 and endpoint['allowed_input_methods']==['turn/start','turn/steer'],
                 'TASK_CALLBACK_BUSY_DESCRIPTOR_REQUIRED')
     result=copy.deepcopy(request)

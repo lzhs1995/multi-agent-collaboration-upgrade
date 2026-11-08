@@ -91,6 +91,22 @@ with owner.modules('cmux_workspace_guard','mac_upgrade_task_bridge_context','cmu
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertEqual(json.loads(result.stdout)['input_operations'], 0)
 
+    def test_actual_owner_loads_registered_message_route_without_input(self):
+        result = self.child('''from upgrade_task_owner import install_owner_scope
+runtime,spec=install_owner_scope(runtime_ref)
+from orchestration_transport import PinnedRuntime
+owner=PinnedRuntime(runtime)
+with owner.modules('cmux_agent_adapter','mac_upgrade_task_message_sender','mac_upgrade_task_message_wire','mac_upgrade_task_message_route') as modules:
+ helper,sender,wire,reader=modules
+ assert sender._active.get() is None
+ assert wire.REQUEST_SCHEMA=='upgrade-task-message-request-v1'
+ assert callable(reader.verify_input) and callable(sender.registered_deliver)
+ assert not (Path(spec['adoption_path']).parent/'task-startup/callback-ingress').exists()
+ print(json.dumps({'loaded':[m.__name__ for m in modules],'input_operations':0}))
+''')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(json.loads(result.stdout)['input_operations'], 0)
+
     def test_direct_guard_entry_is_also_refused_by_the_real_client_kernel_boundary(self):
         f = self.fixture
         Path(f.spec['adoption_path']).parent.mkdir(mode=0o700, exist_ok=True)

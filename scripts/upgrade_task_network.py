@@ -2,7 +2,9 @@
 
 V1 allows new TCP connections only to the lane's loopback model port. Explicit
 V2 additionally allows the two Claude lanes to connect to the original fixed
-callback ingress. Other new Unix/TCP/UDP connections are denied. This does not
+callback ingress. The observer contract may explicitly enable registered
+ordinary messages on that same endpoint; it adds no network destinations.
+Other new Unix/TCP/UDP connections are denied. This does not
 authenticate inherited descriptors, Mach/Apple Events, the allowed HTTP service
 or model tools. Those remain separate adoption checks. The remote TUI and the
 trusted controller keep their original profiles; old task candidates opt out.
@@ -54,7 +56,7 @@ def gateway_port(url):
     return port
 
 
-def network_contract(station, claude, *, evidence_root=None, observer=False):
+def network_contract(station, claude, *, evidence_root=None, observer=False, messages=False):
     """Derive ports from original frozen routing, never from a peer's payload."""
     codex_port=gateway_port(station["codex"]["base_url"])
     claude_port=gateway_port(claude.get("env",{}).get("ANTHROPIC_BASE_URL"))
@@ -66,6 +68,11 @@ def network_contract(station, claude, *, evidence_root=None, observer=False):
         value.update(schema=CALLBACK_SCHEMA, callback=callback_path(evidence_root))
     if observer:
         value.update(schema=OBSERVER_SCHEMA, observer=observer_path(evidence_root))
+    require(type(messages) is bool and (not messages or observer),
+            'TASK_MESSAGE_NETWORK_REQUIRES_OBSERVER')
+    if messages:
+        # Explicit capability on the same socket, not a new connection route.
+        value['registered_messages'] = True
     return value
 
 
@@ -75,6 +82,10 @@ def model_only_profile(profile, contract, lane):
     observer = isinstance(contract, dict) and contract.get("schema") == OBSERVER_SCHEMA
     callback = isinstance(contract, dict) and contract.get("schema") in (CALLBACK_SCHEMA, OBSERVER_SCHEMA)
     keys = {"schema", "ports"} | ({"callback"} if callback else set()) | ({"observer"} if observer else set())
+    if isinstance(contract, dict) and 'registered_messages' in contract:
+        require(observer and contract['registered_messages'] is True,
+                'TASK_MESSAGE_NETWORK_CONTRACT_CHANGED')
+        keys.add('registered_messages')
     require(isinstance(contract,dict) and set(contract)==keys
             and contract["schema"] in (SCHEMA, CALLBACK_SCHEMA, OBSERVER_SCHEMA)
             and isinstance(contract["ports"],dict) and set(contract["ports"])=={"codex","claude_a","claude_b"}

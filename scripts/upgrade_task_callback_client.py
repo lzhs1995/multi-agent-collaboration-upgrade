@@ -51,18 +51,25 @@ def submit_once(binding,pack,attempt,*,process,recheck,record,timeout=8):
     record() writes separate immutable transport evidence. The pinned sender
     attempt remains unchanged until the original service returns or times out.
     """
+    return submit_request_once(binding,dict(schema=REQUEST_SCHEMA,pack=pack,attempt=attempt),
+        descriptor_fn=descriptor,response_schema='upgrade-task-callback-response-v1',
+        record_prefix='CALLBACK_INGRESS',process=process,recheck=recheck,record=record,timeout=timeout)
+
+
+def submit_request_once(binding,request,*,descriptor_fn,response_schema,record_prefix,
+                        process,recheck,record,timeout=8):
+    """Shared single-frame transport; each route retains its own validation."""
     require(type(timeout) in (int,float) and 0<timeout<=30,'TASK_CALLBACK_CLIENT_TIMEOUT_INVALID')
-    original,json_descriptor=descriptor(binding)
-    request=dict(schema=REQUEST_SCHEMA,pack=pack,attempt=attempt)
+    original,json_descriptor=descriptor_fn(binding)
     raw=canonical(request);require(len(raw)<=16384,'TASK_CALLBACK_CLIENT_REQUEST_TOO_LARGE')
     recheck();deadline=time.monotonic()+timeout
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
         connection.set_inheritable(False);connection.settimeout(timeout)
         connection.connect(json_descriptor['socket']['path'])
         _peer(connection,json_descriptor,process)
-        require(descriptor(binding)==(original,json_descriptor),'TASK_CALLBACK_CLIENT_DESCRIPTOR_CHANGED')
+        require(descriptor_fn(binding)==(original,json_descriptor),'TASK_CALLBACK_CLIENT_DESCRIPTOR_CHANGED')
         recheck()
-        record('CALLBACK_INGRESS_SEND_INTENT',dict(ingress=original,request=request,retry_allowed=False))
+        record(record_prefix+'_SEND_INTENT',dict(ingress=original,request=request,retry_allowed=False))
         _peer(connection,json_descriptor,process)
         connection.sendall(raw)
         data=bytearray()
@@ -73,16 +80,16 @@ def submit_once(binding,pack,attempt,*,process,recheck,record,timeout=8):
             require(part,'TASK_CALLBACK_CLIENT_INCOMPLETE_RESPONSE')
             data.extend(part);require(len(data)<=LIMIT,'TASK_CALLBACK_CLIENT_RESPONSE_TOO_LARGE')
         _peer(connection,json_descriptor,process)
-        require(descriptor(binding)==(original,json_descriptor)
+        require(descriptor_fn(binding)==(original,json_descriptor)
                 and data.endswith(b'\n') and data.count(b'\n')==1,
                 'TASK_CALLBACK_CLIENT_ORIGINAL_RESPONSE_CHANGED')
         response=strict_json(bytes(data),'callback response')
-        require(isinstance(response,dict) and response.get('schema')=='upgrade-task-callback-response-v1'
+        require(isinstance(response,dict) and response.get('schema')==response_schema
                 and response.get('retry_allowed') is False,'TASK_CALLBACK_CLIENT_RESPONSE_INVALID')
         # Permit the original server to close only after this response's peer
         # was rechecked. This acknowledges transport bytes, not model input.
         connection.sendall(b'ACK\n')
-        record('CALLBACK_INGRESS_RESPONSE',dict(ingress=original,response=response))
+        record(record_prefix+'_RESPONSE',dict(ingress=original,response=response))
         require(response.get('status')=='ENROLLED','TASK_CALLBACK_CLIENT_NOT_ENROLLED_NO_REPLAY')
         evidence=json_ref(response['evidence']);incoming=json_ref(evidence['request'])
         require(incoming['request']==request and incoming['ingress']==original

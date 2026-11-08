@@ -1,9 +1,10 @@
-"""One local callback endpoint owned by the retained campaign runtime.
+"""One local input endpoint owned by the retained campaign runtime.
 
 Explicit construction only; installation/import does not open a listener.
 No subprocess, thread, reconnect or second model-response writer is created.
-The endpoint accepts only original callback pack/attempt references. It grants
-no shell, arbitrary text or operation execution route.
+The default accepts original callback pack/attempt references. An explicit new
+contract additionally accepts registered ordinary-message source/attempt refs.
+Neither route grants shell, arbitrary text or operation execution authority.
 """
 from contextvars import ContextVar
 import os
@@ -52,7 +53,7 @@ def active_context(service, connection, request):
 
 
 class CallbackIngress:
-    def __init__(self, runtime, *, allow_busy=False):
+    def __init__(self, runtime, *, allow_busy=False, allow_messages=False):
         from upgrade_task_runtime import CampaignRuntime
         require(type(runtime) is CampaignRuntime and not runtime.closed and not runtime.running
                 and getattr(runtime, 'callback_ingress', None) is None,
@@ -61,11 +62,16 @@ class CallbackIngress:
         self.runtime = runtime; self.pid = os.getpid(); self.closed = False
         require(type(allow_busy) is bool,'TASK_CALLBACK_BUSY_OPT_IN_REQUIRED')
         self.busy_enabled=allow_busy
+        require(type(allow_messages) is bool and (not allow_messages or allow_busy),
+                'TASK_MESSAGE_INGRESS_BUSY_CONTRACT_REQUIRED')
+        self.messages_enabled=allow_messages
         if allow_busy:
             from upgrade_task_network import OBSERVER_SCHEMA
             binding=json_ref(file_ref(Path(runtime.gate.spec['controller'])/'upgrade-binding.json'))
             require(binding.get('task_model_network',{}).get('schema')==OBSERVER_SCHEMA,
                     'TASK_CALLBACK_BUSY_OBSERVER_CONTRACT_REQUIRED')
+            require(not allow_messages or binding['task_model_network'].get('registered_messages') is True,
+                    'TASK_MESSAGE_EXPLICIT_NETWORK_CONTRACT_REQUIRED')
         self.sequence = 0
         self.process = runtime.client.process
         self.owner = process_pin(self.process, self.pid)
@@ -83,13 +89,15 @@ class CallbackIngress:
             self.listener.set_inheritable(False)
             self.listener.bind(str(self.path)); self.path.chmod(0o600)
             self.socket = socket_pin(self.path)
-            from upgrade_task_callback_contract import BUSY_SCHEMA
-            self.proof = write_json(self.root/'descriptor.json', dict(schema=BUSY_SCHEMA if self.busy_enabled else SCHEMA,
+            from upgrade_task_callback_contract import BUSY_SCHEMA, MESSAGE_SCHEMA
+            from upgrade_task_message_source import REQUEST_SCHEMA as message_schema
+            self.proof = write_json(self.root/'descriptor.json', dict(schema=MESSAGE_SCHEMA if allow_messages else BUSY_SCHEMA if self.busy_enabled else SCHEMA,
                 enrollment=runtime.gate.proof, campaign=runtime.gate.runner.ref,
                 registration=runtime.gate.campaign['task_controls']['registration'],
                 runtime_owner=runtime.proof, owner=self.owner, socket=self.socket,
                 task_thread_id=runtime.ledger.registration['thread_id'],
                 allowed_request=REQUEST_SCHEMA, reconnect_allowed=False,
+                **(dict(allowed_message_request=message_schema) if allow_messages else {}),
                 **(dict(allowed_input_methods=['turn/start','turn/steer']) if self.busy_enabled else {})), exclusive=True)
             self.listener.listen(4)
             self.listener_fd = self.listener.fileno()
@@ -126,6 +134,7 @@ class CallbackIngress:
         directory = self.root / f'{self.sequence:06d}'
         directory.mkdir(mode=0o700, exist_ok=False)
         called = False; response_intended = False
+        response_schema='upgrade-task-callback-response-v1'
         with connection:
             try:
                 peer = kernel_peer(connection)
@@ -141,9 +150,15 @@ class CallbackIngress:
                         and kernel_peer(connection) == peer,
                         'TASK_CALLBACK_INGRESS_ORIGINAL_FRAME_CHANGED')
                 value = strict_json(bytes(data), 'callback request')
-                require(isinstance(value,dict) and set(value) == {'schema','pack','attempt'}
-                        and value['schema'] == REQUEST_SCHEMA, 'TASK_CALLBACK_INGRESS_REQUEST_INVALID')
-                request = {k:value[k] for k in ('pack','attempt')}
+                from upgrade_task_message_source import REQUEST_SCHEMA as message_schema
+                ordinary=isinstance(value,dict) and value.get('schema')==message_schema
+                fields=('source','attempt') if ordinary else ('pack','attempt')
+                require(not ordinary or self.messages_enabled,'TASK_MESSAGE_INGRESS_NOT_ENABLED')
+                require(isinstance(value,dict) and set(value) == {'schema',*fields}
+                        and value['schema'] == (message_schema if ordinary else REQUEST_SCHEMA),
+                        'TASK_CALLBACK_INGRESS_REQUEST_INVALID')
+                if ordinary:response_schema='upgrade-task-message-response-v1'
+                request = {k:value[k] for k in fields}
                 for pin in request.values():
                     require(isinstance(pin,dict) and set(pin) == {'path','bytes','sha256'},
                             'TASK_CALLBACK_INGRESS_EXACT_REFERENCE_REQUIRED')
@@ -153,12 +168,19 @@ class CallbackIngress:
                 require(_dispatch.get() is None, 'TASK_CALLBACK_INGRESS_REENTRANT_REQUEST')
                 token = _dispatch.set((self, connection, request))
                 try:
-                    called = True
-                    if self.runtime.actor.closed:
-                        result = self.runtime.service.start_callback_turn(connection, request)
+                    if ordinary:
+                        from upgrade_task_message_turn import MessageInput, deliver_prepared
+                        incoming_message=MessageInput(self.runtime.service,connection,request,
+                                                      busy=not self.runtime.actor.closed)
+                        called=True
+                        result=deliver_prepared(incoming_message)
                     else:
-                        from upgrade_task_callback_busy import deliver_busy
-                        result = deliver_busy(self.runtime.service, connection, request)
+                        called=True
+                        if self.runtime.actor.closed:
+                            result = self.runtime.service.start_callback_turn(connection, request)
+                        else:
+                            from upgrade_task_callback_busy import deliver_busy
+                            result = deliver_busy(self.runtime.service, connection, request)
                 finally:
                     _dispatch.reset(token)
                 # The source result preserves enrollment independently of this
@@ -167,7 +189,7 @@ class CallbackIngress:
                     result=result, retry_allowed=False), exclusive=True)
                 self._verify()
                 require(kernel_peer(connection) == peer, 'TASK_CALLBACK_INGRESS_PEER_CHANGED')
-                response = dict(schema='upgrade-task-callback-response-v1', status='ENROLLED',
+                response = dict(schema=response_schema, status='ENROLLED',
                     result=result, evidence=proof, native_user_receipt=False, retry_allowed=False)
                 write_json(directory/'response-intent.json', response, exclusive=True)
                 response_intended = True
@@ -175,7 +197,7 @@ class CallbackIngress:
                 self._response_ack(connection,directory)
                 return dict(result, ingress_result=proof)
             except BaseException as exc:
-                failure = dict(schema='upgrade-task-callback-response-v1',
+                failure = dict(schema=response_schema,
                     status='UNKNOWN_NO_REPLAY' if called else 'REFUSED_BEFORE_SERVICE',
                     error_type=type(exc).__name__, error=str(exc)[:1000], retry_allowed=False)
                 write_json(directory/'failure.json', failure, exclusive=True)

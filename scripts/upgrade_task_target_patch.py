@@ -40,8 +40,11 @@ def task_target_paths(name, text):
             text = replace_once(text,'    event, fence = original_input_event(attempt.get("events"), binding, text)',
                 '    event, fence = original_input_event(attempt.get("events"), binding, text)\n'
                 '    if binding.get("schema") == task_target.SCHEMA and (event.get("native_request", {}).get("method") == "turn/start"\n'
-                '            or "task_callback_route" in event.get("native_request", {})):\n'
-                '        from upgrade_task_callback_route import verify_input\n'
+                '            or "task_callback_route" in event.get("native_request", {})\n'
+                '            or "task_message_route" in event.get("native_request", {})):\n'
+                '        from upgrade_task_message_route import verify_input as verify_message\n'
+                '        from upgrade_task_callback_route import verify_input as verify_callback\n'
+                '        verify_input = verify_message if "task_message_route" in event["native_request"] else verify_callback\n'
                 '        verify_input(binding,event["native_request"],attempt)')
     elif name == "cmux_codex_input.py":
         text = replace_once(text, 'import cmux_native_delivery as native',
@@ -85,9 +88,22 @@ def task_target_paths(name, text):
                 '        if binding.get("schema") == task_target.SCHEMA and (request["method"] == "turn/start"\n'
                 '                or request.get("native_metadata", {}).get("requester_direct_rpc_peer") is False):\n'
                 '            from upgrade_task_callback_sender import route_request, send_idle_once\n'
+                '            from upgrade_task_message_sender import _active as message_scope\n'
+                '            if message_scope.get() is not None:\n'
+                '                from upgrade_task_message_sender import route_request, send_once as send_idle_once\n'
                 '            request = route_request(binding,request,text)\n'
                 '            return send_idle_once(binding,request,text,recheck=recheck,emit=emit,\n'
                 '                                  observe=observe,wait_seconds=seconds)')
+    elif name == 'cmux_agent_adapter.py':
+        text = replace_once(text, '        command.add_argument("message", nargs="+")',
+            '        command.add_argument("--registered-message")\n'
+            '        command.add_argument("--registered-message-sha256")\n'
+            '        command.add_argument("message", nargs="+")')
+        text = replace_once(text,
+            '            result = adapter.deliver(args.surface, args.command, " ".join(args.message), args.request_id)',
+            '            from upgrade_task_message_sender import registered_deliver\n'
+            '            result = registered_deliver(adapter, args.surface, args.command, " ".join(args.message),\n'
+            '                args.request_id, args.registered_message, args.registered_message_sha256)')
     elif name == "cmux_callback_journal.py" and 'recover_stranded=False' in text:
         text = replace_once(text,'                result = bridge.submit_text(\n',
             '                from upgrade_task_callback_sender import submit_callback\n'

@@ -358,7 +358,8 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 observer = binding["task_model_network"].get("schema") == OBSERVER_SCHEMA
                 callback = binding["task_model_network"].get("schema") in (CALLBACK_SCHEMA, OBSERVER_SCHEMA)
                 require(binding["task_model_network"]==network_contract(station,original,
-                        evidence_root=binding["evidence_root"] if callback else None, observer=observer),
+                        evidence_root=binding["evidence_root"] if callback else None, observer=observer,
+                        messages=binding['task_model_network'].get('registered_messages',False)),
                         "STARTUP_TASK_MODEL_NETWORK_CHANGED")
     else:
         require("task_startup" not in binding and "task_model_network" not in binding

@@ -33,8 +33,8 @@ def proposed(binding,request):
     busy=request.get('method')=='turn/steer'
     params=dict(threadId=binding['session_id'],input=[dict(type='text',text=pack['completion_callback'])])
     if busy:
-        from upgrade_task_callback_contract import BUSY_SCHEMA
-        require(value['schema']==BUSY_SCHEMA and value['allowed_input_methods']==['turn/start','turn/steer'],
+        from upgrade_task_callback_contract import BUSY_SCHEMA, MESSAGE_SCHEMA
+        require(value['schema'] in (BUSY_SCHEMA,MESSAGE_SCHEMA) and value['allowed_input_methods']==['turn/start','turn/steer'],
                 'TASK_CALLBACK_BUSY_DESCRIPTOR_REQUIRED')
         params['expectedTurnId']=previous
     require(valid_previous
@@ -52,33 +52,45 @@ def proposed(binding,request):
 
 def verify_input(binding,request,attempt):
     """Read an existing service result. Never manufacture receipt or authority."""
-    route,endpoint,pack=proposed(binding,request)
+    return verify_original_input(binding,request,attempt)
+
+
+def verify_original_input(binding,request,attempt,*,message=False):
+    require(type(message) is bool,'TASK_INPUT_KIND_REQUIRED')
+    if message:
+        from upgrade_task_message_route import proposed as message_route
+        route,endpoint,details=message_route(binding,request)
+    else:
+        route,endpoint,pack=proposed(binding,request)
+        details=dict(text=pack['completion_callback'],sender_surface=pack['executor_uuid'])
+    label='message' if message else 'callback'
+    source_key='source' if message else 'pack'
     if request['method']=='turn/steer':
         from upgrade_task_busy_evidence import verify_busy_input
-        return verify_busy_input(binding,request,attempt,route,endpoint,pack)
+        return verify_busy_input(binding,request,attempt,route,endpoint,details,message=message)
     parent=Path(endpoint['registration']['path']).parent
     directory=parent/'campaign-actor-events'
     previous=request['observed_turn_id']
-    result_ref=file_ref(directory/(previous+'-callback-input-result.json'))
+    result_ref=file_ref(directory/(previous+'-'+label+'-input-result.json'))
     result=json_ref(result_ref);plan=json_ref(result['plan']);source=json_ref(result['source'])
     snapshot=json_ref(source['original_attempt_snapshot'])
     initial=source['original']
     enrollment=json_ref(endpoint['enrollment']);campaign=json_ref(endpoint['campaign'])
     registration=json_ref(endpoint['registration'])
-    require(result['schema']=='upgrade-task-callback-input-result-v1'
+    require(result['schema']=='upgrade-task-'+label+'-input-result-v1'
             and result['native_user_receipt'] is False and result['model_consumption'] is False
-            and plan['schema']=='upgrade-task-callback-input-plan-v1'
-            and plan['campaign']==endpoint['campaign'] and plan['callback']==result['source']
-            and source['schema']=='upgrade-task-callback-input-source-v1'
+            and plan['schema']=='upgrade-task-'+label+'-input-plan-v1'
+            and plan['campaign']==endpoint['campaign'] and plan[label]==result['source']
+            and source['schema']=='upgrade-task-'+label+'-input-source-v1'
             and source['enrollment']==endpoint['enrollment']
             and source['native_user_receipt'] is False and source['model_consumption'] is False
             and plan['previous_turn_id']==previous
             and plan['registration_sha256']==object_sha(registration)
             and plan['authority_ref']==registration['authority_ref']
-            and initial['pack']==route['pack'] and initial['attempt']['path']==route['attempt']
+            and initial[source_key]==route[source_key] and initial['attempt']['path']==route['attempt']
             and initial['attempt']['sha256']==source['original_attempt_snapshot']['sha256']
             and initial['attempt']['bytes']==source['original_attempt_snapshot']['bytes']
-            and initial['request']==request and plan['text']==initial['text']==pack['completion_callback']
+            and initial['request']==request and plan['text']==initial['text']==details['text']
             and snapshot['phase']=='NATIVE_INPUT_INTENT'
             and snapshot['native_binding']==binding==attempt['native_binding']
             and snapshot['binding']==attempt['binding']
@@ -89,7 +101,10 @@ def verify_input(binding,request,attempt):
     # process ancestry supplied by a file consumer.
     sender=campaign['sessions'][initial['lane']]
     caller=initial['caller'];ancestry=caller['ancestry']
-    require(sender['provider']=='claude' and sender['surface_uuid'].upper()==pack['executor_uuid'].upper()
+    if message:
+        from upgrade_task_message_route import verify_registered_source
+        verify_registered_source(initial,route,endpoint)
+    require(sender['provider']=='claude' and sender['surface_uuid'].upper()==details['sender_surface'].upper()
             and ancestry and caller['peer']['pid']==ancestry[0]['pid']
             and all(k in sender['process'] and ancestry[-1].get(k)==sender['process'][k]
                     for k in ('pid','birth','executable','file_identity'))

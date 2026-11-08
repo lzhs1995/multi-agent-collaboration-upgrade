@@ -22,6 +22,7 @@ class TaskLifecycle:
         from upgrade_rpc_peer import verify_peer
         _, self.runtime = validate_live_runtime(runtime_ref)
         self.spec, binding = validate_startup(self.runtime['startup'])
+        self.binding = copy.deepcopy(binding)
         require(self.spec['schema'] == TASK_SCHEMA
                 and binding.get('task_model_network', {}).get('schema') == OBSERVER_SCHEMA,
                 'TASK_LIFECYCLE_EXPLICIT_OBSERVER_CONTRACT_REQUIRED')
@@ -196,7 +197,11 @@ class TaskLifecycle:
             new.actor.closed = True
             new.normal_completion = old.normal_completion
             require(new._normal_terminal() == previous, 'TASK_LIFECYCLE_HANDOFF_TERMINAL_CHANGED')
-            self.campaign.enable_callback_ingress(allow_busy=True)
+            message_permission=self.binding.get('task_model_network',{}).get('registered_messages') is True
+            if message_permission:
+                self.campaign.enable_callback_ingress(allow_busy=True,allow_messages=True)
+            else:
+                self.campaign.enable_callback_ingress(allow_busy=True)
             write_json(self.root/'campaign-result.json', dict(owner=self.proof,
                 runtime_owner=self.campaign.proof, callback=self.campaign.callback_ingress.proof,
                 original_turn_id=new.actor.ledger.active_turn,

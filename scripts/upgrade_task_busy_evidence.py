@@ -5,11 +5,13 @@ import sqlite3
 from orchestration_common import file_ref,json_ref,object_sha,require,strict_json
 
 
-def verify_busy_input(binding,request,attempt,route,endpoint,pack):
-    key=object_sha(dict(pack=route['pack'],attempt=route['attempt']))
-    root=Path(endpoint['registration']['path']).parent/'campaign-actor-events/callback-steers'/key
+def verify_busy_input(binding,request,attempt,route,endpoint,details,*,message=False):
+    label='message' if message else 'callback'
+    source_key='source' if message else 'pack'
+    key=object_sha({source_key:route[source_key],'attempt':route['attempt']})
+    root=Path(endpoint['registration']['path']).parent/'campaign-actor-events'/(label+'-steers')/key
     ref=file_ref(root/'result.json');value=json_ref(ref)
-    require(value['schema']=='upgrade-task-busy-callback-result-v1'
+    require(value['schema']=='upgrade-task-busy-'+label+'-result-v1'
             and value['source']['path']==str(root/'source.json')
             and value['intent']['path']==str(root/'input-intent.json'),
             'TASK_BUSY_CALLBACK_ORIGINAL_RESULT_REQUIRED')
@@ -17,13 +19,13 @@ def verify_busy_input(binding,request,attempt,route,endpoint,pack):
     snapshot=json_ref(source['original_attempt_snapshot']);original=source['original']
     registration=json_ref(endpoint['registration']);campaign=json_ref(endpoint['campaign'])
     enrollment=json_ref(endpoint['enrollment']);turn=request['observed_turn_id']
-    require(source['schema']=='upgrade-task-busy-callback-source-v1'
+    require(source['schema']=='upgrade-task-busy-'+label+'-source-v1'
             and source['enrollment']==endpoint['enrollment']
             and source['owner_pid']==endpoint['owner']['pid']==enrollment['controller_pid']
             and source['original_attempt_snapshot']['path']==str(root/'attempt.json')
-            and original['pack']==route['pack'] and original['attempt']['path']==route['attempt']
+            and original[source_key]==route[source_key] and original['attempt']['path']==route['attempt']
             and all(original['attempt'][k]==source['original_attempt_snapshot'][k] for k in ('bytes','sha256'))
-            and original['request']==request and original['text']==pack['completion_callback']
+            and original['request']==request and original['text']==details['text']
             and snapshot['native_binding']==binding==attempt['native_binding']
             and snapshot['binding']==attempt['binding'] and snapshot['phase']=='NATIVE_INPUT_INTENT'
             and len(snapshot['events'])==1 and snapshot['events']==attempt['events'][:1]
@@ -39,7 +41,10 @@ def verify_busy_input(binding,request,attempt,route,endpoint,pack):
             'TASK_BUSY_CALLBACK_ORIGINAL_SOURCE_CHANGED')
     sender=campaign['sessions'][original['lane']]
     ancestry=original['caller']['ancestry']
-    require(sender['provider']=='claude' and sender['surface_uuid'].upper()==pack['executor_uuid'].upper()
+    if message:
+        from upgrade_task_message_route import verify_registered_source
+        verify_registered_source(original,route,endpoint)
+    require(sender['provider']=='claude' and sender['surface_uuid'].upper()==details['sender_surface'].upper()
             and len(ancestry)>1 and original['caller']['peer']['pid']==ancestry[0]['pid']
             and original['caller']['peer']['uid']==registration['server']['uid']
             and all(ancestry[-1][k]==sender['process'][k] for k in ('pid','birth','executable','file_identity'))

@@ -50,7 +50,7 @@ def _original(sample, campaign, state, readers, starts, ends, not_before, not_af
     attempt, attempt_pin = json_file(journal / "attempt-0001.json")
     expected_binding = original_dispatch_binding(attempt, journal, identity, marker, payload)
     binding = attempt["native_binding"]
-    need(binding.get("schema") == "native-delivery-v1" and binding.get("identity") == expected_binding["identity"]
+    need(binding.get("schema") in ("native-delivery-v1","native-delivery-task-v1") and binding.get("identity") == expected_binding["identity"]
          and binding.get("payload_sha256") == sha(payload)
          and all(binding.get(k) == receiver[k] for k in ("provider", "session_id", "process", "tty")),
          "ORIGINAL_RECEIVER_BINDING_CHANGED")
@@ -58,6 +58,9 @@ def _original(sample, campaign, state, readers, starts, ends, not_before, not_af
         from upgrade_task_sender_evidence import verify_source
         verify_source(binding, sender, receiver, fixtures=fixtures)
     event, fence = original_event(attempt, binding, payload)
+    if binding['schema']=='native-delivery-task-v1':
+        from upgrade_task_message_route import verify_input
+        verify_input(binding,event['native_request'],attempt)
     reader, lane = readers[sample["receiver"]], sample["receiver"]
     bound_offset = reader.verify_pin(binding["transcript"])
     fence_offset = reader.verify_pin(fence)

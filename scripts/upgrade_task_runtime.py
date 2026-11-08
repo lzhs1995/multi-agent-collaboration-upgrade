@@ -35,10 +35,10 @@ class CampaignRuntime:
             operation_scope=sorted(self.scope),reconnect_allowed=False,operation_budget_reset=False),exclusive=True)
         service.runtime_owner=self
 
-    def enable_callback_ingress(self, *, allow_busy=False):
+    def enable_callback_ingress(self, *, allow_busy=False, allow_messages=False):
         """Explicit endpoint on this existing runtime; never a second owner."""
         from upgrade_task_callback_ingress import CallbackIngress
-        return CallbackIngress(self,allow_busy=allow_busy)
+        return CallbackIngress(self,allow_busy=allow_busy,allow_messages=allow_messages)
 
     def _verify(self):
         require(os.getpid()==self.pid==self.service.owner_pid==self.gate.owner_pid,
@@ -86,7 +86,7 @@ class CampaignRuntime:
             intent=write_json(path,dict(owner=self.proof,turn_id=self.ledger.active_turn,
                 seconds=seconds,max_messages=max_messages,max_pulses=max_pulses,
                 max_new_turns=max_new_turns),exclusive=True)
-            began=time.monotonic();pulses=messages=inputs=0;status="YIELDED";continuations=[];callbacks=[]
+            began=time.monotonic();pulses=messages=inputs=0;status="YIELDED";continuations=[];callbacks=[];ordinary_inputs=[]
             while pulses<max_pulses and messages<max_messages and time.monotonic()-began<seconds:
                 self._verify()
                 if self.actor.closed:
@@ -97,7 +97,7 @@ class CampaignRuntime:
                     if self.callback_ingress is not None:
                         callback=self.callback_ingress.poll(timeout=0)
                         if callback is not None:
-                            callbacks.append(callback);pulses+=1
+                            (ordinary_inputs if 'message_input' in callback else callbacks).append(callback);pulses+=1
                             inputs+=callback['model_inputs_sent']
                             continue
                     plan=publish_next_input(self.service)
@@ -111,7 +111,7 @@ class CampaignRuntime:
                         and inputs<max_new_turns):
                     callback=self.callback_ingress.poll(timeout=0)
                     if callback is not None:
-                        callbacks.append(callback);pulses+=1
+                        (ordinary_inputs if 'message_input' in callback else callbacks).append(callback);pulses+=1
                         inputs+=callback['model_inputs_sent']
                         continue
                 observed=self.service.pulse(seconds=min(1,remaining),max_messages=max_messages-messages)
@@ -123,6 +123,7 @@ class CampaignRuntime:
                 status=status,turn_id=self.ledger.active_turn,pulses=pulses,messages_observed=messages,
                 model_inputs_sent=inputs,continuations=continuations,
                 callback_inputs=callbacks,
+                message_inputs=ordinary_inputs,
                 pending_binding_calls=list(self.service.pending),business_accepted=False,
                 operation_budget_reset=False,reconnects=0,elapsed_seconds=time.monotonic()-began)
             receipt=write_json(path.with_name(path.name.replace("intent","result")),result,exclusive=True)
