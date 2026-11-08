@@ -116,7 +116,7 @@ class ObservationSource:
             kind = 'tree'
         self.verify()
         native = self.native
-        from upgrade_live_inspect import ReadOnlyCmux
+        from upgrade_cmux_inventory import ReadOnlyCmux
         process_root = native.private_roots.process_root
         from orchestration_common import strict_json
         root = Path(self.binding["state_root"]) / "startup"
@@ -176,7 +176,8 @@ class ObservationSource:
             from upgrade_task_readiness import task_startup_result
             from upgrade_task_thread import observe
             from upgrade_task_roles import verify_roles
-            from cmux_codex_rpc import DaemonRPC
+            from upgrade_controller_rpc import rpc_type
+            DaemonRPC = rpc_type(self.spec['controller'])
             _, result, anchor = task_startup_result(self.spec)
             sessions["codex"].update(session_id=result["thread_id"], transcript=anchor["journal"])
             roles = verify_roles(self.runtime["startup"], self.spec, self.binding, sessions,

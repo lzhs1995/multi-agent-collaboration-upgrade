@@ -102,6 +102,39 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
                 marker=marker, decision=decision, decision_fields=decision_fields, **extra)
 
 
+def original_controls(campaign, runtime):
+    """Attach only the operation registration created by this startup.
+
+    Called before the external freezer publishes campaign.json. This reads
+    original evidence only; it creates no operations, ledger or new budgets.
+    Legacy campaigns return unchanged and cannot acquire TASK controls.
+    """
+    from upgrade_startup_contract import TASK_SCHEMA
+    from upgrade_task_readiness import task_startup_result
+    spec = json_ref(runtime['startup'])
+    if spec.get('schema') != TASK_SCHEMA:
+        require('task_controls' not in campaign, 'TASK_CONTROLS_ON_LEGACY_CAMPAIGN')
+        return None
+    require('task_controls' not in campaign, 'TASK_CONTROLS_ALREADY_ATTACHED')
+    _, startup, _ = task_startup_result(spec)
+    registration = validate_registration(json_ref(startup['operations']))
+    require(registration['schema'] in ('upgrade-task-operations-v2', 'upgrade-task-operations-v3')
+            and registration['initial_operations'] == ['ready']
+            and registration['operations']['ready'] == dict(kind='readiness', payload={})
+            and startup['registration_sha256'] == object_sha(registration),
+            'TASK_CONTROLS_ORIGINAL_READINESS_REQUIRED')
+    require(set(v['kind'] for name,v in registration['operations'].items() if name != 'ready') == {KIND},
+            'TASK_CONTROLS_UNSUPPORTED_BUSINESS_OPERATION')
+    has_advice = any(v['kind'] == KIND and v['payload'].get('action') in ('advice', 'read-advice')
+                     for v in registration['operations'].values())
+    schema = (ADVICE_SCHEMA if has_advice else BINDING_SCHEMA
+              if registration['schema'] == 'upgrade-task-operations-v3' else SCHEMA)
+    controls = dict(schema=schema, registration=startup['operations'],
+                    evidence_directory=str(Path(startup['operations']['path']).parent/'campaign-invocations'))
+    validate_controls(dict(campaign, task_controls=controls))
+    return controls
+
+
 def validate_controls(campaign, *, fixtures=False, check_startup=True):
     """Bind producer and reader to one frozen registration, without permission."""
     require(campaign.get("version") == 3, "TASK_CAMPAIGN_EXPLICIT_V3_REQUIRED")
@@ -423,8 +456,8 @@ def campaign_task_service(runner, client, ledger, enrollment_gate, *, advice_con
 
     The deployment supplies its live enrollment gate. This adapter never
     authenticates a caller from file contents and never launches a client.
-    Production Runner validation still requires real adoption, whose TASK
-    branch remains unavailable until its complete deployment checks are ready.
+    Production Runner validation still requires real adoption and the exact
+    original startup operation registration.
     """
     from orchestration_run import Runner
     from orchestration_native import NativeReader

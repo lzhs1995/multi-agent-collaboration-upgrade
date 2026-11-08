@@ -24,19 +24,7 @@ from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, pressure_startup
 from upgrade_socket_boundary import binding_boundary, verify_kernel
 
 
-class ReadOnlyCmux:
-    def __init__(self, executable):
-        self.executable = executable
-        self.snapshot = None
-
-    def _run(self, *args):
-        require(args == ("tree", "--all", "--json", "--id-format", "both"),
-                "INSPECTOR_METADATA_ONLY")
-        # One fresh tree per inspection, shared by workspace and surface checks.
-        if self.snapshot is None:
-            self.snapshot = subprocess.run([self.executable, *args], capture_output=True,
-                                           text=True, timeout=10, check=True).stdout
-        return self.snapshot
+from upgrade_cmux_inventory import ReadOnlyCmux
 
 
 def launch_workspace(stdout, bridge):

@@ -24,11 +24,12 @@ MAINTENANCE_MODULES = frozenset({
     "orchestration_input_syntax", "orchestration_refusal", "decision_provider", "cmux_submission_inputs",
 })
 CAMPAIGN_MODULES = MAINTENANCE_MODULES | {"orchestration_run", "orchestration_checker", "orchestration_observe"}
-# These two functions verify and load the separate immutable controller at run
+# These functions verify and load the separate immutable controller at run
 # time. No other nonliteral import_module call is admitted in the adapter.
 CONTROLLER_IMPORTS = {
     ("orchestration_campaign", ("controller_modules",)),
     ("orchestration_transport", ("PinnedRuntime", "modules")),
+    ("upgrade_controller_rpc", ("rpc_type",)),
 }
 IMPORT_FUNCTIONS = {"import_module", "__import__", "spec_from_file_location"}
 
@@ -143,7 +144,10 @@ def validate_adapter(manifest, *, purpose="maintenance"):
                 if function == "spec_from_file_location":
                     if len(item.args) != 2 or item.keywords:
                         raise ContractError("unresolved adapter file import: " + key)
-                    pending.add(_sibling(item.args[1]))
+                    try:
+                        pending.add(_sibling(item.args[1]))
+                    except ContractError as exc:
+                        raise ContractError(str(exc) + ': ' + key + ':' + str(item.lineno)) from exc
                 elif function in {"import_module", "__import__"}:
                     if item.args and isinstance(item.args[0], ast.Constant) and isinstance(item.args[0].value, str):
                         dependency(item.args[0].value)
