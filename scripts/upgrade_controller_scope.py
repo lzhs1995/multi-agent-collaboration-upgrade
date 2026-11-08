@@ -16,6 +16,7 @@ from pathlib import Path
 import sys
 
 _installed = False
+_external_startup = None
 _open_directory = contextvars.ContextVar("upgrade_open_directory", default=None)
 
 
@@ -41,9 +42,11 @@ def fd_path(fd):
     return path
 
 
-def install_scope(*, live=False):
-    global _installed
+def install_scope(*, live=False, external_startup=None):
+    global _installed, _external_startup
     if _installed:
+        if external_startup is not None and external_startup != _external_startup:
+            raise RuntimeError("UPGRADE_SCOPE_CANNOT_CHANGE_OWNER")
         return
     scripts = Path(__file__).resolve().parent
     source = scripts.parent
@@ -62,6 +65,34 @@ def install_scope(*, live=False):
     writable = [Path(config[name]) for name in ("state_root", "campaign_root", "evidence_root", "tmp_root")]
     if any(p != p.resolve() or root not in p.parents for p in writable):
         raise RuntimeError("UPGRADE_PRIVATE_WRITE_ROOT_CHANGED")
+    external_control = None
+    if external_startup is not None:
+        # Explicit entry for the trusted external task owner, before any
+        # generated controller module installs the ordinary client scope.
+        # This is not selected by environment, argv or a claimed process role.
+        # The kernel must allow both probes that every experimental client is
+        # denied. A sandboxed client cannot acquire this publication authority.
+        if not live or "task_runtime_policy" not in config:
+            raise RuntimeError("UPGRADE_EXTERNAL_TASK_POLICY_REQUIRED")
+        ref = external_startup
+        if not isinstance(ref, dict) or set(ref) != {"path", "bytes", "sha256"}:
+            raise RuntimeError("UPGRADE_EXTERNAL_STARTUP_REF_INVALID")
+        raw = Path(ref["path"]).read_bytes()
+        if len(raw) != ref["bytes"] or hashlib.sha256(raw).hexdigest() != ref["sha256"]:
+            raise RuntimeError("UPGRADE_EXTERNAL_STARTUP_CHANGED")
+        spec = json.loads(raw)
+        external_control = Path(config["evidence_root"]) / "live-control"
+        if (spec.get("schema") != "upgrade-startup-task-v1"
+                or spec.get("controller") != str(source)
+                or spec.get("context") != context_ref
+                or spec.get("task_startup") != config.get("task_startup")
+                or spec.get("adoption_path") != str(external_control / "adoption.json")
+                or not external_control.is_dir() or external_control != external_control.resolve()):
+            raise RuntimeError("UPGRADE_EXTERNAL_STARTUP_SCOPE_CHANGED")
+        from upgrade_client_isolation import sandbox_check
+        if any(sandbox_check(os.getpid(), str(p), "file-write-create")
+               for p in (source, external_control)):
+            raise PermissionError("UPGRADE_EXTERNAL_OWNER_KERNEL_DENIED")
     if live:
         from upgrade_client_isolation import NATIVE_POLICY
         from upgrade_socket_boundary import SOCKET_POLICY, binding_boundary
@@ -96,8 +127,16 @@ def install_scope(*, live=False):
         # operations. Merely supplying a v2 binding is insufficient.
         from upgrade_client_isolation import require_kernel_boundary
         isolation = config["isolation"]
-        require_kernel_boundary(os.getpid(), denied=isolation["denied_probes"],
-                                writable=isolation["write_probes"])
+        if external_control is None:
+            require_kernel_boundary(os.getpid(), denied=isolation["denied_probes"],
+                                    writable=isolation["write_probes"])
+        else:
+            # Same private-state audit, with exactly the external publication
+            # directory writable. Frozen source/config and every other
+            # immutable remain denied. The external owner is not an isolated
+            # agent and this branch makes no such claim.
+            isolation = dict(isolation, immutable=[p for p in isolation["immutable"]
+                                                   if Path(p) != external_control])
     else:
         isolation = {}
 
@@ -158,4 +197,5 @@ def install_scope(*, live=False):
     sys.dont_write_bytecode = True
     sys.addaudithook(audit)
     os.open = guarded_open
+    _external_startup = dict(external_startup) if external_startup is not None else None
     _installed = True

@@ -14,7 +14,7 @@ from upgrade_task_streams import execution_owner
 
 
 class TaskLifecycle:
-    def __init__(self, runtime_ref, client):
+    def __init__(self, runtime_ref, client, *, observer=None):
         from upgrade_live_control import external_publisher
         from upgrade_live_runtime import validate_live_runtime
         from upgrade_startup_contract import TASK_SCHEMA, validate_startup
@@ -47,8 +47,13 @@ class TaskLifecycle:
             startup=self.runtime['startup'], owner_pid=self.pid,
             server=client.server, reconnect_allowed=False, input_operations=0), exclusive=True)
         try:
-            from upgrade_task_observer import start_observer
-            self.observer = start_observer(runtime_ref)
+            from upgrade_task_observer import ReadOnlyObserver, start_observer
+            if observer is not None:
+                require(type(observer) is ReadOnlyObserver and not observer.closed
+                        and observer.pid == self.pid and observer.thread is not None
+                        and observer.thread.is_alive(), 'TASK_LIFECYCLE_ORIGINAL_OBSERVER_REQUIRED')
+                observer.source.verify()
+            self.observer = observer if observer is not None else start_observer(runtime_ref)
             require(self.observer.source.runtime_ref == self.runtime_ref,
                     'TASK_LIFECYCLE_OBSERVER_RUNTIME_CHANGED')
             write_json(self.root/'observer.json', dict(owner=self.proof,
