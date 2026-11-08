@@ -47,7 +47,10 @@ class TaskTopologyTests(unittest.TestCase):
                 source_path=str(cls.root/"candidate.json"),producer_operation="left")}
         cls.runtime_ref=materialize_live(cls.context,"B",binaries=binaries,
             native_policy=SOCKET_POLICY,codex_package=PACKAGE,pre_exec_hold=True,
-            provider_configuration=({"model":"fixture-codex","model_provider":"custom"},
+            provider_configuration=({"model":"fixture-codex","model_provider":"custom",
+                "model_providers":{"custom":{"name":"fixture-provider",
+                    "base_url":"http://127.0.0.1:3465/v1","wire_api":"responses",
+                    "requires_openai_auth":False}}},
                 {"model":"fixture-claude","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:3445"}}),
             station_launchers={"mg":"/usr/bin/true","magpie":"/usr/bin/true",
                 "codex":{"station":"agentrouter-a","base_url":"http://127.0.0.1:3465"},

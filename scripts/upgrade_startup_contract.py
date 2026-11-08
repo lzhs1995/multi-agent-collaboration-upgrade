@@ -527,7 +527,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 from upgrade_task_network import model_only_profile
                 profile = model_only_profile(profile,binding["task_model_network"],lane)
             if mach_boundary and lane in GOAL_LANES:
-                profile = restrict_mach(profile)
+                profile = restrict_mach(profile, boundary=binding['task_mach_boundary'], lane=lane)
             require(read_regular(pins[lane + "_sandbox"]["path"]) == profile,
                     "STARTUP_SOCKET_PROFILE_CHANGED:" + lane)
         if task_mode:
@@ -538,7 +538,8 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 from upgrade_task_network import model_only_profile
                 server_profile = model_only_profile(server_profile,binding["task_model_network"],"codex")
             if mach_boundary:
-                server_profile = restrict_mach(server_profile)
+                server_profile = restrict_mach(server_profile, boundary=binding['task_mach_boundary'],
+                                               lane='codex-server')
             require(read_regular(pins["codex_server_sandbox"]["path"]) == server_profile,
                     "STARTUP_TASK_SERVER_PROFILE_CHANGED")
     socket = control_socket(paths, socket_boundary=boundary)

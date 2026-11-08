@@ -537,7 +537,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             profile = model_only_profile(profile,network,lane)
         if task_mach_boundary and lane in ("claude_a", "claude_b"):
             from upgrade_task_mach_policy import restrict
-            profile = restrict(profile)
+            profile = restrict(profile, boundary=binding['task_mach_boundary'], lane=lane)
         pins[lane + "_sandbox"] = immutable_bytes(paths["config"] / (lane + ".sb"), profile)
         if lane == "codex" and task_startup is not None:
             from upgrade_task_socket_policy import restrict_agent_connections
@@ -547,7 +547,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                 server_profile = model_only_profile(server_profile,network,"codex")
             if task_mach_boundary:
                 from upgrade_task_mach_policy import restrict
-                server_profile = restrict(server_profile)
+                server_profile = restrict(server_profile, boundary=binding['task_mach_boundary'],
+                                          lane='codex-server')
             pins["codex_server_sandbox"] = immutable_bytes(paths["config"] / "codex-server.sb", server_profile)
     patch_ref = write_json(paths["controllers"] / "patches-v2.json", dict(version=2,
         source=source_pin, changes=changes, compatibility_fixes=["original_gate_canonical_ack"],

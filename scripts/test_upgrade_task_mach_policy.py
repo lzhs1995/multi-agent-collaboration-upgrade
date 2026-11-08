@@ -7,17 +7,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 
 from orchestration_common import ContractError
-from upgrade_task_mach_policy import contract, enabled, restrict
+from upgrade_task_mach_policy import contract, enabled, restrict, PREFERENCE_SERVICES
 
-PROBE = '''import ctypes,json
+PROBE = '''import ctypes,json,sys
 lib=ctypes.CDLL(None)
 lookup=lib.bootstrap_look_up
 lookup.argtypes=(ctypes.c_uint,ctypes.c_char_p,ctypes.POINTER(ctypes.c_uint));lookup.restype=ctypes.c_int
 bootstrap=ctypes.c_uint.in_dll(lib,'bootstrap_port').value
 port=ctypes.c_uint(0)
-rc=lookup(bootstrap,b'com.apple.cfprefsd.daemon',ctypes.byref(port))
+rc=lookup(bootstrap,(sys.argv[1] if len(sys.argv)>1 else 'com.apple.cfprefsd.daemon').encode(),ctypes.byref(port))
 if rc==0 and port.value:
  lib.mach_port_deallocate(ctypes.c_uint.in_dll(lib,'mach_task_self_').value,port.value)
 sb=ctypes.CDLL('/usr/lib/libsandbox.dylib')
@@ -30,6 +31,18 @@ print(json.dumps(dict(lookup_returncode=rc,port_present=bool(port.value),appleev
 
 
 class MachPolicyTests(unittest.TestCase):
+    def test_legacy_contract_and_profiles_keep_exact_denial(self):
+        profile=b'(version 1)\n(allow default)\n'
+        legacy=contract(version=1)
+        self.assertTrue(enabled(dict(task_startup={},task_mach_boundary=legacy,
+            task_model_network={'schema':'upgrade-task-observer-network-v3'})))
+        for lane in ('codex-server','claude_a','claude_b'):
+            self.assertEqual(restrict(profile,boundary=legacy,lane=lane),restrict(profile))
+        current=contract()
+        current['codex_managed_preferences']['services'].append('com.apple.securityd')
+        with self.assertRaisesRegex(ContractError,'TASK_MACH_PROFILE_CONTRACT_CHANGED'):
+            restrict(profile,boundary=current,lane='codex-server')
+
     def test_explicit_contract_requires_original_observer_topology(self):
         self.assertFalse(enabled({}))
         value=dict(task_startup={},task_model_network={'schema':'upgrade-task-observer-network-v3'},
@@ -113,9 +126,13 @@ class MaterializedMachTests(unittest.TestCase):
     def test_generated_validation_and_exact_execution_profiles(self):
         f=self.f
         self.assertTrue(enabled(f.binding))
-        for lane in ('claude_a','claude_b','codex_server'):
+        for lane in ('claude_a','claude_b'):
             self.assertTrue(Path(f.spec['pins'][lane+'_sandbox']['path']).read_bytes().endswith(
                 b'(deny mach-lookup)\n(deny appleevent-send)\n'))
+        server=Path(f.spec['pins']['codex_server_sandbox']['path']).read_bytes()
+        self.assertIn(b'(deny user-preference-write)\n',server)
+        self.assertIn(b'(deny user-preference-read)\n',server)
+        self.assertIn(b'(allow user-preference-read (preference-domain "com.openai.codex"))\n',server)
         for lane in ('codex','control'):
             self.assertNotIn(b'deny mach-lookup',Path(f.spec['pins'][lane+'_sandbox']['path']).read_bytes())
         root=Path(f.runtime['controller']['path'])/'scripts'
@@ -123,6 +140,50 @@ class MaterializedMachTests(unittest.TestCase):
         result=subprocess.run([sys.executable,'-I','-S','-B','-c',code,str(root),f.runtime['startup']['path']],
             capture_output=True,text=True,timeout=20,close_fds=True)
         self.assertEqual((result.returncode,result.stderr),(0,''))
+
+    def test_official_native_startup_loads_real_generated_configuration(self):
+        from upgrade_client_isolation import clean_child_environment
+        f=self.f
+        env=clean_child_environment(f.spec['clients']['codex']['environment'])
+        argv=['/usr/bin/sandbox-exec','-f',f.spec['pins']['codex_server_sandbox']['path'],
+              f.spec['pins']['codex']['path'],'app-server','-c',
+              'model_providers.custom.base_url="http://127.0.0.1:3465/v1"']
+        preflight=subprocess.run([*argv,'--print-startup-config'],input='',env=env,
+            cwd=f.spec['work_root'],capture_output=True,text=True,timeout=20)
+        self.assertEqual(preflight.returncode,0,preflight.stderr+'\n'+preflight.stdout)
+        value=json.loads(preflight.stdout)
+        self.assertEqual(value['appServerVersion'],'0.164.0')
+        self.assertIsNone(value['configRequirements']['requirements'])
+        # EOF closes a real native server without creating any thread/model turn.
+        server=subprocess.run(argv,input='',env=env,cwd=f.spec['work_root'],
+            capture_output=True,text=True,timeout=20)
+        self.assertEqual(server.returncode,0,server.stderr)
+        self.assertNotIn('using defaults',server.stderr)
+
+    def test_native_server_services_and_preference_writes_remain_restricted(self):
+        f=self.f
+        prefix=['/usr/bin/sandbox-exec','-f',f.spec['pins']['codex_server_sandbox']['path']]
+        for service in [*PREFERENCE_SERVICES,'com.apple.securityd']:
+            result=subprocess.run([*prefix,sys.executable,'-I','-B','-c',PROBE,service],
+                capture_output=True,text=True,timeout=10)
+            self.assertEqual((result.returncode,result.stderr),(0,''))
+            observed=json.loads(result.stdout)
+            self.assertEqual(observed['lookup_returncode']==0,service in PREFERENCE_SERVICES)
+            self.assertEqual(observed['appleevent_denied'],1)
+        # A new disposable domain must not be writable via cfprefsd outside the
+        # task's file boundary. No existing user preference is touched.
+        domain='com.codex-upgrade.pref-denial-'+uuid.uuid4().hex
+        baseline=subprocess.run(['/usr/bin/defaults','read',domain],capture_output=True,text=True,timeout=10)
+        self.assertNotEqual(baseline.returncode,0)
+        changed=subprocess.run([*prefix,'/usr/bin/defaults','write',domain,'probe','-string','denied'],
+            capture_output=True,text=True,timeout=10)
+        after=subprocess.run(['/usr/bin/defaults','read',domain],capture_output=True,text=True,timeout=10)
+        try:
+            self.assertNotEqual(changed.returncode,0,changed.stdout+changed.stderr)
+            self.assertNotEqual(after.returncode,0,after.stdout)
+        finally:
+            if after.returncode==0:
+                subprocess.run(['/usr/bin/defaults','delete',domain],capture_output=True,timeout=10)
 
     def test_missing_policy_rule_is_rejected_even_with_updated_file_pin(self):
         from orchestration_common import file_ref
