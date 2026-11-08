@@ -504,3 +504,35 @@ This covers preparation identity plumbing only. Dispatch outside a harness
 phase, input-gate server/TUI role validation, sender history and manual-input
 accounting, local business execution, TASK adoption and FD/broker isolation
 remain unfinished. No new live experiment or model operation was launched.
+
+
+## Complete decision alternatives within the existing instruction limit
+
+A complete seven-group preparation with all four work kinds, three lanes and
+three on-arm dispositions exceeded the existing 256 KiB instruction limit in
+five groups. The previous smaller route-only fixture did not expose this case.
+The first failure was found before creating a new live registration.
+
+Large instruction catalogs now share common nested fields by operation group,
+store repeated field sets once, and expose the unchanged invocation prefix and
+suffix once. Every original operation ID remains explicit. An entry identifies
+its field set by a zero-based index; recursively merging it with the group's
+common fields reconstructs the full operation and optional binding slot.
+Concatenating the prefix, the selected ID encoded as a JSON string, and suffix
+must reproduce `invocation_script(id)` exactly. Small catalogs retain their
+existing complete script entries.
+
+Before emitting instructions, the renderer independently expands the catalog
+and compares every operation, slot and exact script to the original registration.
+The original choice groups, ledger, consumed IDs, mutation limits, selected
+operation scope and 256 KiB limit remain authoritative. Factoring does not grant
+another call or hide alternatives after a consumed choice.
+
+Local preflight using the complete original seven groups retained all 79 unbound
+nodes, 99 semantic slots and 192 ordinary samples. It included 36 alternatives
+per on node and 12 per off node. Full rendered instructions ranged from 103,738
+to 201,860 bytes. These were static projections with explicitly artificial native
+identifiers, not live adoption or business acceptance. The failed larger renders
+remain in the original preparation evidence. Targeted tests cover JSON roundtrip,
+all alternatives and slots, exact scripts, consumed choices, invalid references,
+duplicate IDs and JSON type distinctions such as false versus zero.

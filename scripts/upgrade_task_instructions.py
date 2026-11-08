@@ -4,6 +4,7 @@ This module publishes files only. It never starts a client or turn, selects a
 business route, performs an operation, or replenishes a consumed budget.
 """
 import json
+from copy import deepcopy
 
 from orchestration_common import json_ref,require,write_json
 from upgrade_task_control import invocation_script
@@ -25,6 +26,128 @@ def compact_catalog(registration, operation_ids):
             row['binding_slot'] = registration['binding_slots'][name]
         rows.append(row)
     return dict(shared_payload_fields=shared, entries=rows)
+
+
+def _same(left, right):
+    # JSON distinguishes false/0 and 1/1.0; Python equality does not.
+    return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+
+def _shared(values):
+    """Common nested object fields; arrays and scalars remain indivisible."""
+    result = {}
+    for key, first in values[0].items():
+        if not all(key in value for value in values):
+            continue
+        items = [value[key] for value in values]
+        if all(isinstance(item, dict) for item in items):
+            result[key] = _shared(items)
+        elif all(_same(item, first) for item in items):
+            result[key] = deepcopy(first)
+    return result
+
+
+def _difference(value, shared):
+    result = {}
+    for key, item in value.items():
+        if key not in shared:
+            result[key] = deepcopy(item)
+        elif isinstance(item, dict) and isinstance(shared[key], dict):
+            delta = _difference(item, shared[key])
+            if delta:
+                result[key] = delta
+        elif not _same(item, shared[key]):
+            result[key] = deepcopy(item)
+    return result
+
+
+def _merge(shared, delta):
+    result = deepcopy(shared)
+    for key, item in delta.items():
+        result[key] = (_merge(result[key], item)
+                       if key in result and isinstance(result[key], dict)
+                       and isinstance(item, dict) else deepcopy(item))
+    return result
+
+
+def grouped_catalog(registration, operation_ids):
+    """Losslessly share repeated choices and the unchanged invocation syntax.
+
+    This is an instruction encoding only. All original IDs, payloads, slots and
+    choice budgets remain in the original operation registration and ledger.
+    """
+    groups = {}
+    for name in operation_ids:
+        operation = registration['operations'][name]
+        payload = operation['payload']
+        key = (operation['kind'], payload.get('action'), payload.get('run_id'),
+               payload.get('node_id'))
+        value = dict(operation=operation)
+        if name in registration.get('binding_slots', {}):
+            value['binding_slot'] = registration['binding_slots'][name]
+        groups.setdefault(key, []).append((name, value))
+    # Singletons benefit from the original global sharing instead of one
+    # object of defaults for every action.
+    batches = [rows for rows in groups.values() if len(rows) > 1]
+    singletons = [rows[0] for rows in groups.values() if len(rows) == 1]
+    if singletons:
+        batches.append(singletons)
+    encoded = []
+    for rows in batches:
+        shared = _shared([value for _, value in rows])
+        encoded.append(dict(shared_fields=shared, entries=[
+            dict(operation_id=name, fields=_difference(value, shared))
+            for name, value in rows]))
+    # The same category/lane/disposition alternatives recur at different
+    # endpoints. Keep each distinct field set once and retain every ID's index.
+    occurrences = {}
+    for group in encoded:
+        for entry in group['entries']:
+            key = json.dumps(entry['fields'], ensure_ascii=False, sort_keys=True)
+            occurrences[key] = occurrences.get(key, 0) + 1
+    field_sets, indexes = [], {}
+    for group in encoded:
+        for entry in group['entries']:
+            key = json.dumps(entry['fields'], ensure_ascii=False, sort_keys=True)
+            if occurrences[key] > 1 and len(key) > 32:
+                if key not in indexes:
+                    indexes[key] = len(field_sets)
+                    field_sets.append(entry['fields'])
+                del entry['fields']
+                entry['fields_ref'] = indexes[key]
+    marker = 'CATALOG_OPERATION_ID'
+    prefix, suffix = invocation_script(marker).split(json.dumps(marker))
+    return dict(schema='upgrade-task-instruction-catalog-v2',
+        exact_exec_script=dict(prefix=prefix, operation_id_encoding='JSON string', suffix=suffix),
+        field_sets=field_sets, groups=encoded)
+
+
+def expand_grouped_catalog(catalog):
+    """Independent byte-preserving readback for the instruction encoder."""
+    require(catalog['schema'] == 'upgrade-task-instruction-catalog-v2',
+            'TASK_INSTRUCTIONS_CATALOG_SCHEMA_INVALID')
+    template = catalog['exact_exec_script']
+    require(template['operation_id_encoding'] == 'JSON string',
+            'TASK_INSTRUCTIONS_SCRIPT_ENCODING_INVALID')
+    rows = {}
+    for group in catalog['groups']:
+        for entry in group['entries']:
+            name = entry['operation_id']
+            require(name not in rows, 'TASK_INSTRUCTIONS_DUPLICATE_OPERATION')
+            script = template['prefix'] + json.dumps(name) + template['suffix']
+            require(script == invocation_script(name), 'TASK_INSTRUCTIONS_SCRIPT_CHANGED')
+            require(('fields' in entry) != ('fields_ref' in entry),
+                    'TASK_INSTRUCTIONS_FIELD_SOURCE_AMBIGUOUS')
+            if 'fields_ref' in entry:
+                index = entry['fields_ref']
+                require(type(index) is int and 0 <= index < len(catalog['field_sets']),
+                        'TASK_INSTRUCTIONS_FIELD_REFERENCE_INVALID')
+                fields = catalog['field_sets'][index]
+            else:
+                fields = entry['fields']
+            rows[name] = dict(_merge(group['shared_fields'], fields),
+                              exact_exec_script=script)
+    return rows
 
 
 def remaining_operations(registration,scope,used):
@@ -56,6 +179,27 @@ def render(campaign_ref,registration,operation_ids,*,previous_completion=None):
             require(set(members)<=selected,"TASK_INSTRUCTIONS_CHOICE_HIDDEN")
     def encoded(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)
     catalog=compact_catalog(registration,operation_ids)
+    catalog_rule = ("Every entry's complete payload is shared_payload_fields merged with that entry's "
+                    "operation.payload. Every exact_exec_script is already complete.")
+    script_rule = "Execute a selected entry's exact_exec_script as one native functions.exec call, unchanged."
+    if len(json.dumps(catalog,ensure_ascii=False).encode()) > 128 * 1024:
+        catalog=grouped_catalog(registration,operation_ids)
+        expanded=expand_grouped_catalog(catalog)
+        require(set(expanded)==set(operation_ids), 'TASK_INSTRUCTIONS_OPERATION_LOST')
+        for name in operation_ids:
+            expected=dict(operation=registration['operations'][name],
+                          exact_exec_script=invocation_script(name))
+            if name in registration.get('binding_slots',{}):
+                expected['binding_slot']=registration['binding_slots'][name]
+            require(expanded[name]==expected, 'TASK_INSTRUCTIONS_PAYLOAD_CHANGED')
+        catalog_rule = ("For every group, recursively merge shared_fields with each entry's fields. "
+                        "If an entry has fields_ref instead, use field_sets[fields_ref] (zero-based). "
+                        "Merge object keys; entry values override defaults; arrays and scalars are whole values. "
+                        "This recovers the complete operation and optional binding_slot for that operation_id. "
+                        "Every original ID and alternative is listed; shared fields do not select a route.")
+        script_rule = ("For a selected operation_id, form its exact_exec_script by concatenating the catalog's "
+                       "prefix, that operation_id encoded as one JSON string (with double quotes), and suffix. "
+                       "Execute that exact text as one native functions.exec call. Change nothing else.")
     choices={name:members for name,members in registration["choice_groups"].items()
              if selected.intersection(members)}
     identities={lane:{k:s[k] for k in ("provider","session_id","surface_uuid")}
@@ -66,8 +210,8 @@ Select the appropriate operation yourself from the actual results and frozen pla
 The catalog lists scope, not readiness, acceptance, or an instruction to call every entry.
 Neither its alphabetical order nor the ordering of alternatives recommends a route.
 
-Execute a selected entry's exact_exec_script as one native functions.exec call,
-unchanged. Read its complete result before choosing another action. If it yields,
+{script_rule}
+Read its complete result before choosing another action. If it yields,
 collect the original running call. A lost, failed, or uncertain return never grants
 another attempt. Observe the original evidence; preserve UNKNOWN and STOP.
 Do not create another operation ID, renew a budget, or substitute a shell command.
@@ -141,10 +285,8 @@ Previous normal completion (null for initial instructions):
 Mutually exclusive registered choices:
 {encoded(choices)}
 Complete typed operation catalog:
-Every entry's complete payload is shared_payload_fields merged with that entry's
-operation.payload. This lossless factoring removes repeated fields only; all
-actions and alternatives remain listed, with their unchanged exact_exec_script.
-{json.dumps(catalog, ensure_ascii=False, sort_keys=True)}
+{catalog_rule}
+{json.dumps(catalog, ensure_ascii=False, sort_keys=True, **({'separators': (',', ':')} if 'groups' in catalog else {}))}
 '''
     require(len(text.encode())<=256*1024,"TASK_INSTRUCTIONS_TEXT_BUDGET_EXHAUSTED")
     return text
