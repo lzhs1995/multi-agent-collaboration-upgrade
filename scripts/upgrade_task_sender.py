@@ -30,7 +30,8 @@ def validate(binding):
             and source["schema"]==SCHEMA and source["identity_source"]==SOURCE,
             "TASK_SENDER_SOURCE_CHANGED")
     proof=json_ref(source["task_actor"])
-    require(proof.get("schema") in ("upgrade-task-harness-operation-v1","upgrade-task-dispatch-operation-v1"),
+    require(proof.get("schema") in ("upgrade-task-harness-operation-v1","upgrade-task-dispatch-operation-v1",
+                                    "upgrade-task-communication-send-v1"),
             "TASK_SENDER_ORIGINAL_OPERATION_REQUIRED")
     require(proof["schema"]!="upgrade-task-harness-operation-v1" or proof.get("phase")=="preflight",
             "TASK_SENDER_PHASE_CANNOT_SEND")

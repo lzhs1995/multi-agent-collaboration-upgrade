@@ -172,7 +172,7 @@ def handle(runner, registration, payload):
                                    payload['run_id'], preceding, reader, until)
                 require(prior['value']['body_read'] == read_result(reads[preceding]['notice']),
                         'TASK_SEMANTIC_PRECEDING_BODY_NOT_EXPOSED')
-            return dict(schema=READ_SCHEMA, request_id=request_id, order=order_ref,
+            return dict(schema=READ_SCHEMA, run_id=payload['run_id'], request_id=request_id, order=order_ref,
                         inner_body_sha256=request['inner_body_sha256'], body_read=read_result(request['notice']))
         require(payload['action'] == 'semantic-disposition', 'TASK_SEMANTIC_UNKNOWN_HANDLER_ACTION')
         _, read = _result(runner.campaign, runner.ref, registration, 'semantic-read',

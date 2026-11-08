@@ -21,6 +21,7 @@ from orchestration_common import checked_path, file_ref, json_ref, object_sha, r
 from upgrade_task_control import control_request
 from upgrade_task_operations import validate_registration
 from upgrade_task_semantic import ACTIONS as SEMANTIC_ACTIONS
+from upgrade_task_communication import ACTIONS as COMMUNICATION_ACTIONS
 
 SCHEMA = "upgrade-task-campaign-controls-v1"
 BINDING_SCHEMA = "upgrade-task-campaign-controls-v2"
@@ -29,11 +30,11 @@ PAYLOAD_SCHEMA = "upgrade-task-campaign-operation-v1"
 KIND = "campaign-control"
 ACTIONS = frozenset({"start", "claim", "candidate", "accept", "block", "failure-candidate",
                      "settle", "publish-decision", "bind-unbound", "status", "recover", "finish", "verify",
-                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm", "reconcile", "local-execute", "advance"}) | SEMANTIC_ACTIONS
+                     "advice", "read-advice", "callback", "prepare", "dispatch", "disarm", "reconcile", "local-execute", "advance"}) | SEMANTIC_ACTIONS | COMMUNICATION_ACTIONS
 READ_ACTIONS = frozenset({"status", "recover", "verify", "advance"})
 RUN_ACTIONS = READ_ACTIONS | {"start", "finish"}
 FAILURE_BOUNDARIES = frozenset({"local_boundary", "callback_boundary", "no_business_input", "preparation_exited"})
-ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation", "advisory_registration", "semantic_request")
+ARGUMENTS = ("node_id", "marker", "decision", "decision_fields", "boundary", "reason", "observation", "advisory_registration", "semantic_request", "communication_request")
 MARKER_SLOTS = {
     "campaign-accept-marker-v1": ("accept", "candidate", "candidate.json"),
     "campaign-settle-marker-v1": ("settle", "failure-candidate", "failure-candidate.json"),
@@ -42,7 +43,7 @@ MARKER_SLOTS = {
 
 def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
                       decision=None, decision_fields=None, boundary=None, reason=None, observation=None,
-                      advisory_registration=None, semantic_request=None):
+                      advisory_registration=None, semantic_request=None, communication_request=None):
     """Exact finite command, suitable for freezing before its model invocation."""
     from orchestration_campaign import DECISION_ARGUMENTS
     require(action in ACTIONS, "TASK_CAMPAIGN_ACTION_NOT_REGISTERABLE")
@@ -76,6 +77,11 @@ def operation_payload(campaign, action, run_id, *, node_id=None, marker=None,
         extra.update(validate_payload(campaign, action, run_id, node_id, semantic_request))
     else:
         require(semantic_request is None, 'TASK_CAMPAIGN_UNEXPECTED_SEMANTIC_MESSAGE')
+    if action in COMMUNICATION_ACTIONS:
+        from upgrade_task_communication import validate_payload
+        extra.update(validate_payload(campaign, action, run_id, node_id, communication_request))
+    else:
+        require(communication_request is None, 'TASK_CAMPAIGN_UNEXPECTED_COMMUNICATION_MESSAGE')
     if action == "advice":
         from jev_registration import load
         load(advisory_registration,run_id=run_id,node_id=node_id)
@@ -191,6 +197,8 @@ def validate_controls(campaign, *, fixtures=False, check_startup=True):
                 "TASK_CAMPAIGN_ADVICE_OPT_IN_REQUIRED")
     from upgrade_task_semantic import validate_controls as validate_semantic_controls
     validate_semantic_controls(campaign, registration, found)
+    from upgrade_task_communication import validate_controls as validate_communication_controls
+    validate_communication_controls(campaign, registration, found)
     require(found, "TASK_CAMPAIGN_NO_REGISTERED_CONTROLS")
     require(set(slots) <= set(found), "TASK_CAMPAIGN_FOREIGN_SLOT")
     # A fixed marker and a slot for the same node cannot provide two attempts.
@@ -338,6 +346,9 @@ def campaign_handler(runner, registration_ref, receipts, *, advice_connections=N
         elif action in SEMANTIC_ACTIONS:
             from upgrade_task_semantic import handle as semantic_handle
             result = semantic_handle(runner, registration, payload)
+        elif action in COMMUNICATION_ACTIONS:
+            from upgrade_task_communication import handle as communication_handle
+            result = communication_handle(runner, registration, payload)
         else: raise AssertionError("unvalidated campaign action")
         receipt = write_json(directory / (script["operation_id"]+".json"),
             dict(schema="upgrade-task-campaign-result-v1", campaign=runner.ref,

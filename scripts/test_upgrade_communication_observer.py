@@ -160,6 +160,20 @@ class ObserverTests(unittest.TestCase):
                     raw = self.path.read_bytes()[pin['offset']:pin['offset'] + pin['length']]
                     self.assertEqual(observation.sha(raw), pin['sha256'])
 
+    def test_failed_typed_body_read_preserves_the_original_native_notice(self):
+        self.make('codex');self.append(self.inbound())
+        _,_,info=self.materialize_attempt()
+        info['campaign']['task_controls']={'explicit_fixture':True}
+        # The original notice scan is real; only unavailable TASK enrollment
+        # and failed typed body lookup are the seams under test.
+        with patch('upgrade_task_communication.control',return_value={'fixture':'typed'}), \
+             patch('orchestration_native.NativeReader',return_value=object()), \
+             patch('upgrade_task_communication.typed_read_evidence',side_effect=RuntimeError('original body incomplete')):
+            result=observation.observe_sample(observation.Observer(),self.sample,info)
+        self.assertEqual(result['native_reception'],'NATIVE_NOTICE_OBSERVED')
+        self.assertEqual(result['body_read'],'UNKNOWN')
+        self.assertTrue(any('TYPED_BODY_READ_UNQUALIFIED' in r for r in result['reasons']))
+
     def test_queued_and_body_read_are_independent_and_no_reader_exec(self):
         self.append(self.inbound(queued=True), *self.pair())
         _, _, info = self.materialize_attempt()

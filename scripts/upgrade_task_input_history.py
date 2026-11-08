@@ -11,7 +11,9 @@ from orchestration_common import file_ref,json_ref,require
 # can send its separately verified handshake. A future action is not exempt.
 NO_BUSINESS_DISPATCH=frozenset({"start","claim","candidate","accept","block","failure-candidate",
     "settle","publish-decision","bind-unbound","status","recover","finish","verify",
-    "advice","read-advice","callback","prepare","disarm","reconcile","local-execute","advance"})
+    "advice","read-advice","callback","prepare","disarm","reconcile","local-execute","advance",
+    "semantic-status","semantic-order","semantic-read","semantic-disposition",
+    "communication-send","communication-read"})
 # local-execute runs only the original offline workload; it sends no task pack.
 # It is still a business write and is counted separately by the action reader.
 

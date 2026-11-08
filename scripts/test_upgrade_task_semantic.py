@@ -214,6 +214,7 @@ class FullCatalogTests(unittest.TestCase):
         paired_ref = f.register(); paired = json_ref(paired_ref)
         transport = f.base/'transport.py'; transport.write_text('def bind(*a, **k): pass\n')
         count = 0
+        ordinary_count = {'communication-send': 0, 'communication-read': 0}
         for group_id, group in paired['groups'].items():
             root = f.base/group_id
             plan = registered_corpus_plan(root/'inputs', 'fixture', group['workload_class'], paired)
@@ -252,6 +253,10 @@ class FullCatalogTests(unittest.TestCase):
             self.assertEqual(len(reads),3*len(group['runs']))
             self.assertEqual({p['semantic_request'] for p in reads}, {p['semantic_request'] for p in disposals})
             count += len(reads)
+            for action in ordinary_count:
+                selected = [p for p in operations.values() if p['action'] == action]
+                ordinary_count[action] += len(selected)
+                self.assertEqual(len(selected), 0 if group_id.startswith('pilot') else 16)
             ref = write_json(root/'campaign.json', campaign)
             compact = compact_catalog(reg, list(operations))
             for entry in compact['entries']:
@@ -268,6 +273,7 @@ class FullCatalogTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError,'ONE_ORIGINAL_OPERATION'):
                 validate_controls(changed,check_startup=False)
         self.assertEqual(count,99)
+        self.assertEqual(ordinary_count, {'communication-send':96, 'communication-read':96})
 
 
 if __name__ == '__main__':

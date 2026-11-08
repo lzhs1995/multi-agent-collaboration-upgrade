@@ -12,7 +12,7 @@ from orchestration_run import Runner
 from orchestration_test_support import CampaignFixture
 from upgrade_task_actor import TaskActor
 from upgrade_task_campaign import (KIND, SCHEMA, BINDING_SCHEMA, campaign_completion_binder,
-                                   campaign_handler, operation_payload, validate_controls)
+                                   campaign_handler, operation_payload, validate_controls, ARGUMENTS)
 from upgrade_task_control import invocation_recorder
 from upgrade_task_operations import OperationLedger
 import test_upgrade_task_startup as fixtures
@@ -37,6 +37,8 @@ class CampaignActorTests(unittest.TestCase):
                 node_id=getattr(self,"transport_node","local")))
         for label in getattr(self,"advance_observations",()):
             operations["advance-"+label]=dict(kind=KIND,payload=operation_payload(self.c.campaign,"advance","run-01",observation=label))
+        extend = getattr(self, 'extend_operations', None)
+        if extend is not None: extend(operations)
         self.registration=dict(schema="upgrade-task-operations-v2", task_id="fixture-campaign",
             controller_id="fixture-controller",thread_id=self.native.session["session_id"],turn_id=fixtures.TURN,
             authority_ref=self.c.campaign["authorization"],server=f.client.server,operations=operations,
@@ -115,8 +117,13 @@ class CampaignActorTests(unittest.TestCase):
 
     def call(self,name):
         payload=self.ledger.resolve_operation(name)[0]["payload"]
-        descriptor=control_script(self.c.campaign,self.c.ref,payload["action"],payload["run_id"],
-            **{k:payload.get(k) for k in ("node_id","marker","decision","decision_fields","boundary","reason","observation")})
+        if payload['action'] in ('communication-send', 'communication-read'):
+            from upgrade_task_campaign import campaign_control
+            descriptor=campaign_control(self.c.campaign,self.c.ref,payload['action'],payload['run_id'],
+                **{k:payload.get(k) for k in ARGUMENTS})
+        else:
+            descriptor=control_script(self.c.campaign,self.c.ref,payload["action"],payload["run_id"],
+                **{k:payload.get(k) for k in ("node_id","marker","decision","decision_fields","boundary","reason","observation")})
         self.native.append(dict(timestamp=utc_now(),type="response_item",payload=dict(type="custom_tool_call",
             name="exec",call_id="outer-"+name,input=descriptor["script"],
             internal_chat_message_metadata_passthrough=dict(turn_id=fixtures.TURN))))

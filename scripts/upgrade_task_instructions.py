@@ -90,6 +90,15 @@ Never invent a disposition before reading, repeat the statement, or use a tool/u
 echo as the model decision. Record failures and missing samples in the original
 denominator. The 99 semantic slots and 192 ordinary-message samples stay separate.
 
+For ordinary communication, select communication-send only at its original
+after_dispatch or before_accept point. Its original claim chooses the Claude
+peer; an unreached point stays missing. Claude personally sends its own two
+samples using its original command. After a matching native notice arrives,
+select that request's communication-read to receive its complete original body.
+Each send/read has one registered attempt. UNKNOWN never permits another send,
+new ID or shell fallback. Preserve UNCONFIRMED_NO_REPLAY diagnostics and continue
+independent business. These messages do not accept business work.
+
 For each run, inspect its original state and permit before start. Never restart a
 started or closed run. Dependencies, live identity, leases and admission remain
 enforced by the original operation handlers. Only the registered sessions may work.

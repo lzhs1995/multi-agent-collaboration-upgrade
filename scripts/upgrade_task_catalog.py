@@ -43,6 +43,8 @@ def catalog(campaign, task_directory, *, observations=4,
     slots, choices = {}, {}
     from upgrade_task_semantic import samples as semantic_samples, node_for
     semantic = semantic_samples(campaign)
+    from upgrade_task_communication import samples as communication_samples
+    communication = communication_samples(campaign)
 
     def add(run, action, node=None, *, suffix=None, **kwargs):
         # Names are opaque IDs. Labels and alternatives carry no priority.
@@ -62,6 +64,10 @@ def catalog(campaign, task_directory, *, observations=4,
     for run in runs:
         add(run, 'start')
         add(run, 'finish')
+        for index, sample in enumerate(s for s in communication if s['run_id'] == run):
+            action = 'communication-send' if sample['sender'] == 'codex' else 'communication-read'
+            add(run, action, sample['node_id'], suffix=f'message-{index + 1}',
+                communication_request=sample['request_id'])
         if semantic:
             dp2_node = node_for(campaign)
             add(run, 'semantic-order', dp2_node)

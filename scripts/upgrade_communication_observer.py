@@ -396,7 +396,7 @@ class Observer:
             self._prefix(f, pin, path)
             self._prefix(f, fence, path)
         scan.update(tool_records_retained=len(records), retained_bytes=retained_bytes,
-                    tool_record_retention_complete=retention_complete)
+                    tool_record_retention_complete=retention_complete, observed_before=observed_before)
         # Incomplete scans cannot rule out a duplicate call ID in an unread suffix.
         # Do not turn an exact reader string, a queued notice or our own body read
         # into an observation of the receiver's successful complete tool result.
@@ -560,6 +560,20 @@ def observe_sample(observer, sample, info):
         command = read_command(info['python']['path'], info['controller']['path'], payload,
                                rtk=info['rtk']['path'])
         records, scan, original = observer.native(attempt, payload, receiver, proofs, command=command)
+        if (sample['receiver'] == 'codex' and 'task_controls' in campaign
+                and scan['complete'] and scan['tool_record_retention_complete']):
+            from orchestration_native import NativeReader
+            from upgrade_task_communication import control, typed_read_evidence
+            try:
+                typed = control(campaign, 'communication-read', sample['request_id'])
+                records.extend(typed_read_evidence(NativeReader(receiver), fence=original['fence'],
+                    until=scan['next_offset'], notice=payload, command=typed,
+                    not_before=max(b['bound_at_epoch'], original['at_epoch']),
+                    not_after=scan['observed_before'], request_id=sample['request_id']))
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                # A bad/missing body result cannot erase an independently
+                # verified native notice or promote it to model consumption.
+                row['reasons'].append('TYPED_BODY_READ_UNQUALIFIED: '+type(exc).__name__)
         row['original_input'] = 'ORIGINAL_INPUT_INTENT_OBSERVED'
         row['evidence'].update(native_records=records, bounded_scan=scan, original_input=original)
         kinds = {p['kind'] for p in records}

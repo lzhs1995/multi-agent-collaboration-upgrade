@@ -34,7 +34,8 @@ def verify_source(binding,sender,receiver,*,fixtures=False):
         and proof["controller_pid"]==enrollment["controller_pid"],"TASK_SENDER_ORIGINAL_ENROLLMENT_CHANGED")
     invocation=json_ref(proof["invocation"]);payload=invocation["operation"]["payload"]
     schema=proof.get("schema")
-    action={"upgrade-task-harness-operation-v1":"prepare","upgrade-task-dispatch-operation-v1":"dispatch"}.get(schema)
+    action={"upgrade-task-harness-operation-v1":"prepare","upgrade-task-dispatch-operation-v1":"dispatch",
+            "upgrade-task-communication-send-v1":"communication-send"}.get(schema)
     require(action is not None and payload["action"]==action and payload["run_id"]==proof["run_id"]
         and payload["node_id"]==proof["node_id"] and payload["campaign_id"]==campaign["campaign_id"]
         and payload["campaign_root"]==campaign["root"] and invocation["received"]==proof["received"]
@@ -42,6 +43,10 @@ def verify_source(binding,sender,receiver,*,fixtures=False):
         and invocation["request"]["evidence_directory"]==controls["evidence_directory"],
         "TASK_SENDER_ORIGINAL_INVOCATION_CHANGED")
     native_invocation(NativeReader(sender,fixtures=fixtures),proof["invocation"],invocation["request"],allow_intended=True)
+    if action == 'communication-send':
+        from upgrade_task_message_send import verify_source as verify_message_source
+        verify_message_source(binding, source['task_actor'], proof, campaign, invocation, fixtures=fixtures)
+        return
     phase=proof.get("phase") if action=="prepare" else "submit-task-pack"
     require(action!="prepare" or phase=="preflight","TASK_SENDER_PHASE_CHANGED")
     stage=Path(campaign["root"])/"runs"/proof["run_id"]/"nodes"/proof["node_id"]/"operations"/phase

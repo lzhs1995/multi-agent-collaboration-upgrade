@@ -67,6 +67,30 @@ raise AssertionError('sandboxed client acquired external publication authority')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('CLIENT_CANNOT_PUBLISH_ADOPTION', result.stderr)
 
+    def test_actual_owner_imports_original_helper_and_keeps_private_message_roots(self):
+        result = self.child('''from upgrade_task_owner import install_owner_scope
+runtime,spec=install_owner_scope(runtime_ref)
+from orchestration_transport import PinnedRuntime
+from orchestration_common import json_ref,file_ref
+binding=json_ref(file_ref(Path(spec['controller'])/'upgrade-binding.json'))
+owner=PinnedRuntime(runtime)
+with owner.modules('cmux_workspace_guard','mac_upgrade_task_bridge_context','cmux_agent_adapter') as modules:
+ guard,adapter,helper_module=modules
+ helper=helper_module.Adapter()
+ identity=dict(workspace_uuid='11111111-0000-4000-8000-000000000001',
+  caller_surface_uuid='11111111-0000-4000-8000-000000000002',
+  target_surface_uuid='11111111-0000-4000-8000-000000000003',
+  target_pane_uuid='11111111-0000-4000-8000-000000000004')
+ request=helper.request(identity,'send','STATUS: registered ordinary fixture','original-private-fixture')
+ assert helper.root==Path(binding['state_root'])/'cmux-agent-adapter-v1'
+ assert Path(request['body_reference']['path']).parent==Path(binding['state_root'])/'message-bodies-v1'
+ assert not Path(request['body_reference']['path']).exists()
+ assert not (helper.channel(identity)/'pending.json').exists()
+ print(json.dumps({'modules':[m.__name__ for m in modules],'input_operations':0,'helper_root':str(helper.root)}))
+''')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(json.loads(result.stdout)['input_operations'], 0)
+
     def test_direct_guard_entry_is_also_refused_by_the_real_client_kernel_boundary(self):
         f = self.fixture
         Path(f.spec['adoption_path']).parent.mkdir(mode=0o700, exist_ok=True)
