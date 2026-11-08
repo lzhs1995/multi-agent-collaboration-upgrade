@@ -82,6 +82,20 @@ class TaskDriverTests(unittest.TestCase):
         self.assertEqual(self.f.actions, [('held-observe', 'pilot-B')])
         self.assertFalse(Path(self.spec['adoption_path']).exists())
 
+    def test_failed_server_without_origin_halts_before_waiting_for_adoption(self):
+        self.owner()
+        startup = Path(self.runtime['state_root'])/'startup'
+        failed = write_json(startup/'codex-server-result.json', dict(
+            schema='upgrade-server-result-v2', startup=self.runtime['startup'],
+            status='UNKNOWN', returncode=71, input_operations=0), exclusive=True)
+        self.assertFalse((startup/'codex-origin.json').exists())
+        result = self.driver.tick()
+        self.assertEqual((result['status'], result['classification']), ('HALTED', 'UNKNOWN'))
+        self.assertIn('ORIGINAL_SERVER_FAILED', json_ref(result['halt'])['reason'])
+        self.assertEqual(file_ref(failed['path']), failed)
+        self.assertEqual(self.f.actions, [('held-observe', 'pilot-B')])
+        self.assertFalse(Path(self.spec['adoption_path']).exists())
+
     def test_original_attachment_drives_closeout_without_legacy_bootstrap(self):
         ref = self.owner()
         self.assertEqual(self.driver.tick()['status'], 'WAITING_ORIGINAL_TASK_ADOPTION')

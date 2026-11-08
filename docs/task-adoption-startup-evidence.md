@@ -1,5 +1,21 @@
 # Original TASK startup evidence
 
+TASK's execution server starts once from the external release caller, after the
+original held release succeeds. It applies the complete pinned server Seatbelt
+profile directly. Starting it inside the already sandboxed terminal applies
+Seatbelt twice and fails on macOS with `sandbox_apply: Operation not permitted`.
+The terminal waits for the original server result, then follows the existing
+TUI-first connection and adoption sequence.
+
+The external launch binds the active permit, exact release/receipt, held lanes,
+retained owner and runtime pins. It closes inherited descriptors and preserves
+the exclusive launch intent; failed or uncertain attempts cannot be retried.
+Owner and driver inspect a recorded server failure before waiting for a TUI
+origin record, because that record cannot arrive after failed server startup.
+Socket creation alone remains insufficient to establish native adoption or a
+completed task. The external launcher is not installed in model-facing private
+controllers, and existing stopped attempts remain stopped.
+
 The TASK inspector now produces `task_startup_evidence` through
 `upgrade_task_adoption_evidence.collect` when the explicit requester-descriptor
 contract is enabled and the three original startup readers pass. The same

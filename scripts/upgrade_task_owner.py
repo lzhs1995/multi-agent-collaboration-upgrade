@@ -16,7 +16,7 @@ import time
 
 from orchestration_common import file_ref, json_ref, read_ref, require, write_json
 from upgrade_task_observer_protocol import PROCESS_FIELDS
-from upgrade_task_owner_contract import observe_owner, advice_requirements
+from upgrade_task_owner_contract import observe_owner, advice_requirements, original_server_result
 
 
 
@@ -124,6 +124,7 @@ class TaskOwner:
         from upgrade_task_rpc import task_rpc_type
         from upgrade_task_lifecycle import TaskLifecycle
         startup = Path(self.runtime['state_root'])/'startup'
+        original_server_result(self.runtime)
         # Missing files are a wait; a changed recorded identity is a failure.
         names = ('release.json', 'codex-server.json', 'codex-server-result.json', 'codex-origin.json')
         if not all((startup/name).is_file() for name in names):

@@ -9,6 +9,25 @@ from orchestration_common import file_ref, json_ref, require
 from upgrade_task_observer_protocol import PROCESS_FIELDS
 
 
+def original_server_result(runtime):
+    """A recorded failed start is terminal even before the TUI publishes origin.
+
+    The origin record is written only after server startup succeeds. Waiting
+    for it before inspecting a failed server result hides that original failure.
+    Missing results remain a wait; this reader never retries the launch.
+    """
+    path = Path(runtime['state_root'])/'startup/codex-server-result.json'
+    if not path.exists():
+        return None
+    result = json_ref(file_ref(path))
+    require(result.get('schema') == 'upgrade-server-result-v2'
+            and result.get('startup') == runtime['startup'],
+            'TASK_OWNER_ORIGINAL_STARTUP_CHANGED')
+    require(result.get('status') == 'SOCKET_CREATED',
+            'TASK_OWNER_ORIGINAL_SERVER_FAILED')
+    return result
+
+
 def observe_owner(runtime_ref, runtime, spec, campaign_path, *, driver_ref, original=None, process=None):
     """Read the retained owner; never attach, adopt, reconnect or send input.
 
@@ -17,6 +36,7 @@ def observe_owner(runtime_ref, runtime, spec, campaign_path, *, driver_ref, orig
     owner after publication is an error. Attachment proves service setup only,
     never a completed model turn or accepted business result.
     """
+    original_server_result(runtime)
     root = Path(spec['adoption_path']).parent
     path = root/'task-owner/owner.json'
     if not path.exists():

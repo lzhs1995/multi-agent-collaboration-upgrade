@@ -112,6 +112,7 @@ def stage_bound(source):
 
 def start_server(ref, spec, binding, env):
     """Start the one pinned private server, with no automatic restart."""
+    require('task_startup' not in binding, 'TASK_SERVER_EXTERNAL_RELEASE_REQUIRED')
     import cmux_daemon_identity as identity
     control = Path(binding["state_root"]) / "startup"
     socket = Path(spec["rpc"]["path"])
@@ -121,11 +122,6 @@ def start_server(ref, spec, binding, env):
     # With station launchers mg execs the pinned binary in place (same PID);
     # spec["rpc"]["argv"] is then the final native argv the verifier compares.
     launch_argv = spec["rpc"].get("launch_argv", spec["rpc"]["argv"])
-    if "task_startup" in binding:
-        # The remote TUI can connect; its app-server and descendants cannot
-        # connect back to the protected task RPC endpoint. This direct socket
-        # policy does not yet establish the complete broker/FD boundary.
-        launch_argv = [str(SANDBOX), "-f", spec["pins"]["codex_server_sandbox"]["path"], *launch_argv]
     env = dict(env, **spec["rpc"].get("launch_environment", {}))
     write_json(control / "codex-server-intent.json", dict(
         schema="upgrade-server-intent-v2", startup=ref, created_at=utc_now(),
@@ -494,7 +490,11 @@ def start_client(ref, spec, binding, lane):
     os.chdir(spec["work_root"])
     os.umask(0o077)
     if lane == "codex":
-        start_server(ref, spec, binding, env)
+        if 'task_startup' in binding:
+            from upgrade_task_tui import wait_original_server
+            wait_original_server(ref, spec, binding)
+        else:
+            start_server(ref, spec, binding, env)
     require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
     # Native CLI positional input is the pinned initial readiness instruction,
     # not an existing-session sender or an invented receipt.

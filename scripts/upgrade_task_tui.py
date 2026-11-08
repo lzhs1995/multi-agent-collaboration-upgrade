@@ -16,6 +16,32 @@ from upgrade_task_creation import validate_creation
 from upgrade_task_thread import journal_evidence
 
 
+def wait_original_server(ref, spec, binding, *, timeout=120):
+    """Observe the external one-shot launch; this TUI never starts a server."""
+    import cmux_daemon_identity as identity
+    require(0 < timeout <= 120, 'TASK_SERVER_WAIT_BUDGET_INVALID')
+    startup = Path(binding['state_root'])/'startup'
+    result_path = startup/'codex-server-result.json'
+    deadline = time.monotonic()+timeout
+    while True:
+        require(not os.path.lexists(spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
+        if result_path.is_file():
+            result = json_ref(file_ref(result_path))
+            require(result.get('schema') == 'upgrade-server-result-v2' and result.get('startup') == ref,
+                    'TASK_SERVER_ORIGINAL_STARTUP_CHANGED')
+            require(result.get('status') == 'SOCKET_CREATED', 'TASK_SERVER_ORIGINAL_START_FAILED')
+            launched = json_ref(file_ref(startup/'codex-server.json'))
+            live = identity.process(launched['pid'])
+            require(launched['startup'] == ref and result['pid'] == launched['pid']
+                    and live['birth'] == launched['birth']
+                    and live['executable'] == spec['pins']['codex']['path']
+                    and live['argv'] == spec['rpc']['argv']
+                    and Path(spec['rpc']['path']).is_socket(), 'TASK_SERVER_ORIGINAL_PROCESS_CHANGED')
+            return result
+        require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
+        time.sleep(.05)
+
+
 def task_tui_argv(ref, spec, binding, env, *, timeout=120):
     import cmux_daemon_identity as identity
     require(all(os.isatty(fd) for fd in (0, 1, 2)), "TASK_TUI_REAL_TERMINAL_REQUIRED")

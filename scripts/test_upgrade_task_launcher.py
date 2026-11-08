@@ -273,8 +273,21 @@ class TaskHoldTests(unittest.TestCase):
 
     def test_release_rechecks_original_owner_before_original_private_release(self):
         self.held()
-        with patch.object(launcher,'observe_launch',return_value=self.owner) as observe:
-            self.assertEqual(self.f.release()['status'],'RELEASED')
+        server_result = {'fixture': 'server result'}
+        def start_server(runtime, registration, group, request, receipt):
+            self.assertEqual(len(self.f.calls), 1)
+            self.assertTrue((self.f.base/'state/startup/release.json').is_file())
+            self.assertEqual((runtime, registration, group),
+                             (self.f.ref, {'registration': True}, 'pilot-B'))
+            self.assertEqual(json_ref(request)['task_owner'], self.owner)
+            self.assertEqual(receipt, self.f.receipt)
+            return server_result
+        with patch.object(launcher,'observe_launch',return_value=self.owner) as observe, \
+                patch('upgrade_task_server.launch',side_effect=start_server) as server:
+            result = self.f.release()
+            self.assertEqual(result['status'],'RELEASED')
+            self.assertEqual(result['server_result'], server_result)
+            server.assert_called_once()
         observe.assert_called_once_with(self.f.ref,self.driver,expected_group='pilot-B')
         self.assertEqual(len(self.f.calls),1)
 

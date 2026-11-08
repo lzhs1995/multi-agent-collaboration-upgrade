@@ -453,8 +453,9 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
 
     launch-request.json is written here, immediately before the one private
     release, so the driver's original 900-second startup clock starts when the
-    held clients may first exec. Never launches, retries or releases another
-    group, and never rewrites an earlier request.
+    held clients may first exec. TASK starts its server here with one complete
+    sandbox, outside the already sandboxed TUI. Never retries or releases
+    another group, and never rewrites an earlier request.
     """
     import cmux_daemon_identity as identity
     import upgrade_schedule as schedule
@@ -521,9 +522,14 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
     result = subprocess.run(argv, capture_output=True, text=True, timeout=180, cwd=spec["work_root"],
                             env=clean_child_environment({}), check=False)
     released = (startup_dir / "release.json").exists()
+    server_result = None
+    if result.returncode == 0 and released and task_owner is not None:
+        from upgrade_task_server import launch as launch_task_server
+        server_result = launch_task_server(runtime_ref, registration_ref, group, request, receipt)
     return dict(status="RELEASED" if result.returncode == 0 and released else "RELEASE_UNCONFIRMED",
                 launch_request=request, argv=argv, returncode=result.returncode, stdout=result.stdout,
-                stderr=result.stderr, input_operations=0)
+                stderr=result.stderr, input_operations=0,
+                **({'server_result': server_result} if server_result is not None else {}))
 
 
 def main(argv=None):

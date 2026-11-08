@@ -4,6 +4,7 @@ Only native model startup and adoption are doubles; no installed client launch.
 """
 from pathlib import Path
 from types import MethodType, SimpleNamespace
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import unittest
 
@@ -11,6 +12,37 @@ from orchestration_common import ContractError, file_ref, json_ref, write_json
 from upgrade_task_owner import TaskOwner
 from upgrade_task_observer_protocol import PROCESS_FIELDS
 from test_upgrade_task_lifecycle import LifecycleTests
+
+
+class ServerStartupTests(unittest.TestCase):
+    def setUp(self):
+        temp = TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.owner = object.__new__(TaskOwner)
+        self.owner.runtime = dict(state_root=str(self.root), startup={'original': 'startup'})
+        self.owner.phase = 'WAITING_ORIGINAL_SERVER'
+
+    def result(self, **changes):
+        value = dict(schema='upgrade-server-result-v2',
+                     startup=self.owner.runtime['startup'], status='SOCKET_CREATED')
+        return write_json(self.root/'startup/codex-server-result.json', dict(value, **changes))
+
+    def test_recorded_server_failure_is_not_hidden_by_missing_origin(self):
+        ref = self.result(status='UNKNOWN', returncode=71)
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_FAILED'):
+            self.owner._connect()
+        self.assertEqual(file_ref(ref['path']), ref)
+        self.assertFalse((self.root/'startup/codex-origin.json').exists())
+
+    def test_absent_or_successful_server_result_can_wait_for_origin(self):
+        self.assertEqual(self.owner._connect()['status'], 'WAITING_ORIGINAL_SERVER')
+        self.result()
+        self.assertEqual(self.owner._connect()['status'], 'WAITING_ORIGINAL_SERVER')
+
+    def test_other_startup_result_cannot_be_used_as_this_server(self):
+        self.result(startup={'foreign': 'startup'})
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_STARTUP_CHANGED'):
+            self.owner._connect()
 
 
 class OwnerFlowTests(unittest.TestCase):
