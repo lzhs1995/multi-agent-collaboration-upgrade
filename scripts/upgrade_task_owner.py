@@ -178,6 +178,8 @@ class TaskOwner:
                 'TASK_OWNER_PROCESS_CHANGED')
         require(file_ref(self.root/'owner.json') == self.owner, 'TASK_OWNER_PROOF_CHANGED')
         require(not os.path.lexists(self.spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
+        require(not os.path.lexists(self.root.parent/'task-owner-launch/unknown.json'),
+                'TASK_OWNER_LAUNCH_UNKNOWN_NO_REPLAY')
         require(not self.observer.closed and self.observer.thread.is_alive(),
                 'TASK_OWNER_OBSERVER_STOPPED')
 
@@ -307,16 +309,9 @@ class TaskOwner:
         return value
 
 
-def held_advice(plan, credential_fd):
-    """Bind one original connection per run using the already pinned worker.
-
-    Off-only plans open no transport and read no credential. The sole key enters
-    through an inherited pipe, never argv, environment or a persisted receipt.
-    Registration bytes and all per-run model/transport fields must agree before
-    the first connection. This function sends no model request.
-    """
+def advice_requirements(plan):
+    """Validate original advice bindings without opening transport or reading keys."""
     from jev_registration import load
-    from jev_advice_run import read_credential, registered_connection
     producers = {}
     by_run = {}
     for name, operation in plan['operations'].items():
@@ -331,13 +326,26 @@ def held_advice(plan, credential_fd):
         prior = by_run.setdefault(payload['run_id'], identity)
         require(prior == identity, 'TASK_OWNER_ADVICE_RUN_CONNECTION_CHANGED')
         producers[name] = (payload['run_id'], payload['advisory_registration'])
+    return producers, by_run
+
+
+def held_advice(plan, credential_fd, *, launch_owner=None):
+    """Bind original per-run connections; the key enters only by inherited pipe."""
+    from jev_advice_run import read_credential, registered_connection
+    producers, by_run = advice_requirements(plan)
     require((credential_fd is not None) == bool(producers), 'TASK_OWNER_EXACT_CREDENTIAL_PIPE_REQUIRED')
     if not producers:
         return None
-    credential = read_credential(credential_fd)
+    if launch_owner is None:
+        credential = read_credential(credential_fd)
+    else:
+        from upgrade_task_launcher import read_launch_credential
+        credential = read_launch_credential(launch_owner, credential_fd)
     connections = {}
     try:
         for run, registration in by_run.items():
+            if launch_owner is not None:
+                launch_owner._verify()
             connections[run] = registered_connection(registration['transport_source'])
         return {name:dict(registration=ref, connection=connections[run], credential=credential)
                 for name,(run,ref) in producers.items()}
@@ -357,6 +365,7 @@ def main(argv=None):
     parser.add_argument('--driver', required=True)
     parser.add_argument('--driver-sha256', required=True)
     parser.add_argument('--credential-fd', type=int)
+    parser.add_argument('--launcher-intent')
     args = parser.parse_args(argv)
     owner = None
     held = None
@@ -372,8 +381,11 @@ def main(argv=None):
         # a previous owner/unknown cannot accidentally open another transport.
         driver_ref = anchored_ref(args.driver, args.driver_sha256)
         owner = TaskOwner(ref, args.campaign, driver_ref=driver_ref)
-        held = held_advice(plan, args.credential_fd)
+        held = held_advice(plan, args.credential_fd, launch_owner=owner if args.launcher_intent else None)
         owner.advice_connections = held
+        if args.launcher_intent is not None:
+            from upgrade_task_launcher import publish_launch_ready
+            publish_launch_ready(owner, args.launcher_intent)
         while not owner.closed:
             began = time.monotonic()
             result = owner.tick(seconds=1)

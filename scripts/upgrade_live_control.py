@@ -335,7 +335,9 @@ def stop(runtime_ref):
     return result
 
 
-def control(runtime_ref, command):
+def control(runtime_ref, command, *, driver_ref=None, credential_fd=None):
+    require(command == 'hold' or (driver_ref is None and credential_fd is None),
+            'TASK_OWNER_ARGUMENTS_FOR_HOLD_ONLY')
     if command == "stop":
         return stop(runtime_ref)
     _, runtime = validate_live_runtime(runtime_ref)
@@ -364,8 +366,13 @@ def control(runtime_ref, command):
     require(not stopped, "EXPERIMENT_STOP_REQUESTED")
     if command in ("launch", "hold"):
         from upgrade_startup_contract import TASK_SCHEMA
-        require(spec.get("schema") != TASK_SCHEMA,
-                "TASK_ACTOR_BUSINESS_INTEGRATION_INCOMPLETE: candidate materialization only; no formal launch")
+        task_plan = None
+        if spec.get("schema") == TASK_SCHEMA:
+            require(command == 'hold', 'TASK_LAUNCH_REQUIRES_ORIGINAL_HOLD_AND_RELEASE')
+            from upgrade_task_launcher import launch_plan, launch_owner
+            task_plan = launch_plan(runtime_ref, driver_ref, credential_fd=credential_fd)
+        else:
+            require(driver_ref is None and credential_fd is None, 'TASK_OWNER_ARGUMENTS_REQUIRE_TASK')
         require(not launched, "ORIGINAL_LAUNCH_ALREADY_EXISTS: inspect it; no retry or replacement")
         # A batch hold creates the held processes without the launch clock;
         # only the later permit-scoped release writes launch-request.json.
@@ -380,14 +387,29 @@ def control(runtime_ref, command):
         # The private harness also writes its exclusive intent before cmux. This
         # external intent is an additional crash record, never a retry budget.
         external_publisher(spec)
-        write_json(adoption.parent / record, dict(runtime=runtime_ref,
-            requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
-            startup=runtime["startup"], **({"child_hook_capability": child_capability}
-                                         if child_capability is not None else {})), exclusive=True)
-        ref, value = invocation(runtime_ref, runtime, spec, "experiment-launch", spawn=True)
+        owner = launch_owner(task_plan, credential_fd=credential_fd) if task_plan is not None else None
+        try:
+            require(not os.path.lexists(spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
+            write_json(adoption.parent / record, dict(runtime=runtime_ref,
+                requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(),
+                startup=runtime["startup"], **({"child_hook_capability": child_capability}
+                                             if child_capability is not None else {}),
+                **({'task_owner':owner} if owner is not None else {})), exclusive=True)
+            ref, value = invocation(runtime_ref, runtime, spec, "experiment-launch", spawn=True)
+        except BaseException as exc:
+            if owner is not None:
+                write_json(adoption.parent/'task-owner-launch/unknown.json',
+                    dict(intent=owner['intent'], error_type=type(exc).__name__, error=str(exc),
+                         retry_allowed=False, clients_preserved=True), exclusive=True)
+            raise
+        if owner is not None and value['returncode'] != 0:
+            write_json(adoption.parent/'task-owner-launch/unknown.json',
+                dict(intent=owner['intent'], reason='ORIGINAL_HELD_LAUNCH_UNCONFIRMED',
+                     evidence=ref, retry_allowed=False, clients_preserved=True), exclusive=True)
         prefix = "LAUNCH" if command == "launch" else "HELD_LAUNCH"
         return dict(status=prefix + ("_RETURNED" if value["returncode"] == 0 else "_UNCONFIRMED"),
-                    evidence=ref, observation=value, input_operations=0)
+                    evidence=ref, observation=value, input_operations=0,
+                    **({'task_owner':owner} if owner is not None else {}))
     require(command == "adopt", "UNKNOWN_CONTROL_COMMAND")
     external_publisher(spec)
     if adoption.exists():
@@ -468,11 +490,29 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
         held[lane] = dict(pid=launched["pid"], birth=launched["birth"], surface_uuid=value["surface_uuid"])
     receipt = file_ref(checked_path(receipt_path))
     require(receipt["sha256"] == receipt_sha256, "EXCLUSION_RECEIPT_PIN_CHANGED")
+    task_owner = None
+    from upgrade_startup_contract import TASK_SCHEMA
+    if spec.get('schema') == TASK_SCHEMA:
+        from upgrade_task_launcher import observe_launch
+        held_request = json_ref(file_ref(control_dir/'held-request.json'))
+        original_owner = held_request['task_owner']
+        intent = json_ref(original_owner['intent'])
+        from upgrade_driver import Driver
+        driver = Driver(intent['driver'])
+        driver._check_overall_deadline()
+        require(held_request['runtime'] == runtime_ref and held_request['startup'] == runtime['startup']
+                and intent['registration'] == registration_ref and intent['group'] == group
+                and driver.registration_ref == registration_ref
+                and driver.config['runtimes'].get(group) == runtime_ref,
+                'TASK_RELEASE_ORIGINAL_OWNER_REQUIRED')
+        task_owner = observe_launch(runtime_ref, intent['driver'], expected_group=group)
+        require(task_owner == original_owner, 'TASK_RELEASE_OWNER_CHANGED')
     require_running(registration_ref)
     external_publisher(spec)
     request = write_json(control_dir / "launch-request.json", dict(runtime=runtime_ref,
         requested_at=utc_now(), monotonic_ns=time.monotonic_ns(), boot_id=boot_id(), startup=runtime["startup"],
-        held_release=dict(permit=permit["step"], group=group, receipt=receipt, held=held)), exclusive=True)
+        held_release=dict(permit=permit["step"], group=group, receipt=receipt, held=held),
+        **({'task_owner':task_owner} if task_owner is not None else {})), exclusive=True)
     ref = runtime["startup"]
     argv = [str(SANDBOX), "-f", spec["pins"]["control_sandbox"]["path"], runtime["python"]["path"], "-I", "-B",
             str(Path(runtime["controller"]["path"]) / "scripts/mac_upgrade_live_entry.py"), "experiment-release",
@@ -488,17 +528,22 @@ def release_held(runtime_ref, registration_ref, group, receipt_path, receipt_sha
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "launch", "adopt", "bootstrap", "status", "stop"))
+    parser.add_argument("command", choices=("check", "launch", "hold", "adopt", "bootstrap", "status", "stop"))
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--runtime-sha256", required=True)
     parser.add_argument("--campaign")
     parser.add_argument("--campaign-sha256")
     parser.add_argument("--instructions")
     parser.add_argument("--instructions-sha256")
+    parser.add_argument('--driver')
+    parser.add_argument('--driver-sha256')
+    parser.add_argument('--credential-fd', type=int)
     args = parser.parse_args(argv)
     try:
         runtime_ref = anchored_ref(args.runtime, args.runtime_sha256)
         if args.command == "bootstrap":
+            require(not any((args.driver, args.driver_sha256)) and args.credential_fd is None,
+                    'TASK_OWNER_ARGUMENTS_FOR_HOLD_ONLY')
             require(all((args.campaign, args.campaign_sha256, args.instructions, args.instructions_sha256)),
                     "PINNED_CAMPAIGN_AND_INSTRUCTIONS_REQUIRED")
             value = publish_bootstrap(runtime_ref, anchored_ref(args.campaign, args.campaign_sha256),
@@ -506,9 +551,12 @@ def main(argv=None):
         else:
             require(not any((args.campaign, args.campaign_sha256, args.instructions, args.instructions_sha256)),
                     "BOOTSTRAP_ARGUMENTS_FOR_BOOTSTRAP_ONLY")
-            value = control(runtime_ref, args.command)
+            require(bool(args.driver) == bool(args.driver_sha256), 'TASK_OWNER_DRIVER_PIN_REQUIRED')
+            value = control(runtime_ref, args.command,
+                driver_ref=anchored_ref(args.driver, args.driver_sha256) if args.driver else None,
+                credential_fd=args.credential_fd)
         print(json.dumps(value, ensure_ascii=False, indent=2))
-        return 0 if value["status"] not in ("NOT_READY", "LAUNCH_UNCONFIRMED") else 2
+        return 0 if value["status"] not in ("NOT_READY", "LAUNCH_UNCONFIRMED", "HELD_LAUNCH_UNCONFIRMED") else 2
     except (ContractError, OSError, ValueError, KeyError) as exc:
         print(json.dumps(dict(status="REFUSED", error=str(exc), input_operations=0)))
         return 2

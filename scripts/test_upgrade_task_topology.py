@@ -102,10 +102,10 @@ class TaskTopologyTests(unittest.TestCase):
                 control.bootstrap_task_thread(self.runtime_ref,object())
             publisher.assert_not_called()
 
-    def test_incomplete_business_chain_cannot_launch_or_hold(self):
+    def test_task_requires_original_held_owner_before_formal_launch(self):
         with patch.object(control,"invocation") as invoke:
-            for command in ("launch","hold"):
-                with self.subTest(command=command),self.assertRaisesRegex(ContractError,"BUSINESS_INTEGRATION_INCOMPLETE"):
+            for command,error in (("launch","HOLD_AND_RELEASE"),("hold","ORIGINAL_DRIVER_REQUIRED")):
+                with self.subTest(command=command),self.assertRaisesRegex(ContractError,error):
                     control.control(self.runtime_ref,command)
             invoke.assert_not_called()
         self.assertFalse((Path(self.spec["adoption_path"]).parent/"launch-request.json").exists())
@@ -128,7 +128,7 @@ class SlotTaskTopologyTests(TaskTopologyTests):
         root=Path(self.spec["controller"])/"scripts"
         self.assertTrue((root/"mac_upgrade_task_bindings.py").is_file())
         self.assertIn("from mac_upgrade_task_bindings import",(root/"mac_upgrade_task_operations.py").read_text())
-        self.test_incomplete_business_chain_cannot_launch_or_hold()
+        self.test_task_requires_original_held_owner_before_formal_launch()
 
 
 class NetworkTaskTopologyTests(TaskTopologyTests):
@@ -145,7 +145,7 @@ class NetworkTaskTopologyTests(TaskTopologyTests):
             self.assertNotIn(b"(deny network-outbound)",Path(self.spec["pins"][key]["path"]).read_bytes())
         root=Path(self.spec["controller"])/"scripts"
         self.assertTrue((root/"mac_upgrade_task_network.py").is_file())
-        self.test_incomplete_business_chain_cannot_launch_or_hold()
+        self.test_task_requires_original_held_owner_before_formal_launch()
 
     def test_binding_cannot_retarget_gateway(self):
         path=Path(self.spec["controller"])/"upgrade-binding.json"
