@@ -179,7 +179,8 @@ def after_seal(env):
  os.dup2(fd,4096,inheritable=True);os.close(fd)
  return dict(os.environ)
 with patch('cmux_daemon_identity.process',return_value={'pid':os.getpid(),'birth':[1,2]}), \\
-     patch.object(entry,'start_server'), \\
+     patch.object(entry,'start_server',side_effect=AssertionError('TASK must not start a nested server')), \\
+     patch('upgrade_task_tui.wait_original_server'), \\
      patch('upgrade_task_tui.task_tui_argv',return_value=argv), \\
      patch.object(entry,'clean_child_environment',side_effect=after_seal):
  entry.start_client(ref,spec,binding,lane)
