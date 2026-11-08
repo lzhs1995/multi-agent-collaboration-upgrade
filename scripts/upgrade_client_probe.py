@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from upgrade_native_roots import configuration, configured_root
+from orchestration_common import file_ref
 
 
 def main():
@@ -21,9 +22,15 @@ def main():
     root = configured_root(provider)
     if str(root) != binding["native_roots"][args.lane] or os.environ.get("UPGRADE_CLIENT_LANE") != args.lane:
         raise ValueError("READINESS_LANE_CHANGED")
-    print(json.dumps({"status": "UPGRADE_READINESS_TOOL_COMPLETED", "lane": args.lane,
+    result = {"status": "UPGRADE_READINESS_TOOL_COMPLETED", "lane": args.lane,
                       "native_root": str(root), "controller": binding["controller_root"],
-                      "adoption_proven": False, "input_operations": 0}))
+                      "adoption_proven": False, "input_operations": 0}
+    from upgrade_task_observer_evidence import enabled, capture
+    if enabled(binding):
+        startup = file_ref(Path(binding['config_root'])/'startup-v2.json')
+        result['task_observer'] = capture(binding, startup,
+            'codex-server' if args.lane == 'codex' else args.lane)
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

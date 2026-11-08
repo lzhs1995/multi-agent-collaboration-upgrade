@@ -124,6 +124,10 @@ def record(payload, *, original_hook, scope_status=None):
         lane=lane, hook=original_hook, command=expected, configuration=hooks_ref,
         observed_at_ns=time.time_ns(), pid=os.getpid(), parents=parents, direct_client=client,
         payload=selected, scope_status=scope_status, adoption_proven=False, native_reception=False)
+    from upgrade_task_observer_evidence import enabled, capture
+    if (enabled(binding) and event in ('PreToolUse', 'PostToolUse')
+            and client in ('codex-server', 'claude_a', 'claude_b')):
+        value['task_observer'] = capture(binding, startup_ref, client, parents=parents)
     directory = Path(binding["state_root"]) / "hook-observations" / lane
     from upgrade_startup_contract import TASK_SCHEMA
     if spec.get("schema")==TASK_SCHEMA and lane=="codex" and event in ("PreToolUse","PostToolUse"):

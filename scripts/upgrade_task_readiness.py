@@ -239,6 +239,9 @@ def task_readiness(native, session, spec, startup_ref, binding, launches):
                 or not hook_matches(value, call, session, "codex", spec, launches)):
             continue
         event = payload["hook_event_name"]
+        from upgrade_task_observer_evidence import enabled, hook
+        if enabled(binding):
+            hook(value, binding, startup_ref)
         observed = value.get("observed_at_ns")
         require(type(observed) is int and observed > 0, "TASK_HOOK_OBSERVATION_TIME_INVALID")
         matched[event].append(ref)

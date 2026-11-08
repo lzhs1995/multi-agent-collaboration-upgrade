@@ -51,7 +51,8 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_task_callback_client.py", "upgrade_task_callback_sender.py", "upgrade_task_callback_route.py",
            "upgrade_task_callback_contract.py", "upgrade_task_bridge_context.py", "upgrade_task_sender.py",
            "upgrade_task_busy_evidence.py",
-           "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py")
+           "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py",
+           "upgrade_task_observer_evidence.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
