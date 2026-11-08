@@ -331,6 +331,11 @@ def inspect(startup_ref, spec, binding, *, stage=None):
             from upgrade_task_adoption_evidence import collect
             try:
                 result['task_startup_evidence'] = collect(startup_ref, spec, binding, result, native=native)
+                from upgrade_task_runtime_policy import enabled as policy_enabled
+                if policy_enabled(binding):
+                    from upgrade_task_adoption import deployment
+                    deployment(binding, result)
+                    result['ready'] = result['business_adoption_supported'] = True
             except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
                 errors['task-startup-evidence'] = str(exc)
                 result['startup_ready'] = False

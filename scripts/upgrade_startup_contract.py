@@ -362,12 +362,15 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                         "STARTUP_TASK_MODEL_NETWORK_CHANGED")
     else:
         require("task_startup" not in binding and "task_model_network" not in binding
-                and "task_mach_boundary" not in binding and "task_native_descriptors" not in binding,
+                and "task_mach_boundary" not in binding and "task_native_descriptors" not in binding
+                and "task_runtime_policy" not in binding,
                 "STARTUP_TASK_DOWNGRADE_REFUSED")
     from upgrade_task_mach_policy import enabled as mach_enabled, restrict as restrict_mach
     mach_boundary = mach_enabled(binding)
     from upgrade_task_fd_contract import enabled as descriptors_enabled
     descriptors_enabled(binding)
+    from upgrade_task_runtime_policy import enabled as runtime_policy_enabled
+    runtime_policy_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)

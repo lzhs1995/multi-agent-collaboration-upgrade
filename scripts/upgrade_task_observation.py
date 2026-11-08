@@ -197,6 +197,9 @@ class ObservationSource:
             from upgrade_task_native_fds import observe as observe_descriptors
             descriptors['requester_descriptors'] = observe_descriptors(connection, who,
                 self.binding['task_model_network']['observer'], self.process)
+            from upgrade_task_runtime_policy import enabled, observe as observe_policy
+            if enabled(self.binding):
+                descriptors['runtime_policy'] = observe_policy(who['ancestry'], process=self.process)
         self.verify()
         return dict(schema=SCHEMA, runtime=self.runtime_ref, startup=self.runtime["startup"],
             caller=who, tree=tree, task=task, sessions=sessions,

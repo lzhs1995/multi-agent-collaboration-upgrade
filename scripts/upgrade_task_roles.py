@@ -82,8 +82,13 @@ def verify_roles(startup_ref, spec, binding, sessions, *, process, root_reader=N
                 "TASK_ROLES_CHANGED_DURING_READ:" + lane)
     require(task_startup_result(spec) == (result_ref, result, anchor)
             and not os.path.lexists(spec["stop_path"]), "TASK_ROLES_STARTUP_CHANGED_OR_STOPPED")
+    additional = {}
+    from upgrade_task_runtime_policy import enabled as policy_enabled, observe as observe_policy
+    if policy_enabled(binding):
+        additional['runtime_policy'] = observe_policy(
+            [rows[lane] for lane in ('codex-server', 'claude_a', 'claude_b')], process=process)
     return dict(schema=SCHEMA, startup=startup_ref, startup_result=result_ref, anchor=result["anchor"],
         launches=launches, display=dict(pid=rows["codex"]["pid"], execution_owner=False),
         execution_server=anchor["server"], thread_id=result["thread_id"], kernels=kernels,
         input_operations=0, network_proven=False, broker_isolation_proven=False,
-        descriptor_isolation_proven=False)
+        descriptor_isolation_proven=False, **additional)

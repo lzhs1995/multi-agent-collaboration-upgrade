@@ -192,5 +192,25 @@ class InspectorJoinTests(unittest.TestCase):
         self.assertNotIn('task_startup_evidence', value)
         self.assertFalse(value['ready'])
 
+    def test_explicit_runtime_contract_requires_deployment_before_ready(self):
+        from upgrade_task_runtime_policy import contract
+        self.f.binding['task_runtime_policy'] = contract()
+        with patch('upgrade_task_adoption.deployment', return_value={'fixture': 'kernel policy'}) as deploy:
+            value = self.inspect()
+        deploy.assert_called_once()
+        self.assertTrue(value['startup_ready'])
+        self.assertTrue(value['ready'])
+        self.assertTrue(value['business_adoption_supported'])
+
+    def test_failed_deployment_cannot_leave_ready_flags_enabled(self):
+        from upgrade_task_runtime_policy import contract
+        self.f.binding['task_runtime_policy'] = contract()
+        with patch('upgrade_task_adoption.deployment', side_effect=ContractError('TASK_POLICY_CHANGED')):
+            value = self.inspect()
+        self.assertFalse(value['ready'])
+        self.assertFalse(value['startup_ready'])
+        self.assertFalse(value['business_adoption_supported'])
+        self.assertEqual(value['errors']['task-startup-evidence'], 'TASK_POLICY_CHANGED')
+
 
 if __name__ == '__main__': unittest.main()

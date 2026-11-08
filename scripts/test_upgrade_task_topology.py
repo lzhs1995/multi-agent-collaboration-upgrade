@@ -56,7 +56,8 @@ class TaskTopologyTests(unittest.TestCase):
             task_callback_network=getattr(cls,"callback_network",False),
             task_observer_network=getattr(cls,"observer_network",False),
             task_mach_boundary=getattr(cls,"mach_boundary",False),
-            task_native_descriptors=getattr(cls,"native_descriptors",False))
+            task_native_descriptors=getattr(cls,"native_descriptors",False),
+            task_runtime_policy=getattr(cls,"runtime_policy",False))
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 

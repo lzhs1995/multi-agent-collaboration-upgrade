@@ -69,6 +69,9 @@ def verify(ref, binding, startup, lane, *, pid=None, parents=None):
                 'TASK_OBSERVER_EVIDENCE_HOOK_ANCESTRY_CHANGED')
     if descriptors_enabled(binding):
         verify_descriptors(value['requester_descriptors'], who, str(root/'s'))
+    from upgrade_task_runtime_policy import enabled as policy_enabled, verify as verify_policy
+    if policy_enabled(binding):
+        verify_policy(value['runtime_policy'], ancestry)
     return value
 
 

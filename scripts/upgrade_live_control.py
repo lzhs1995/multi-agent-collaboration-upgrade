@@ -210,9 +210,8 @@ def publish_bootstrap(runtime_ref, campaign_ref, instructions_ref):
 def campaign_task_service(runtime_ref, campaign_ref, client, ledger, *, advice_connections=None):
     """Attach the original post-adoption business actor; never launch a task.
 
-    TASK adoption is not yet implemented and therefore still refuses here.
-    Keeping this entry behind real adoption avoids a fixture or callback gate
-    being mistaken for permission to drive live campaign operations.
+    Requires complete TASK adoption. A fixture or callback gate cannot grant
+    permission to drive live campaign operations.
     """
     from upgrade_startup_contract import TASK_SCHEMA
     _,runtime=validate_live_runtime(runtime_ref)
@@ -401,12 +400,15 @@ def control(runtime_ref, command):
     if (value["returncode"] != 0 or not isinstance(result, dict) or result.get("ready") is not True
             or result.get("errors") or result.get("stopped") or result.get("input_operations") != 0):
         return dict(status="NOT_READY", evidence=ref, observation=value, input_operations=0)
-    require(result["startup"] == runtime["startup"] and result["schema"] == "upgrade-live-inspection-v2",
+    task_mode = spec.get('schema') == 'upgrade-startup-task-v1'
+    require(result["startup"] == runtime["startup"] and result["schema"] ==
+            ('upgrade-live-inspection-task-v1' if task_mode else 'upgrade-live-inspection-v2'),
             "INSPECTION_SCOPE_CHANGED")
     require(0 <= time.time_ns() - result["observed_at_ns"] < 30 * 10**9,
             "INSPECTION_TOO_OLD_FOR_ADOPTION")
     require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
-    proof = dict(schema="upgrade-live-adoption-v2", runtime=runtime_ref, startup=runtime["startup"],
+    proof = dict(schema='upgrade-live-adoption-task-v1' if task_mode else 'upgrade-live-adoption-v2',
+                 runtime=runtime_ref, startup=runtime["startup"],
                  verified=True, observed_at=utc_now(), inspection=ref,
                  sessions=result["sessions"], input_operations=0)
     validate_adoption_candidate(runtime_ref, proof, runtime=runtime)

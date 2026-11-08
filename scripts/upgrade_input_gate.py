@@ -35,7 +35,8 @@ def check_input(proof, *, native_binding=None):
         allowed = {"codex", "claude_a", "claude_b"}
     elif os.path.lexists(control / "adoption.json"):
         adoption = json.loads(read_regular(control / "adoption.json"))
-        require(adoption.get("schema") == "upgrade-live-adoption-v2"
+        require(adoption.get("schema") == ('upgrade-live-adoption-task-v1'
+                if 'task_startup' in binding else 'upgrade-live-adoption-v2')
                 and adoption.get("startup") == startup and adoption.get("verified") is True,
                 "EXPERIMENT_AUTOMATIC_ADOPTION_REQUIRED")
         allowed = {"codex", "claude_a", "claude_b"}
@@ -64,14 +65,12 @@ def check_input(proof, *, native_binding=None):
             "EXPERIMENT_ENDPOINT_NOT_ENROLLED")
     import cmux_daemon_identity as identity
     if "task_startup" in binding:
-        # TASK needs the independent server as well as the two UI endpoints.
-        # Full adoption validation still refuses incomplete TASK deployment;
-        # an external JSON claiming legacy-v2 adoption cannot bypass it.
-        from upgrade_live_runtime import validate_adoption
+        # Both installed/private and external paths use the same historical
+        # reader. Live roles and original MAC input gates remain separate.
+        from upgrade_task_adoption import read as read_task_adoption
         from upgrade_task_roles import verify_roles
         spec = json_ref(startup)
-        runtime_ref = file_ref(Path(binding["controller_root"]).parents[2] / "runtime-v2.json")
-        require(validate_adoption(runtime_ref, file_ref(control / "adoption.json")) == adoption,
+        require(read_task_adoption(binding) == adoption,
                 "TASK_INPUT_ORIGINAL_ADOPTION_CHANGED")
         verify_roles(startup, spec, binding, sessions, process=identity.process)
     for endpoint in (caller, target):

@@ -53,7 +53,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_task_busy_evidence.py",
            "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py",
            "upgrade_task_observer_evidence.py", "upgrade_task_mach_policy.py", "upgrade_task_fd_contract.py",
-           "upgrade_task_adoption_evidence.py")
+           "upgrade_task_adoption_evidence.py", "upgrade_task_runtime_policy.py", "upgrade_task_adoption.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -79,20 +79,6 @@ def render_private_support(support):
                 '        require(False,"TASK_SERVICE_EXTERNAL_CAMPAIGN_INPUT_REQUIRED")\n\n')+source[end:]
             raw=source.encode()
             transformations.append("private_readiness_service_no_campaign_input")
-        if name == 'upgrade_input_gate.py':
-            # The external full-adoption validator is deliberately not a
-            # private support module. Until the TASK producer/reader pair is
-            # implemented, refuse explicitly rather than hitting an absent
-            # import or silently accepting legacy adoption in a confined lane.
-            from upgrade_controller_patch import edit_nodes
-            source=raw.decode()
-            nodes=[n for n in ast.walk(ast.parse(source)) if isinstance(n,ast.If)
-                   and ast.unparse(n.test) == "'task_startup' in binding"]
-            require(len(nodes)==1, 'TASK_PRIVATE_INPUT_GATE_SOURCE_CHANGED')
-            raw=edit_nodes(source,[(nodes[0],
-                'if "task_startup" in binding:\n'
-                '        require(False, "TASK_INPUT_ADOPTION_CONSUMER_UNAVAILABLE")')]).encode()
-            transformations.append('private_task_input_explicit_adoption_refusal')
         if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py", "upgrade_child_hook.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
@@ -122,7 +108,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
                      codex_package=None, task_startup=None, task_model_network=False,
                      task_callback_network=False, task_observer_network=False,
-                     task_mach_boundary=False, task_native_descriptors=False):
+                     task_mach_boundary=False, task_native_descriptors=False, task_runtime_policy=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -137,6 +123,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             "STARTUP_TASK_MACH_REQUIRES_OBSERVER_NETWORK")
     require(type(task_native_descriptors) is bool and (not task_native_descriptors or task_mach_boundary),
             "STARTUP_TASK_DESCRIPTORS_REQUIRE_MACH_BOUNDARY")
+    require(type(task_runtime_policy) is bool and (not task_runtime_policy or task_native_descriptors),
+            "STARTUP_TASK_RUNTIME_POLICY_REQUIRES_DESCRIPTORS")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
@@ -377,6 +365,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     if task_native_descriptors:
         from upgrade_task_fd_contract import contract
         binding['task_native_descriptors'] = contract()
+    if task_runtime_policy:
+        from upgrade_task_runtime_policy import contract
+        binding['task_runtime_policy'] = contract()
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
