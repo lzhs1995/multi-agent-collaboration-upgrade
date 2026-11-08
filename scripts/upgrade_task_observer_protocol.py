@@ -11,9 +11,14 @@ SCHEMA = "upgrade-task-observer-endpoint-v1"
 REQUEST = "upgrade-task-observer-request-v1"
 RESPONSE = "upgrade-task-observer-response-v1"
 OBSERVATION = "upgrade-task-observation-v1"
-KINDS = ("tree", "task")
+KINDS = ("tree", "task", "startup")
 PROCESS_FIELDS = ("pid", "ppid", "birth", "executable", "file_identity")
 MAX_REPLY = 256 * 1024
+
+
+def allowed_kinds(binding):
+    from upgrade_task_fd_contract import enabled
+    return KINDS if enabled(binding) else KINDS[:2]
 
 
 def socket_pin(path):

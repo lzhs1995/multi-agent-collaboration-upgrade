@@ -52,7 +52,7 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_task_callback_contract.py", "upgrade_task_bridge_context.py", "upgrade_task_sender.py",
            "upgrade_task_busy_evidence.py",
            "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py",
-           "upgrade_task_observer_evidence.py", "upgrade_task_mach_policy.py")
+           "upgrade_task_observer_evidence.py", "upgrade_task_mach_policy.py", "upgrade_task_fd_contract.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -121,7 +121,7 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
                      codex_package=None, task_startup=None, task_model_network=False,
                      task_callback_network=False, task_observer_network=False,
-                     task_mach_boundary=False):
+                     task_mach_boundary=False, task_native_descriptors=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
@@ -134,6 +134,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             "STARTUP_TASK_OBSERVER_NETWORK_REQUIRES_CALLBACK_NETWORK")
     require(type(task_mach_boundary) is bool and (not task_mach_boundary or task_observer_network),
             "STARTUP_TASK_MACH_REQUIRES_OBSERVER_NETWORK")
+    require(type(task_native_descriptors) is bool and (not task_native_descriptors or task_mach_boundary),
+            "STARTUP_TASK_DESCRIPTORS_REQUIRE_MACH_BOUNDARY")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
@@ -371,6 +373,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     if task_mach_boundary:
         from upgrade_task_mach_policy import contract
         binding['task_mach_boundary'] = contract()
+    if task_native_descriptors:
+        from upgrade_task_fd_contract import contract
+        binding['task_native_descriptors'] = contract()
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)

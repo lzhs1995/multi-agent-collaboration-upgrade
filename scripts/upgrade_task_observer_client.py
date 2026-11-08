@@ -13,7 +13,7 @@ import time
 from orchestration_common import canonical, file_ref, json_ref, require
 from upgrade_rpc_peer import kernel_peer
 from upgrade_task_observer_protocol import (SCHEMA, REQUEST, RESPONSE, MAX_REPLY, OBSERVATION,
-    PROCESS_FIELDS, socket_pin, frame, request_value)
+    PROCESS_FIELDS, socket_pin, frame, request_value, allowed_kinds)
 from upgrade_task_network import OBSERVER_SCHEMA, observer_path
 
 
@@ -26,7 +26,7 @@ def descriptor(binding):
     runtime=file_ref(Path(binding['controller_root']).parents[2]/'runtime-v2.json')
     ref=file_ref(path.parent/'descriptor.json');value=json_ref(ref)
     require(value.get('schema')==SCHEMA and value['runtime']==runtime and value['startup']==startup
-            and value['socket']['path']==str(path) and value['allowed_kinds']==['tree','task']
+            and value['socket']['path']==str(path) and value['allowed_kinds']==list(allowed_kinds(binding))
             and value['input_operations']==0 and value['restart_allowed'] is False
             and value['adoption_proven'] is False
             and type(value['maximum_seconds']) in (int,float) and 0<value['maximum_seconds']<=1800
@@ -51,6 +51,7 @@ def peer(connection, value, process):
 def read(binding, kind, *, process, timeout=35):
     require(type(timeout) in (int,float) and 0<timeout<=35,'TASK_OBSERVER_TIMEOUT_INVALID')
     request=request_value(dict(schema=REQUEST,kind=kind,nonce=secrets.token_hex(24)))
+    require(kind in allowed_kinds(binding), 'TASK_OBSERVER_READ_KIND_NOT_REGISTERED')
     ref,value=descriptor(binding)
     deadline=time.monotonic()+timeout
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:

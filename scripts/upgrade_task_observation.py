@@ -13,7 +13,7 @@ import uuid
 
 from orchestration_common import file_ref, json_ref, require
 from upgrade_rpc_peer import kernel_peer
-from upgrade_task_observer_protocol import OBSERVATION as SCHEMA, KINDS, PROCESS_FIELDS
+from upgrade_task_observer_protocol import OBSERVATION as SCHEMA, allowed_kinds, PROCESS_FIELDS
 
 
 def caller(connection, launches, process):
@@ -110,7 +110,10 @@ class ObservationSource:
         require(not os.path.lexists(self.spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
 
     def read(self, connection, kind):
-        require(kind in KINDS, "TASK_OBSERVER_READ_KIND_REFUSED")
+        require(kind in allowed_kinds(self.binding), "TASK_OBSERVER_READ_KIND_REFUSED")
+        startup_descriptors = kind == 'startup'
+        if startup_descriptors:
+            kind = 'tree'
         self.verify()
         native = self.native
         from upgrade_live_inspect import ReadOnlyCmux
@@ -189,9 +192,14 @@ class ObservationSource:
         require(workspace_tree(strict_json(fresh._run("tree", "--all", "--json", "--id-format", "both")),
                 {k:v for k,v in launches.items() if k != "codex-server"}) == tree,
                 "TASK_OBSERVER_TREE_CHANGED_DURING_READ")
+        descriptors = {}
+        if startup_descriptors:
+            from upgrade_task_native_fds import observe as observe_descriptors
+            descriptors['requester_descriptors'] = observe_descriptors(connection, who,
+                self.binding['task_model_network']['observer'], self.process)
         self.verify()
         return dict(schema=SCHEMA, runtime=self.runtime_ref, startup=self.runtime["startup"],
             caller=who, tree=tree, task=task, sessions=sessions,
             input_operations=0, adoption_proven=False,
             identity_source="original_controller_read_only_observation",
-            requester_direct_rpc_peer=False)
+            requester_direct_rpc_peer=False, **descriptors)

@@ -13,7 +13,7 @@ import time
 
 from orchestration_common import canonical, file_ref, require, write_json
 from upgrade_task_observation import ObservationSource
-from upgrade_task_observer_protocol import (SCHEMA, REQUEST, RESPONSE, MAX_REPLY, KINDS,
+from upgrade_task_observer_protocol import (SCHEMA, REQUEST, RESPONSE, MAX_REPLY, allowed_kinds,
     socket_pin, request_value, frame)
 
 
@@ -35,7 +35,7 @@ class ReadOnlyObserver:
             self.socket=socket_pin(self.path)
             self.descriptor=write_json(self.root/'descriptor.json',dict(schema=SCHEMA,
                 runtime=source.runtime_ref,startup=source.runtime['startup'],owner=source.owner,
-                socket=self.socket,allowed_kinds=list(KINDS),input_operations=0,
+                socket=self.socket,allowed_kinds=list(allowed_kinds(source.binding)),input_operations=0,
                 maximum_seconds=seconds,maximum_requests=max_requests,
                 maximum_observation_seconds=30,
                 restart_allowed=False,adoption_proven=False),exclusive=True)
@@ -66,6 +66,8 @@ class ReadOnlyObserver:
             self._verify_endpoint()
             value=request_value(frame(connection,limit=1024,seconds=1))
             request=write_json(directory/'request.json',value,exclusive=True)
+            require(value['kind'] in allowed_kinds(self.source.binding),
+                    'TASK_OBSERVER_READ_KIND_NOT_REGISTERED')
             require(value['nonce'] not in self.seen, 'TASK_OBSERVER_NONCE_ALREADY_USED')
             self.seen.add(value['nonce'])
             began=time.monotonic()

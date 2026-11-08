@@ -10,7 +10,8 @@ import re
 
 from orchestration_common import file_ref, json_ref, require
 from upgrade_task_network import OBSERVER_SCHEMA, observer_path
-from upgrade_task_observer_protocol import OBSERVATION, RESPONSE, SCHEMA, request_value
+from upgrade_task_observer_protocol import OBSERVATION, RESPONSE, SCHEMA, request_value, allowed_kinds
+from upgrade_task_fd_contract import enabled as descriptors_enabled, verify as verify_descriptors
 
 
 def enabled(binding):
@@ -28,18 +29,19 @@ def verify(ref, binding, startup, lane, *, pid=None, parents=None):
     saved = json_ref(ref)
     request = json_ref(saved['request'])
     request_value(request)
+    expected_kind = 'startup' if descriptors_enabled(binding) else 'tree'
     response = saved['response']
     descriptor_ref = file_ref(root/'descriptor.json')
     descriptor = json_ref(descriptor_ref)
     runtime_ref = file_ref(Path(binding['controller_root']).parents[2]/'runtime-v2.json')
     require(saved['request']['path'] == str(path.parent/'request.json')
-            and request['kind'] == 'tree'
-            and response['schema'] == RESPONSE and response['kind'] == 'tree'
+            and request['kind'] == expected_kind
+            and response['schema'] == RESPONSE and response['kind'] == expected_kind
             and response['nonce'] == request['nonce'] and response['status'] == 'OBSERVED'
             and response['descriptor'] == descriptor_ref and response['input_operations'] == 0
             and descriptor['schema'] == SCHEMA and descriptor['runtime'] == runtime_ref
             and descriptor['startup'] == startup and descriptor['socket']['path'] == str(root/'s')
-            and descriptor['allowed_kinds'] == ['tree', 'task']
+            and descriptor['allowed_kinds'] == list(allowed_kinds(binding))
             and descriptor['input_operations'] == 0 and descriptor['restart_allowed'] is False
             and descriptor['adoption_proven'] is False,
             'TASK_OBSERVER_EVIDENCE_ORIGINAL_RESPONSE_CHANGED')
@@ -65,6 +67,8 @@ def verify(ref, binding, startup, lane, *, pid=None, parents=None):
                 and all(all(a[k] == b[k] for k in ('pid', 'ppid', 'birth', 'executable', 'file_identity'))
                         for a, b in zip(ancestry[1:], parents)),
                 'TASK_OBSERVER_EVIDENCE_HOOK_ANCESTRY_CHANGED')
+    if descriptors_enabled(binding):
+        verify_descriptors(value['requester_descriptors'], who, str(root/'s'))
     return value
 
 
@@ -72,7 +76,7 @@ def capture(binding, startup, lane, *, parents=None):
     """One real tree read by this tool/hook. No alternate endpoint or retry."""
     import cmux_daemon_identity as identity
     from upgrade_task_observer_client import read
-    response = read(binding, 'tree', process=identity.process)
+    response = read(binding, 'startup' if descriptors_enabled(binding) else 'tree', process=identity.process)
     ref = response['evidence']
     verify(ref, binding, startup, lane, pid=os.getpid(), parents=parents)
     return ref
