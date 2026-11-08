@@ -161,7 +161,7 @@ class BusyRuntimeTests(unittest.TestCase):
 
 class BusyObservationTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.ObservationTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.ObservationTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         service=self.f.f.service;service.actor.closed=False;service.normal_completion=None
         self.service=service
         self.live=dict(thread_id=service.actor.ledger.registration['thread_id'],
@@ -186,7 +186,7 @@ class BusyObservationTests(unittest.TestCase):
 
 class BusySenderTests(unittest.TestCase):
     def setUp(self):
-        self.f=sender_fixture.SenderTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=sender_fixture.SenderTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.endpoint.update(schema=BUSY_SCHEMA,allowed_input_methods=['turn/start','turn/steer'])
         self.f.f.f.thread['status']={'type':'active'}
         self.f.f.f.turns=[dict(id=__import__('test_upgrade_task_target').TURN,status='inProgress')]

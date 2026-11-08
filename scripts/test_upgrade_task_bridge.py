@@ -18,7 +18,7 @@ from orchestration_common import ContractError
 import upgrade_task_bridge_context as context
 from upgrade_task_bridge import caller_in_tree
 from upgrade_task_bridge_patch import task_bridge_paths
-from test_upgrade_task_target import SOURCE,WS,SURFACE,SENDER,PANE,SID
+from test_upgrade_task_target import SOURCE,FULL_SOURCE,WS,SURFACE,SENDER,PANE,SID
 
 OTHER="99999999-9999-4999-8999-999999999999"
 
@@ -139,7 +139,9 @@ class GeneratedBridgeTests(unittest.TestCase):
         import subprocess,sys
         import test_upgrade_live_startup as materialized
         from orchestration_common import json_ref
-        self.source_controller=SOURCE
+        if not all(p.is_dir() for p in (FULL_SOURCE, materialized.WRAPPERS)):
+            self.skipTest('full original controller and local wrappers required')
+        self.source_controller=FULL_SOURCE
         materialized.MaterializedStartupTests.setUpClass.__func__(self)
         self.addCleanup(self.tmp.cleanup)
         code='''import sys,json

@@ -6,7 +6,7 @@ from unittest.mock import patch
 from orchestration_common import file_ref, json_ref, write_json
 import test_upgrade_driver as legacy
 import upgrade_driver as driver
-import upgrade_task_owner as owner_module
+import upgrade_task_owner_contract as owner_module
 from upgrade_startup_contract import TASK_SCHEMA
 
 

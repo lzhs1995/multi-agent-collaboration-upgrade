@@ -20,7 +20,7 @@ import test_upgrade_task_target as targets
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
-        self.f=targets.TargetTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=targets.TargetTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         f=self.f;self.root=f.f.root
         self.report=self.root/'report.md';self.report.write_text('original callback report')
         self.pack=dict(task_id='original-task',completion_nonce='callback',

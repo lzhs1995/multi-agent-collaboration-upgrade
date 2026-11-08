@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 import cmux_daemon_identity as identity
 from orchestration_common import ContractError, file_ref, json_ref, write_json
@@ -21,6 +22,7 @@ from upgrade_task_observer_protocol import socket_pin
 from test_upgrade_task_observer_budget import fixture_driver
 import test_upgrade_task_owner_scope as owner_scope_fixtures
 
+KERNEL_PROCESS = identity.process
 
 BOOTSTRAP = r'''
 import json
@@ -59,6 +61,12 @@ with patch.object(upgrade_driver, 'Driver', return_value=driver), \
                      and owner_scope_fixtures.PACKAGE.is_dir(),
                      'requires the original local macOS packages')
 class LauncherOwnerScopeTests(unittest.TestCase):
+    def setUp(self):
+        # This test reads its real child process; test_all's ordinary-client
+        # fixture is intended only for tests that do not inspect kernel peers.
+        kernel = patch.object(identity, 'process', KERNEL_PROCESS)
+        kernel.start(); self.addCleanup(kernel.stop)
+
     @classmethod
     def setUpClass(cls):
         owner_scope_fixtures.OwnerScopeTests.setUpClass()

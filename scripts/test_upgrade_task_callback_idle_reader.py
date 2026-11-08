@@ -19,7 +19,7 @@ import upgrade_task_callback_route as route
 
 class IdleReaderTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.SettlementTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.SettlementTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         f=self.f
         endpoint=dict(task_thread_id=f.bound['session_id'])
         ref=write_json(f.root/'ingress.json',endpoint)

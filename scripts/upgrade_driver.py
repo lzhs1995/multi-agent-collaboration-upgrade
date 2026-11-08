@@ -275,7 +275,7 @@ class Driver:
             lambda: publish_bootstrap(runtime_ref, campaign_ref, instructions_ref), observed)
 
     def _task_owner(self, group, runtime_ref, runtime, spec, campaign_path):
-        from upgrade_task_owner import observe_owner
+        from upgrade_task_owner_contract import observe_owner
         path = self.root / "groups" / group / "task-owner.json"
         original = json_ref(file_ref(path)) if path.exists() else None
         if original is not None:

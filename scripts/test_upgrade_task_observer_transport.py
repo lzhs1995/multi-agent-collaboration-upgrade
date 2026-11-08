@@ -23,9 +23,17 @@ from upgrade_task_observer_protocol import (SCHEMA, OBSERVATION, REQUEST, MAX_RE
     PROCESS_FIELDS, frame, request_value)
 import upgrade_task_observer_client as client
 
+# Capture before test_all installs its ordinary-client default. These tests
+# explicitly exercise the Darwin reader on this test process and its children.
+KERNEL_PROCESS = identity.process
+
 
 class ObserverTransportTests(unittest.TestCase):
     def setUp(self):
+        if sys.platform != 'darwin':
+            self.skipTest('Darwin process reader required for real observer transport')
+        kernel = patch.object(identity, 'process', KERNEL_PROCESS)
+        kernel.start(); self.addCleanup(kernel.stop)
         tmp=tempfile.TemporaryDirectory(prefix='ob',dir='/tmp');self.addCleanup(tmp.cleanup)
         self.root=Path(tmp.name).resolve()
         self.binding=dict(evidence_root=str(self.root), config_root=str(self.root/'config'),

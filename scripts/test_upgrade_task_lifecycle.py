@@ -18,9 +18,9 @@ import test_upgrade_task_observer_transport as observer
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
-        self.o = observer.ObserverTransportTests(); self.o.setUp(); self.addCleanup(self.o.doCleanups)
+        self.o = observer.ObserverTransportTests(); self.addCleanup(self.o.doCleanups);self.o.setUp()
         original_process = observer.identity.process
-        self.f = ready.ReadyActorTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f = ready.ReadyActorTests(); self.addCleanup(self.f.doCleanups);self.f.setUp()
         # The readiness fixture uses PID999 for its fake display. All observer
         # parent/descendant and transport peer reads remain real kernel reads.
         p = patch('cmux_daemon_identity.process', side_effect=lambda pid, **kw:

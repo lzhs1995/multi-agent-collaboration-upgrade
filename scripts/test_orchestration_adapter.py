@@ -22,6 +22,9 @@ class CurrentAdapterTests(unittest.TestCase):
         self.assertIn("scripts/render_cmux_agent.py", modules)
         self.assertIn("scripts/upgrade_task_campaign.py", modules)
         self.assertIn("scripts/upgrade_task_control.py", modules)
+        self.assertIn("scripts/upgrade_task_owner_contract.py", modules)
+        self.assertNotIn("scripts/upgrade_task_owner.py", modules)
+        self.assertNotIn("scripts/upgrade_task_owner_entry.py", modules)
 
 
 class AdapterTests(unittest.TestCase):

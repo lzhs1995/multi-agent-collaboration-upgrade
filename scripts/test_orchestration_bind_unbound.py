@@ -1015,9 +1015,9 @@ class BindUnboundTests(BindFixtureMixin, unittest.TestCase):
 
 
 class BindClosureTests(unittest.TestCase):
-    def test_the_bind_path_keeps_the_publisher_and_worker_outside_the_adapter_closure(self):
-        # validate_adapter walks deferred imports too, so a bind-time import of
-        # the publisher would carry it into every frozen adapter (design Q9).
+    def test_v3_adapter_freezes_publisher_and_worker_without_importing_the_owner(self):
+        # Explicit v3 added a scoped worker to the new adapter. Freeze those
+        # bytes too; the process entry/owner remains outside this closure.
         from orchestration_adapter import validate_adapter
         from orchestration_coordinator import ADVICE_BODY_SCHEMA
         from upgrade_advice_publish import SCHEMA
@@ -1030,7 +1030,9 @@ class BindClosureTests(unittest.TestCase):
                 shutil.copyfile(path, root / "scripts" / path.name)
             closure = validate_adapter(tree_manifest(root), purpose="campaign")
         self.assertIn("scripts/upgrade_advice_chain.py", closure)
-        for outside in ("upgrade_advice_publish", "jev_advice_worker"):
+        for included in ("upgrade_task_advice", "upgrade_advice_publish", "jev_advice_worker"):
+            self.assertIn("scripts/" + included + ".py", closure)
+        for outside in ("upgrade_task_owner", "upgrade_task_owner_entry"):
             self.assertNotIn("scripts/" + outside + ".py", closure)
 
     def test_jev_advice_is_a_closure_member_beside_the_two_the_design_names(self):
@@ -1060,8 +1062,7 @@ class BindClosureTests(unittest.TestCase):
         for purpose, closure in closures.items():
             with self.subTest(purpose=purpose):
                 self.assertLessEqual(added, set(closure))
-                for outside in ("upgrade_advice_publish", "jev_advice_worker", "jev_s2_checks",
-                                "jev_advice_control_harness"):
+                for outside in ("jev_s2_checks", "jev_advice_control_harness"):
                     self.assertNotIn("scripts/" + outside + ".py", closure)
 
 

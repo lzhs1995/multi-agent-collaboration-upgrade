@@ -8,7 +8,7 @@ from test_upgrade_task_target import TargetTests
 
 class ResponsePeerTests(unittest.TestCase):
     def setUp(self):
-        self.f = TargetTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f = TargetTests(); self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.f.thread['status']['type'] = 'active'
         self.f.f.turns[0]['status'] = 'inProgress'
 

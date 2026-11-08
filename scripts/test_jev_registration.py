@@ -274,10 +274,12 @@ class RegistrationTests(BindFixtureMixin, unittest.TestCase):
 
 
 class RegistrationClosureTests(unittest.TestCase):
-    def test_the_consumer_freezes_the_registration_check_but_not_the_caller(self):
+    def test_v3_consumer_freezes_the_registration_and_explicit_worker_dependencies(self):
         """``upgrade_advice_chain`` re-derives the arm through ``jev_registration``,
-        so the validator is frozen with every adapter; the worker, its caller and
-        the publisher stay outside (design Q9)."""
+        so the validator is frozen with every adapter. Explicit TASK controls
+        v3 also freeze the worker; old frozen Q9 adapters are not migrated.
+        Presence in this tree grants no connection or model-call authority.
+        """
         from orchestration_adapter import validate_adapter
         scripts = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as other:
@@ -290,9 +292,10 @@ class RegistrationClosureTests(unittest.TestCase):
         for purpose, closure in closures.items():
             with self.subTest(purpose=purpose):
                 self.assertIn("scripts/jev_registration.py", closure)
-                for outside in ("jev_advice_run", "jev_advice_worker", "upgrade_advice_publish", "jev_transport",
-                                "jev_on_call"):
-                    self.assertNotIn("scripts/" + outside + ".py", closure)
+                for included in ("upgrade_task_advice", "jev_advice_run", "jev_advice_worker",
+                                 "upgrade_advice_publish", "jev_transport"):
+                    self.assertIn("scripts/" + included + ".py", closure)
+                self.assertNotIn("scripts/jev_on_call.py", closure)
 
 
 

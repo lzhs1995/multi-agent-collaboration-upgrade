@@ -15,7 +15,7 @@ from test_upgrade_task_lifecycle import LifecycleTests
 
 class OwnerFlowTests(unittest.TestCase):
     def setUp(self):
-        self.f = LifecycleTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f = LifecycleTests(); self.addCleanup(self.f.doCleanups);self.f.setUp()
         # Use the existing real lifecycle; only the process-bootstrap factory
         # is bypassed to avoid launching real model clients in these tests.
         owner = object.__new__(TaskOwner)

@@ -135,7 +135,7 @@ class PreflightTests(unittest.TestCase):
     def test_off_arm_cannot_receive_credentials_and_on_arm_requires_read_pipe(self):
         reader,writer=os.pipe();self.addCleanup(os.close,reader);self.addCleanup(os.close,writer)
         with self.assertRaisesRegex(ContractError,'EXACT_CREDENTIAL_PIPE_REQUIRED'):self.plan(credential_fd=reader)
-        with patch('upgrade_task_owner.advice_requirements',return_value=({'op':True},{})):
+        with patch('upgrade_task_owner_contract.advice_requirements',return_value=({'op':True},{})):
             with self.assertRaisesRegex(ContractError,'EXACT_CREDENTIAL_PIPE_REQUIRED'):self.plan()
             with self.assertRaisesRegex(ContractError,'READ_ONLY_CREDENTIAL_PIPE_REQUIRED'):self.plan(credential_fd=writer)
             self.assertTrue(self.plan(credential_fd=reader)['credential_pipe_required'])

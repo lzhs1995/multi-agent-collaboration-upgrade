@@ -18,7 +18,7 @@ import test_upgrade_task_target as targets
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
-        self.f=targets.TargetTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=targets.TargetTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         root=self.f.f.root;self.state=root/'.local/state/multi-agent-collaboration'
         self.sample=dict(run_id='run-01',node_id='review',stage='before_business',
             request_id='original-ordinary',sender='claude_a',receiver='codex',

@@ -9,6 +9,7 @@ import unittest
 
 from orchestration_common import ContractError
 from upgrade_rpc_peer import kernel_peer, server_pin, verify_peer
+from cmux_daemon_identity import process as kernel_process
 
 
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"), "native peer support")
@@ -94,7 +95,7 @@ c,_=s.accept();sys.stdin.buffer.read(1);c.close();s.close()
         # The subprocess is Python named by its actual executable. Its script
         # operand is literally app-server to exercise the reader/pin interface;
         # this fixture makes no official-signature or enrollment claim.
-        from cmux_daemon_identity import process
+        process = kernel_process
         tmp = tempfile.TemporaryDirectory(prefix="pf", dir="/tmp")
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name).resolve()

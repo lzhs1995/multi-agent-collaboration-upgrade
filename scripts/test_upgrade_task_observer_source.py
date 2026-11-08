@@ -64,7 +64,7 @@ class ObservationSourceTests(unittest.TestCase):
         self.who=dict(peer=dict(pid=999,uid=os.geteuid()),lane=lane,
                       ancestry=[{k:row[k] for k in PROCESS_FIELDS}])
         for p in (patch.object(source,'caller',return_value=self.who),
-            patch('upgrade_live_inspect.ReadOnlyCmux',side_effect=lambda *a:SimpleNamespace(
+            patch('upgrade_cmux_inventory.ReadOnlyCmux',side_effect=lambda *a:SimpleNamespace(
                 _run=lambda *args:__import__('json').dumps(self.tree)))):
             p.start();self.addCleanup(p.stop)
 

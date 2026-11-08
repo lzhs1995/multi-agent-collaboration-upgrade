@@ -22,7 +22,13 @@ import upgrade_task_target as target
 import upgrade_task_sender as sender
 import test_upgrade_task_thread as thread_fixture
 
-SOURCE = Path('/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/collaboration-maintenance-context-5994-20261011-v1/successor28-from6105-20261012-v1/continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source')
+SOURCE = Path(__file__).resolve().parents[1] / 'tests/fixtures/original-controller-084'
+MANIFEST = json.loads((SOURCE / 'manifest.json').read_text())
+FULL_SOURCE = Path(MANIFEST['original_source'])
+for relative, pin in MANIFEST['files'].items():
+    raw = (SOURCE / relative).read_bytes()
+    if len(raw) != pin['bytes'] or hashlib.sha256(raw).hexdigest() != pin['sha256']:
+        raise RuntimeError('original controller fixture changed: ' + relative)
 SID = thread_fixture.SID
 TURN = thread_fixture.TURN
 WS = '44444444-4444-4444-8444-444444444444'
@@ -34,7 +40,16 @@ PANE = '77777777-7777-4777-8777-777777777777'
 @unittest.skipUnless(SOURCE.is_dir(), 'original .84 controller required')
 class TargetTests(unittest.TestCase):
     def setUp(self):
-        f = thread_fixture.TaskThreadTests(); f.setUp(); self.addCleanup(f.doCleanups); self.f = f
+        try:
+            self.prepare_fixture()
+        except BaseException:
+            # Other suites borrow this fixture directly, bypassing unittest's
+            # normal cleanup-on-setUp-failure path.
+            self.doCleanups()
+            raise
+
+    def prepare_fixture(self):
+        f = thread_fixture.TaskThreadTests(); self.addCleanup(f.doCleanups);f.setUp(); self.f = f
         path = f.path.with_name('rollout-' + SID + '.jsonl')
         f.path.rename(path); f.path = path
         for key in ('journal', 'metadata', 'startup_input'):
@@ -251,8 +266,10 @@ class TargetTests(unittest.TestCase):
 
     def test_original_084_materialization_contains_complete_target_support(self):
         import test_upgrade_task_topology as topology
+        if not all(p.is_dir() for p in (FULL_SOURCE, topology.WRAPPERS, topology.PACKAGE)):
+            self.skipTest('full original controller and local client packages required')
         class Candidate(topology.TaskTopologyTests):pass
-        with patch.object(topology,'SOURCE',SOURCE):
+        with patch.object(topology,'SOURCE',FULL_SOURCE):
             Candidate.setUpClass()
         self.addCleanup(Candidate.tearDownClass)
         root=Path(Candidate.spec['controller'])/'scripts'

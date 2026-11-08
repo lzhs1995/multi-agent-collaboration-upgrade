@@ -22,7 +22,7 @@ import test_upgrade_task_target as targets
 
 class SettlementTests(unittest.TestCase):
     def setUp(self):
-        f = targets.TargetTests(); f.setUp(); self.addCleanup(f.doCleanups); self.f = f
+        f = targets.TargetTests(); self.addCleanup(f.doCleanups);f.setUp(); self.f = f
         self.root = f.f.root; self.text = 'exact callback body'
         f.f.thread['status']['type'] = 'active'; f.f.turns[0]['status'] = 'inProgress'
         self.bound = f.bind(); self.receipt = self.root/'callback.json'
@@ -135,7 +135,7 @@ REAL_VERIFY_RECEIVER=callback.verify_receiver
 class DeliveryAuthorityTests(unittest.TestCase):
     """Actual reader with original .84 fixture settlement, no live deployment."""
     def setUp(self):
-        self.f=SettlementTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f=SettlementTests(); self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.receipt=self.f.settle()
 
     def read(self):

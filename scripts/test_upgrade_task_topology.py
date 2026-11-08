@@ -24,6 +24,8 @@ PACKAGE=Path("/Users/lzhs/Developer/codex-releases/0.164.0")
 class TaskTopologyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not all(p.is_dir() for p in (SOURCE, WRAPPERS, PACKAGE)):
+            raise unittest.SkipTest('full original controller and local client packages required')
         cls.tmp=tempfile.TemporaryDirectory(prefix="",dir="/tmp")
         cls.root=Path(cls.tmp.name).resolve()
         cls.context=init_experiment(cls.root/"l","task-topology-fixture",SOURCE)

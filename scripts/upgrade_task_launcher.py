@@ -53,7 +53,7 @@ def launch_plan(runtime_ref, driver_ref, *, credential_fd=None):
     from upgrade_live_control import external_publisher, held_launch
     from upgrade_startup_contract import TASK_SCHEMA
     from upgrade_task_startup import plan_value
-    from upgrade_task_owner import advice_requirements
+    from upgrade_task_owner_contract import advice_requirements
     from upgrade_driver import Driver
     from upgrade_benchmark import group_registration, runtime_observation
     import upgrade_schedule as schedule

@@ -23,7 +23,7 @@ import test_upgrade_task_next_input as next_input_fixture
 
 class IntentTests(unittest.TestCase):
     def setUp(self):
-        self.f=settlement_fixture.SettlementTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=settlement_fixture.SettlementTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.attempt=copy.deepcopy(self.f.attempt)
         self.attempt['phase']='NATIVE_INPUT_INTENT'
         self.event=self.attempt['events'][0]
@@ -109,7 +109,7 @@ class ObservationTests(unittest.TestCase):
     """Real admission predicates; dispatch state, ancestry and fence are fixtures."""
     def setUp(self):
         from orchestration_coordinator import State
-        f=next_input_fixture.NextInputTests();f.setUp();self.addCleanup(f.doCleanups);self.f=f
+        f=next_input_fixture.NextInputTests();self.addCleanup(f.doCleanups);f.setUp();self.f=f
         self.sender=f.base.campaign['sessions']['claude_a']
         receipt=f.f.control/'callback.json';report=f.f.control/'report.md';report.write_text('original report')
         self.pack=dict(task_id='original-callback',completion_nonce='nonce',completion_callback='body',
@@ -183,7 +183,7 @@ class ObservationTests(unittest.TestCase):
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
-        self.f=next_input_fixture.NextInputTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=next_input_fixture.NextInputTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.service=self.f.service
         self.attempt=write_json(self.f.f.control/'callback-attempt.json',{'fixture':'original'})
         self.pack=write_json(self.f.f.control/'callback-pack.json',{'fixture':'original'})

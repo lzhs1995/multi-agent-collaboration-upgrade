@@ -22,7 +22,7 @@ from orchestration_transport import PinnedRuntime
 from upgrade_live_patch import explicit_harness_main
 import upgrade_task_harness as harness
 from upgrade_task_streams import capture
-from test_upgrade_task_target import SOURCE
+from test_upgrade_task_target import SOURCE, FULL_SOURCE
 import test_upgrade_task_transport as transport_fixtures
 
 
@@ -198,7 +198,9 @@ class GeneratedEntryTests(unittest.TestCase):
     def test_actual_complete_generated_controller_main_uses_explicit_argv(self):
         import subprocess
         import test_upgrade_live_startup as materialized
-        self.source_controller=SOURCE
+        if not all(p.is_dir() for p in (FULL_SOURCE, materialized.WRAPPERS)):
+            self.skipTest('full original controller and local wrappers required')
+        self.source_controller=FULL_SOURCE
         materialized.MaterializedStartupTests.setUpClass.__func__(self)
         self.addCleanup(self.tmp.cleanup)
         code='''import sys,inspect
