@@ -69,6 +69,64 @@ class TuiTargetTests(unittest.TestCase):
                 self.check()
             obj[key] = previous
 
+    def socket_alias(self):
+        temporary = tempfile.TemporaryDirectory(prefix="ta", dir="/tmp")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve()
+        target, alias = root / 's', root / 'alias'
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.bind(str(target))
+        target.chmod(0o600)
+        alias.symlink_to(target)
+        info = target.stat()
+        self.spec['rpc']['path'] = str(alias)
+        self.process['argv'][2] = 'unix://' + str(alias)
+        self.anchor['socket'] = dict(path=str(target), device=info.st_dev,
+            inode=info.st_ino, uid=info.st_uid, peer_uid=os.geteuid(), mode=0o600)
+        return root, target, alias
+
+    def test_original_alias_accepts_only_the_pinned_local_socket(self):
+        _, target, _ = self.socket_alias()
+        self.assertIsNone(self.check())
+        # Same destination through a different argv spelling is not the
+        # registered TUI command. Only the original declared alias is allowed.
+        self.process['argv'][2] = 'unix://' + str(target)
+        with self.assertRaisesRegex(ContractError, 'REMOTE_TARGET_CHANGED'):
+            self.check()
+
+    def test_alias_retargeted_to_another_real_socket_refuses(self):
+        root, _, alias = self.socket_alias()
+        other = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(other.close)
+        other.bind(str(root / 'other'))
+        (root / 'other').chmod(0o600)
+        alias.unlink()
+        alias.symlink_to(root / 'other')
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_CHANGED'):
+            self.check()
+
+    def test_alias_target_replacement_permissions_and_pin_changes_refuse(self):
+        root, target, _ = self.socket_alias()
+        target.chmod(0o666)
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_CHANGED'):
+            self.check()
+        target.chmod(0o600)
+        for key, replacement in [('inode', self.anchor['socket']['inode'] + 1),
+                                 ('peer_uid', os.geteuid() + 1), ('mode', 0o666)]:
+            previous = self.anchor['socket'][key]
+            with self.subTest(key=key), self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_CHANGED'):
+                self.anchor['socket'][key] = replacement
+                self.check()
+            self.anchor['socket'][key] = previous
+        target.rename(root / 'original-socket')
+        target.write_text('not a socket')
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_CHANGED'):
+            self.check()
+        target.unlink()
+        with self.assertRaisesRegex(ContractError, 'ORIGINAL_SERVER_CHANGED'):
+            self.check()
+
 
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"), "kernel peer")
 class TaskThreadTests(unittest.TestCase):

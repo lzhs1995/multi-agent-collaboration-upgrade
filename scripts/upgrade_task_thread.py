@@ -21,6 +21,29 @@ from upgrade_rpc_peer import verify_peer
 MAX_RECORD = 2 * 1024 * 1024
 
 
+def _declared_socket_matches(declared, expected):
+    """Accept the original endpoint alias only for the pinned socket inode.
+
+    Official app-server may bind a short canonical socket and expose the
+    requested listen path as a symlink. The TUI still uses that requested path.
+    The separate live peer check remains mandatory.
+    """
+    if declared == expected["path"]:
+        return True  # Existing declaration-only case; socket_evidence checks it live.
+    try:
+        path = Path(declared)
+        canonical = checked_path(expected["path"])
+        if not path.is_absolute() or path.resolve(strict=True) != canonical:
+            return False
+        info = path.stat()
+        return (stat.S_ISSOCK(info.st_mode)
+                and (info.st_dev, info.st_ino) == (expected["device"], expected["inode"])
+                and info.st_uid == expected["uid"] == expected["peer_uid"] == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == expected["mode"] == 0o600)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def validate_tui_target(process, native_root, spec, anchor):
     """Match the observed TUI's declared destination to the original task.
 
@@ -39,7 +62,7 @@ def validate_tui_target(process, native_root, spec, anchor):
             == anchor["server"]["executable"]
             and anchor["server"]["argv_sha256"] == digest(json.dumps(
                 spec["rpc"]["argv"], ensure_ascii=False, separators=(",", ":")).encode())
-            and anchor["socket"]["path"] == spec["rpc"]["path"],
+            and _declared_socket_matches(spec["rpc"]["path"], anchor["socket"]),
             "TASK_TUI_ORIGINAL_SERVER_CHANGED")
     argv = process.get("argv")
     require(isinstance(argv, list) and all(isinstance(a, str) for a in argv)
@@ -51,7 +74,7 @@ def validate_tui_target(process, native_root, spec, anchor):
                  if arg == "--remote" or arg.startswith("--remote=")]
     require(len(selectors) == 1 and argv[selectors[0]] == "--remote"
             and selectors[0] + 1 < len(argv) - 2
-            and argv[selectors[0] + 1] == "unix://" + anchor["socket"]["path"],
+            and argv[selectors[0] + 1] == "unix://" + spec["rpc"]["path"],
             "TASK_TUI_REMOTE_TARGET_CHANGED")
 
 
