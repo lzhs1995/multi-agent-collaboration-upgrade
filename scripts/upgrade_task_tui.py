@@ -109,15 +109,33 @@ def wait_original_server(ref, spec, binding, *, timeout=120):
     startup = Path(binding['state_root'])/'startup'
     result_path = startup/'codex-server-result.json'
     deadline = time.monotonic()+timeout
+    original_records = None
     while True:
         require(not os.path.lexists(spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
+        require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
         if result_path.is_file():
-            result = json_ref(file_ref(result_path))
+            records = (file_ref(result_path), file_ref(startup/'codex-server.json'))
+            if original_records is None:
+                original_records = records
+            require(records == original_records, 'TASK_SERVER_ORIGINAL_RECORD_CHANGED')
+            result = json_ref(original_records[0])
             require(result.get('schema') == 'upgrade-server-result-v2' and result.get('startup') == ref,
                     'TASK_SERVER_ORIGINAL_STARTUP_CHANGED')
             require(result.get('status') == 'SOCKET_CREATED', 'TASK_SERVER_ORIGINAL_START_FAILED')
-            launched = json_ref(file_ref(startup/'codex-server.json'))
-            live = identity.process(launched['pid'])
+            launched = json_ref(original_records[1])
+            try:
+                live = identity.process(launched['pid'])
+            except identity.IdentityError as exc:
+                # A short-lived external launcher can exit between the two
+                # strict kernel reads, changing only its child's parent. No
+                # identity from that failed read is accepted. Observe the
+                # same pinned launch again within the original wait budget;
+                # never restart the server or relax the identity reader.
+                if str(exc) != 'process changed during read':
+                    raise
+                require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
+                time.sleep(.05)
+                continue
             require(launched['startup'] == ref and result['pid'] == launched['pid']
                     and live['birth'] == launched['birth']
                     and live['executable'] == spec['pins']['codex']['path']
