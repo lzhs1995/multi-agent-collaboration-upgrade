@@ -97,6 +97,43 @@ class OriginalServerWaitTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractError, 'ORIGINAL_PROCESS_CHANGED'):
                     self.wait()
 
+    def test_successful_retry_cannot_cross_the_original_deadline(self):
+        clock = [0]
+        reads = []
+        def observe(_):
+            reads.append(True)
+            if len(reads) == 1:
+                raise identity.IdentityError('process changed during read')
+            clock[0] = 1
+            return self.live
+        with patch.object(identity, 'process', side_effect=observe), \
+                patch('upgrade_task_tui.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('upgrade_task_tui.time.sleep'):
+            with self.assertRaisesRegex(ContractError, 'WAIT_TIMEOUT_NO_REPLAY'):
+                self.wait(timeout=1)
+        self.assertEqual(len(reads), 2)
+
+    def test_stop_arriving_during_successful_retry_prevents_readiness(self):
+        reads = []
+        def observe(_):
+            reads.append(True)
+            if len(reads) == 1:
+                raise identity.IdentityError('process changed during read')
+            Path(self.spec['stop_path']).touch()
+            return self.live
+        with patch.object(identity, 'process', side_effect=observe):
+            with self.assertRaisesRegex(ContractError, 'STOP_REQUESTED'):
+                self.wait()
+        self.assertEqual(len(reads), 2)
+
+    def test_record_replacement_during_successful_read_prevents_readiness(self):
+        def observe(_):
+            write_json(self.launch_path, dict(self.launched, pid=456))
+            return self.live
+        with patch.object(identity, 'process', side_effect=observe):
+            with self.assertRaisesRegex(ContractError, 'ORIGINAL_RECORD_CHANGED'):
+                self.wait()
+
     @unittest.skipUnless(sys.platform == 'darwin', 'Darwin native process observation')
     def test_real_parent_exit_between_kernel_reads_retains_original_process(self):
         # The original identity reader is used unchanged. The fixture releases
@@ -128,9 +165,13 @@ class OriginalServerWaitTests(unittest.TestCase):
             end = time.monotonic() + 5
             while time.monotonic() < end:
                 try:
-                    KERNEL_PROCESS(pid)
+                    KERNEL_PROCESS(pid, arguments=False)
                 except identity.ProcessExited:
                     return
+                except identity.IdentityError:
+                    # Exit can race the second kernel sample. Confirm absence
+                    # on a subsequent read; no signal or replacement is used.
+                    pass
                 time.sleep(.01)
             self.fail('fixture child did not exit after its stop file')
         self.addCleanup(stop_fixture)

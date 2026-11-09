@@ -141,6 +141,10 @@ def wait_original_server(ref, spec, binding, *, timeout=120):
                     and live['executable'] == spec['pins']['codex']['path']
                     and live['argv'] == spec['rpc']['argv']
                     and Path(spec['rpc']['path']).is_socket(), 'TASK_SERVER_ORIGINAL_PROCESS_CHANGED')
+            require((file_ref(result_path), file_ref(startup/'codex-server.json')) == original_records,
+                    'TASK_SERVER_ORIGINAL_RECORD_CHANGED')
+            require(not os.path.lexists(spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
+            require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
             return result
         require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
         time.sleep(.05)
