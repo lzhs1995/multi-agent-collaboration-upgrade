@@ -1,8 +1,11 @@
 """Driver/retained-owner integration; synthetic native startup, no live launch."""
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
+import cmux_daemon_identity as identity
 from orchestration_common import file_ref, json_ref, write_json
 import test_upgrade_driver as legacy
 import upgrade_driver as driver
@@ -28,9 +31,10 @@ class TaskDriverTests(unittest.TestCase):
         reader.start(); self.addCleanup(reader.stop)
         self.row = dict(pid=123456, ppid=123450, birth=[11, 22],
                         executable='/fixture/python', file_identity={'inode': 9})
+        self.process = lambda pid: dict(self.row)
         original_observe = owner_module.observe_owner
         observe = patch.object(owner_module, 'observe_owner', side_effect=lambda *args, **kwargs:
-            original_observe(*args, **kwargs, process=lambda pid: dict(self.row)))
+            original_observe(*args, **kwargs, process=self.process))
         observe.start(); self.addCleanup(observe.stop)
         self.campaign_ref = self.f.case.campaigns['pilot-B']
         self.campaign_path = Path(self.campaign_ref['path'])
@@ -134,6 +138,50 @@ class TaskDriverTests(unittest.TestCase):
         self.assertEqual(result['classification'], 'UNKNOWN')
         self.assertIn('CLOSED_NO_REPLAY', json_ref(result['halt'])['reason'])
         self.assertEqual(self.f.actions, [('held-observe', 'pilot-B')])
+
+    def assert_owner_fault_preserved(self, marker, owner_ref):
+        result = self.driver.tick()
+        self.assertEqual((result['status'], result['classification']), ('HALTED', 'UNKNOWN'))
+        halt_ref = result['halt']
+        self.assertIn(marker, json_ref(halt_ref)['reason'])
+        self.assertEqual(file_ref(owner_ref['path']), owner_ref)
+        self.assertEqual(self.driver.tick()['status'], 'HALTED')
+        self.assertEqual(file_ref(halt_ref['path']), halt_ref)
+        self.assertEqual(self.f.actions, [('held-observe', 'pilot-B')])
+        self.assertFalse(Path(self.spec['adoption_path']).exists())
+
+    def test_closed_owner_does_not_require_a_still_live_process(self):
+        ref = self.owner(); self.driver.tick()
+        closed = write_json(self.control_root/'task-owner/closed.json',
+                            {'status': 'UNKNOWN_NO_REPLAY'}, exclusive=True)
+        self.process = unittest.mock.Mock(side_effect=identity.ProcessExited('gone'))
+        self.assert_owner_fault_preserved('OWNER_CLOSED_NO_REPLAY', ref)
+        self.process.assert_not_called()
+        self.assertEqual(file_ref(closed['path']), closed)
+
+    def test_absent_owner_without_closeout_halts_without_relaunch(self):
+        ref = self.owner(); self.driver.tick()
+        self.process = unittest.mock.Mock(side_effect=identity.ProcessExited('gone'))
+        self.assert_owner_fault_preserved('OWNER_EXITED_NO_REPLAY', ref)
+
+    def test_owner_exit_during_read_is_preserved(self):
+        ref = self.owner(); self.driver.tick()
+        self.process = unittest.mock.Mock(side_effect=[dict(self.row), identity.ProcessExited('gone')])
+        self.assert_owner_fault_preserved('OWNER_EXITED_NO_REPLAY', ref)
+
+    def test_unreadable_identity_is_not_reported_as_process_exit(self):
+        ref = self.owner(); self.driver.tick()
+        self.process = unittest.mock.Mock(side_effect=identity.IdentityError('inaccessible'))
+        self.assert_owner_fault_preserved('OWNER_IDENTITY_UNAVAILABLE_NO_REPLAY', ref)
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'real Darwin kernel reader')
+    def test_reaped_native_process_produces_original_driver_halt(self):
+        child = subprocess.Popen([sys.executable, '-c', 'pass'])
+        child.wait(timeout=10)
+        self.row['pid'] = child.pid
+        ref = self.owner()
+        self.process = identity.process
+        self.assert_owner_fault_preserved('OWNER_EXITED_NO_REPLAY', ref)
 
     def test_foreign_attachment_cannot_count_as_bootstrapped(self):
         self.owner(); self.adopted()

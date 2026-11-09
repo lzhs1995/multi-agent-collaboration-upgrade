@@ -135,7 +135,16 @@ class TaskOwner:
         require(rows['codex-server-result.json']['status'] == 'SOCKET_CREATED',
                 'TASK_OWNER_ORIGINAL_SERVER_FAILED')
         server = rows['codex-server.json']; origin = rows['codex-origin.json']
-        live = self.process(server['pid']); tui = self.process(origin['pid'])
+        live = self.process(server['pid'])
+        import cmux_daemon_identity as identity
+        try:
+            tui = self.process(origin['pid'])
+        except identity.ProcessExited:
+            require(False, 'TASK_OWNER_ORIGINAL_TUI_EXITED_NO_REPLAY')
+        except identity.IdentityError:
+            # exec can temporarily make argv unreadable. Retain the original
+            # process and deadline; no connection or replacement is authorized.
+            return dict(status='WAITING_ORIGINAL_TUI_IDENTITY', input_operations=0)
         require(live['birth'] == server['birth'] and live['argv'] == self.spec['rpc']['argv']
                 and live['executable'] == self.spec['pins']['codex']['path'],
                 'TASK_OWNER_ORIGINAL_SERVER_CHANGED')
@@ -143,6 +152,19 @@ class TaskOwner:
             return dict(status='WAITING_ORIGINAL_TUI_EXEC', input_operations=0)
         require(tui['birth'] == origin['birth'] and tui['executable'] == self.spec['pins']['codex']['path'],
                 'TASK_OWNER_ORIGINAL_TUI_CHANGED')
+        require(tui['env'].get('CODEX_HOME') == self.spec['clients']['codex']['native_root']
+                and tui['argv'].count('--remote') == 1
+                and tui['argv'][tui['argv'].index('--remote')+1] == 'unix://'+self.spec['rpc']['path'],
+                'TASK_OWNER_ORIGINAL_TUI_ENDPOINT_CHANGED')
+        from upgrade_task_tui import observe_origin_ready
+        ready = observe_origin_ready(self.spec['clients']['codex']['native_root'], origin.get('log_fence'), tui)
+        if ready is None:
+            return dict(status='WAITING_ORIGINAL_TUI_INITIALIZATION', input_operations=0)
+        require(self.process(server['pid']) == live and self.process(origin['pid']) == tui,
+                'TASK_OWNER_ORIGIN_CHANGED_DURING_WAIT')
+        write_json(self.root/'origin-ready.json', dict(startup=self.runtime['startup'],
+            origin=file_ref(startup/'codex-origin.json'), observation=ready,
+            foreground_authentication=False, input_operations=0), exclusive=True)
         pinned = server_pin(live, uid=os.geteuid())
         write_json(self.root/'connection-intent.json', dict(owner=self.owner, server=pinned,
             socket=self.spec['rpc']['path'], reconnect_allowed=False), exclusive=True)

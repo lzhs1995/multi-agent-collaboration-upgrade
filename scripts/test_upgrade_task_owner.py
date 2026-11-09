@@ -44,6 +44,60 @@ class ServerStartupTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, 'ORIGINAL_STARTUP_CHANGED'):
             self.owner._connect()
 
+    def test_running_tui_waits_for_fresh_initialization_before_rpc(self):
+        from upgrade_task_tui import origin_log_fence
+        from test_upgrade_task_tui import log_record
+        startup = self.root/'startup'
+        self.result()
+        row = dict(pid=123, birth=[11, 22], executable='/fixture/codex',
+                   argv=['/fixture/codex', 'app-server'])
+        tui = dict(row, argv=['/fixture/codex','--remote','unix://'+str(self.root/'c.sock')],
+                   env={'CODEX_HOME':str(self.root/'native')})
+        self.owner.spec = dict(rpc={'argv':row['argv'], 'path':str(self.root/'c.sock')},
+            pins={'codex':{'path':'/fixture/codex'}},
+            clients={'codex':{'native_root':str(self.root/'native')}}, controller='/fixture')
+        (self.root/'native/log').mkdir(parents=True)
+        fence = origin_log_fence(self.root/'native')
+        for name in ('release.json', 'codex-server.json', 'codex-origin.json'):
+            write_json(startup/name, dict(startup=self.owner.runtime['startup'],
+                pid=124 if name == 'codex-origin.json' else 123, birth=[11,22], log_fence=fence))
+        tui['pid'] = 124
+        self.owner.process = lambda pid: dict(tui if pid == 124 else row)
+        self.owner.root = self.root/'owner'; self.owner.root.mkdir()
+        self.owner.runtime_ref = {'runtime':'fixture'}
+        self.owner.owner = {'owner':'fixture'}
+        self.owner.observer = object()
+        with patch('upgrade_controller_rpc.rpc_type') as rpc, \
+             patch('upgrade_rpc_peer.server_pin', return_value={'server':'fixture'}), \
+             patch('upgrade_task_rpc.task_rpc_type') as factory, \
+             patch('upgrade_task_lifecycle.TaskLifecycle'):
+            process = self.owner.process
+            import cmux_daemon_identity as identity
+            def inaccessible(pid):
+                if pid == 124:
+                    raise identity.IdentityError('process arguments inaccessible')
+                return process(pid)
+            self.owner.process = inaccessible
+            self.assertEqual(self.owner._connect()['status'], 'WAITING_ORIGINAL_TUI_IDENTITY')
+            rpc.assert_not_called(); factory.assert_not_called()
+            self.owner.process = process
+            self.assertEqual(self.owner._connect()['status'], 'WAITING_ORIGINAL_TUI_INITIALIZATION')
+            rpc.assert_not_called(); factory.assert_not_called()
+            self.assertFalse((self.owner.root/'connection-intent.json').exists())
+            tui['argv'][-1] = 'unix:///wrong/socket'
+            with self.assertRaisesRegex(ContractError, 'TUI_ENDPOINT_CHANGED'):
+                self.owner._connect()
+            rpc.assert_not_called(); factory.assert_not_called()
+            tui['argv'][-1] = 'unix://'+str(self.root/'c.sock')
+            tui['env']['CODEX_HOME'] = '/wrong/native'
+            with self.assertRaisesRegex(ContractError, 'TUI_ENDPOINT_CHANGED'):
+                self.owner._connect()
+            tui['env']['CODEX_HOME'] = str(self.root/'native')
+            log_record(self.root/'native/log/logs_2.sqlite', pid=124)
+            self.assertEqual(self.owner._connect()['status'], 'ORIGINAL_CONNECTION_RETAINED')
+            factory.assert_called_once()
+            self.assertTrue((self.owner.root/'origin-ready.json').exists())
+
 
 class OwnerFlowTests(unittest.TestCase):
     def setUp(self):

@@ -5,7 +5,7 @@ business adapter dependency closures. These functions never start an owner.
 """
 from pathlib import Path
 
-from orchestration_common import file_ref, json_ref, require
+from orchestration_common import ContractError, file_ref, json_ref, require
 from upgrade_task_observer_protocol import PROCESS_FIELDS
 
 
@@ -26,6 +26,27 @@ def original_server_result(runtime):
     require(result.get('status') == 'SOCKET_CREATED',
             'TASK_OWNER_ORIGINAL_SERVER_FAILED')
     return result
+
+
+def _owner_process(process, pid):
+    """Preserve a lost or unreadable original owner as a driver fault.
+
+    Only the kernel reader's explicit ProcessExited proves absence. Other
+    identity failures remain unknown; neither outcome permits a new owner.
+    """
+    import cmux_daemon_identity as identity
+    try:
+        return process(pid)
+    except identity.ProcessExited as exc:
+        raise ContractError('TASK_DRIVER_OWNER_EXITED_NO_REPLAY') from exc
+    except identity.IdentityError as exc:
+        raise ContractError('TASK_DRIVER_OWNER_IDENTITY_UNAVAILABLE_NO_REPLAY') from exc
+
+
+def _require_owner_open(root):
+    for directory in (root/'task-owner', root/'task-lifecycle'):
+        require(not any((directory/name).exists() for name in ('closed.json', 'unknown.json')),
+                'TASK_DRIVER_OWNER_CLOSED_NO_REPLAY')
 
 
 def observe_owner(runtime_ref, runtime, spec, campaign_path, *, driver_ref, original=None, process=None):
@@ -53,15 +74,14 @@ def observe_owner(runtime_ref, runtime, spec, campaign_path, *, driver_ref, orig
             and owner.get('reconnect_allowed') is False
             and owner.get('model_operations_by_operator') == 0,
             'TASK_DRIVER_OWNER_SCOPE_CHANGED')
+    _require_owner_open(root)
     if process is None:
         import cmux_daemon_identity as identity
         process = identity.process
-    row = process(owner['process']['pid'])
+    row = _owner_process(process, owner['process']['pid'])
     require({k:row[k] for k in PROCESS_FIELDS} == owner['process'],
             'TASK_DRIVER_OWNER_PROCESS_CHANGED')
-    for directory in (root/'task-owner', root/'task-lifecycle'):
-        require(not any((directory/name).exists() for name in ('closed.json', 'unknown.json')),
-                'TASK_DRIVER_OWNER_CLOSED_NO_REPLAY')
+    _require_owner_open(root)
     lifecycle_path = root/'task-lifecycle/owner.json'
     attachment_path = root/'task-lifecycle/campaign-result.json'
     result = dict(status='WAITING_ORIGINAL_TASK_ADOPTION', owner=owner_ref,
@@ -101,10 +121,11 @@ def observe_owner(runtime_ref, runtime, spec, campaign_path, *, driver_ref, orig
             result.update(status='TASK_CAMPAIGN_ATTACHED', campaign_attachment=attachment_ref)
     else:
         require(not attachment_path.exists(), 'TASK_DRIVER_LIFECYCLE_OWNER_MISSING')
-    again = process(row['pid'])
+    again = _owner_process(process, row['pid'])
     require(file_ref(path) == owner_ref
             and {k:again[k] for k in PROCESS_FIELDS} == owner['process'],
             'TASK_DRIVER_OWNER_CHANGED_DURING_READ')
+    _require_owner_open(root)
     return result
 
 
