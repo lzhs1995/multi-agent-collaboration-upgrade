@@ -114,14 +114,15 @@ def wait_original_server(ref, spec, binding, *, timeout=120):
         require(not os.path.lexists(spec['stop_path']), 'EXPERIMENT_STOP_REQUESTED')
         require(time.monotonic() < deadline, 'TASK_SERVER_WAIT_TIMEOUT_NO_REPLAY')
         if result_path.is_file():
-            records = (file_ref(result_path), file_ref(startup/'codex-server.json'))
-            if original_records is None:
-                original_records = records
-            require(records == original_records, 'TASK_SERVER_ORIGINAL_RECORD_CHANGED')
-            result = json_ref(original_records[0])
+            result_ref = file_ref(result_path)
+            result = json_ref(result_ref)
             require(result.get('schema') == 'upgrade-server-result-v2' and result.get('startup') == ref,
                     'TASK_SERVER_ORIGINAL_STARTUP_CHANGED')
             require(result.get('status') == 'SOCKET_CREATED', 'TASK_SERVER_ORIGINAL_START_FAILED')
+            records = (result_ref, file_ref(startup/'codex-server.json'))
+            if original_records is None:
+                original_records = records
+            require(records == original_records, 'TASK_SERVER_ORIGINAL_RECORD_CHANGED')
             launched = json_ref(original_records[1])
             try:
                 live = identity.process(launched['pid'])
