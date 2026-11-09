@@ -5,11 +5,13 @@ import os
 import socket
 import struct
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from orchestration_common import ContractError
 from upgrade_task_rpc import task_rpc_type
+import upgrade_task_rpc as rpc
 
 
 class DaemonRPC:
@@ -81,12 +83,25 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(len(self.records),1)
 
     def test_complete_control_does_not_start_deadline_for_later_data(self):
-        import threading
         message={'method':'fixture/after-idle'}
         self.peer.sendall(frame(b'',10))
-        timer=threading.Timer(0.06,lambda:self.peer.sendall(frame(json.dumps(message).encode())))
-        timer.start();self.addCleanup(timer.join)
-        got=self.client.poll_recorded(timeout=0.2,frame_timeout=0.03)
+        # Advance the parser clock between real socket frames. A thread timer
+        # can miss the idle window on a loaded runner without testing the parser.
+        clock_value=[time.monotonic()]
+        clock=SimpleNamespace(monotonic=lambda:clock_value[0])
+        original_select=rpc.select.select
+        waits=[]
+        def after_control(readers,writers,errors,timeout):
+            waits.append(timeout)
+            if len(waits)==2:
+                clock_value[0]+=0.06
+                self.peer.sendall(frame(json.dumps(message).encode()))
+            return original_select(readers,writers,errors,0)
+        with patch.object(rpc,'time',clock), patch(__name__+'.time',clock), \
+                patch.object(rpc,'select',SimpleNamespace(select=after_control)):
+            got=self.client.poll_recorded(timeout=0.2,frame_timeout=0.03)
+        self.assertEqual(len(waits),2)
+        self.assertIsNotNone(got)
         self.assertEqual(got[0],message)
 
     def test_incomplete_data_fragments_and_partial_frames_never_become_idle(self):

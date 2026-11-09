@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import cmux_daemon_identity as identity
+from cmux_daemon_identity import process as native_process
 from orchestration_common import file_ref, json_ref, write_json
 import test_upgrade_driver as legacy
 import upgrade_driver as driver
@@ -180,7 +181,9 @@ class TaskDriverTests(unittest.TestCase):
         child.wait(timeout=10)
         self.row['pid'] = child.pid
         ref = self.owner()
-        self.process = identity.process
+        # Keep the real reader captured before OfflineResult installs its
+        # per-test invoking-client fixture. Only this owned, reaped PID is read.
+        self.process = native_process
         self.assert_owner_fault_preserved('OWNER_EXITED_NO_REPLAY', ref)
 
     def test_foreign_attachment_cannot_count_as_bootstrapped(self):
