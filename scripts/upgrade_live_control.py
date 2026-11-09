@@ -90,6 +90,8 @@ def bootstrap_task_thread(runtime_ref, client):
             and tui["executable"] == spec["pins"]["codex"]["path"], "TASK_BOOTSTRAP_OFFICIAL_TUI_REQUIRED")
     verify_peer(client.sock, client.server, client.process)
     control = Path(spec["adoption_path"]).parent
+    from upgrade_task_hook_preflight import preflight
+    preflight(client, spec, control / "task-hook-preflight")
     result = bootstrap_task(client, spec["task_startup"], control / "task-startup")
     require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
     attach = write_json(control / "task-attach.json", dict(schema="upgrade-task-attach-v1",

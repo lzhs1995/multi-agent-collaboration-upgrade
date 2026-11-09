@@ -269,16 +269,27 @@ def readiness_prompt(controller, python, rtk, lane):
             "正式任务须等待独立 adoption 核验。保留本会话，不得新建替代会话。")
 
 
-def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False, station=False):
+def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False,
+                       station=False, task_model_network=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(station) is bool, "STARTUP_STATION_LAUNCHERS_CHANGED")
+    require(type(task_model_network) is bool, "STARTUP_TASK_NETWORK_ENV_CHANGED")
     result = environment(roots, paths, lane, station=station)
     # Frozen native binaries do not use PATH resolution. Tools still need a
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
     result["PATH"] = os.pathsep.join(dict.fromkeys(map(str, (
         paths["bin"], Path(rtk).parent, "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"))))
     if lane != "codex":
+        if task_model_network:
+            # This topology deliberately forbids the raw cmux socket. Use the
+            # wrapper's documented integration opt-out: it preserves cmux's
+            # real endpoint environment and forwards the private --settings
+            # hooks unchanged. Otherwise its failed ping takes the detached-
+            # shell path and deletes CMUX_* before exec. Registered skill hooks
+            # and the task observer/callback channels remain enabled; the
+            # native wrapper's cmux UI integration is not claimed as active.
+            result["CMUX_CLAUDE_HOOKS_DISABLED"] = "1"
         result["PATH"] = str(paths["bin"] / "claude-tools") + os.pathsep + result["PATH"]
         if child_budget:
             # This first opt-in protocol binds foreground non-fork native
@@ -336,6 +347,10 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     startup_continuity_enabled(binding)
     child_budget = child_budget_enabled(binding)
     station = station_launchers_enabled(binding)
+    hook_review = binding.get('codex_hook_review')
+    require(hook_review is None or (task_mode and
+            hook_review == 'official-reviewed-hooks-before-freeze-v1'),
+            'STARTUP_HOOK_REVIEW_POLICY_CHANGED')
     if task_mode:
         from upgrade_task_startup import plan_value
         plan = plan_value(spec["task_startup"])
@@ -423,6 +438,9 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if hook_review is not None:
+        required.add('codex_hook_review')
+        local['codex_hook_review'] = paths['config'] / 'codex-hook-review.json'
     if task_mode:
         required |= {"task_startup", "codex_server_sandbox"}
         local.update(task_startup=paths["config"] / "task-startup.json",
@@ -507,6 +525,16 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                          if (stage_controller is None or k not in lane_hooks) and k not in recovered)
         # A recovered file is verified as exactly as the pin it supersedes.
         verify_artifacts(recovered.values())
+    if hook_review is not None:
+        proof = json_ref(pins['codex_hook_review'])
+        require(proof.get('schema') == hook_review
+                and proof.get('configuration') == pins['codex/hooks.json']
+                and all(proof.get('config_final', {}).get(k) == pins['codex/config.toml'][k]
+                        for k in ('path', 'bytes', 'sha256'))
+                and proof.get('metadata_processes') == 1 and proof.get('thread_starts') == 0
+                and proof.get('model_turns') == 0 and proof.get('automatic_execution_proven') is False
+                and config.get('hooks') == {'state': proof.get('states')},
+                'STARTUP_HOOK_REVIEW_RECEIPT_CHANGED')
     require(pins["claude_ps"]["mode"] == 0o555
             and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
             "STARTUP_CLAUDE_PS_CHANGED")
@@ -580,6 +608,8 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                            session_id=client["session_id"], remote_socket=socket if provider == "codex" else None,
                            socket_boundary=boundary if provider == "codex" else None,
                            station=station_client(station, lane, pins["python"]["path"], mg))
+        if hook_review is not None and lane == 'codex':
+            argv.remove('--dangerously-bypass-hook-trust')
         if not (task_mode and lane == "codex"):
             argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
                         if goal_mode else
@@ -587,6 +617,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"],
                                    response_observation=response_observation, child_budget=child_budget,
-                                   station=station is not None),
+                                   station=station is not None,
+                                   task_model_network="task_model_network" in binding),
                 "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding

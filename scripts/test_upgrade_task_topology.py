@@ -62,7 +62,8 @@ class TaskTopologyTests(unittest.TestCase):
             task_observer_network=getattr(cls,"observer_network",False),
             task_mach_boundary=getattr(cls,"mach_boundary",False),
             task_native_descriptors=getattr(cls,"native_descriptors",False),
-            task_runtime_policy=getattr(cls,"runtime_policy",False))
+            task_runtime_policy=getattr(cls,"runtime_policy",False),
+            review_codex_hooks=getattr(cls,"review_hooks",False))
         cls.runtime=json_ref(cls.runtime_ref)
         cls.spec,cls.binding=validate_startup(cls.runtime["startup"])
 
@@ -84,7 +85,10 @@ class TaskTopologyTests(unittest.TestCase):
         from upgrade_task_readiness import READY_INSTRUCTION
         self.assertTrue(plan["startup_text"].endswith(READY_INSTRUCTION))
         self.assertNotIn(plan["startup_text"],self.spec["clients"]["codex"]["argv"])
-        self.assertEqual(self.spec["clients"]["codex"]["argv"][-1],"--dangerously-bypass-hook-trust")
+        if getattr(self,"review_hooks",False):
+            self.assertNotIn('--dangerously-bypass-hook-trust',self.spec['clients']['codex']['argv'])
+        else:
+            self.assertEqual(self.spec["clients"]["codex"]["argv"][-1],"--dangerously-bypass-hook-trust")
         self.assertIn("/goal",self.spec["clients"]["claude_a"]["argv"][-1])
         server=Path(self.spec["pins"]["codex_server_sandbox"]["path"]).read_text()
         tui=Path(self.spec["pins"]["codex_sandbox"]["path"]).read_text()
@@ -115,6 +119,28 @@ class TaskTopologyTests(unittest.TestCase):
             invoke.assert_not_called()
         self.assertFalse((Path(self.spec["adoption_path"]).parent/"launch-request.json").exists())
         self.assertFalse((Path(self.spec["adoption_path"]).parent/"held-request.json").exists())
+
+
+class HookReviewTaskTopologyTests(TaskTopologyTests):
+    """Official offline metadata process only; no native model input."""
+    review_hooks=True
+
+    def test_review_precedes_frozen_config_and_keeps_models_unstarted(self):
+        proof=json_ref(self.spec['pins']['codex_hook_review'])
+        self.assertEqual(proof['schema'],self.binding['codex_hook_review'])
+        self.assertTrue(proof['inventory']['ready'])
+        self.assertFalse(proof['automatic_execution_proven'])
+        self.assertEqual(proof['model_turns'],0)
+        self.assertEqual(proof['thread_starts'],0)
+        self.assertEqual(proof['config_final']['sha256'],
+                         self.spec['pins']['codex/config.toml']['sha256'])
+        exit_record=json.loads((Path(proof['evidence_root'])/'exit.json').read_text())
+        self.assertEqual(exit_record,dict(returncode=0,forced_stop=False))
+        hooks=Path(self.spec['pins']['codex/hooks.json']['path'])
+        self.assertEqual(set(proof['states']),{
+            f'{hooks}:{event}:{i}:0' for event,key in (
+                ('pre_tool_use','PreToolUse'),('post_tool_use','PostToolUse'),('stop','Stop'))
+            for i,_ in enumerate(json.loads(hooks.read_text())['hooks'].get(key,[]))})
 
 
 class SlotTaskTopologyTests(TaskTopologyTests):

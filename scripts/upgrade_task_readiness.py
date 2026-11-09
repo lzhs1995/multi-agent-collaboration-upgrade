@@ -31,6 +31,29 @@ def readiness_text(instructions):
     return instructions + "\n\n" + READY_INSTRUCTION
 
 
+def readiness_base_instructions(business_instructions):
+    """Scope the campaign instruction after the first readiness-only turn.
+
+    The initial operation catalog exposes only ``ready``. Searching for more
+    tools cannot unlock business operations and breaks the original single-call
+    evidence contract. Preserve the registered campaign instructions for the
+    later inputs issued by the same lifecycle owner.
+    """
+    return (
+        "This task has separate startup and business phases. In your INITIAL "
+        "TURN, perform only the exact readiness code-mode call supplied in the "
+        "startup input. Read its result and answer only with its receipt_nonce. "
+        "Do not enumerate tools, list resources, inspect files, call another "
+        "tool, or begin campaign work in that turn. The absence of business "
+        "operations is intentional; they become available only after the "
+        "controller verifies readiness. End the initial turn after returning "
+        "the nonce and wait for a subsequent controller input. Do not repeat "
+        "ready in later turns. The following registered business instructions "
+        "apply when subsequent controller inputs start the business phase:\n\n"
+        + business_instructions
+    )
+
+
 def _contains_nonce(value, nonce):
     if isinstance(value, str):
         return nonce in value
