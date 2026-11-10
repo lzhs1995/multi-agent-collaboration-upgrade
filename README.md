@@ -60,7 +60,7 @@ These are reusable workflow choices, not four runtime modes implemented by the c
 
 1. **Traceable handoffs.** Include task/session identity, objective, exact source/result hashes, write scope, next action and acceptance criteria. Receipt, full-body reading and result acceptance are separate events.
 2. **Visible progress.** During an active, authorized collaboration episode, update progress at least once per minute and notify the coordinator when work stops. A timer or stored status alone does not prove that an agent was awakened.
-3. **Two-way attention.** Use only the adapter's supported interruption or queue mechanism. Confirm that the complete message reached the original conversation; queueing does not prove consumption.
+3. **Two-way attention.** Use only the adapter's supported interruption or queue mechanism. Confirm the notice's unique marker in a fresh user message in the original conversation. For a file-reference notice, separately verify and read the complete body; queueing or notice receipt does not prove body consumption.
 4. **Bounded review.** Run one scoped review, then revisit only reported issues, within at most three rounds. Preserve the original round budget across retries and recovery.
 5. **Recover without replay.** Record intent before a side effect. If the outcome is unknown, read back the original attempt; do not resend, reset the session or repeat the action merely to obtain a clearer result.
 
