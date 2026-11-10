@@ -1,83 +1,96 @@
-# Multi-Agent Collaboration
+<p align="center"><img src="assets/logo.svg" width="176" alt="Multi-Agent Collaboration Upgrade logo"></p>
 
-Evidence-bound collaboration for Codex and Claude Code in macOS cmux.
-中文：复用完整上下文会话，明确分工，以真实报告和主动 callback 完成协作；
-压缩故障及时干预，不以重开会话、假 ACK 或反复轮询代替恢复。
+# Multi-Agent Collaboration Upgrade
 
-Current source: **0.4.7**. New messages use bounded single-line notices for pinned
-bodies; formal packs and callbacks retain their dedicated task-bound routes.
-Enter or Tab only requests submission. Reception requires the complete exact
-payload in a new record of the bound receiver's native journal. See the
-[delivery contract](references/verified-compose-delivery.md).
+[繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md)
 
-## Install
+Reusable collaboration rules and an experimental dependency planner for terminal-based agents. The goal is to combine **cmux for coordination across terminals and workspaces** with **Herdr for teamwork inside a terminal**, while keeping existing sessions, traceable handoffs and clear ownership.
 
-Requirements: Python 3.10+, macOS, cmux, and existing CLI agent sessions.
-No provider credentials or agent subscriptions are included.
+**Start with the offline planner.** This default branch contains the historical planner and inherited Claude Code/Codex transport contract. The nested architecture below is a target workflow, not a claim that this branch already implements it. Formal experimental acceptance remains **0/33 business runs and 0/15 paired comparisons**; native collaboration speedup has not been demonstrated.
+
+## Try the offline planner
+
+Requires Python 3.10+ and a shell. No account, API key, running agent, cmux or Herdr is needed for this example.
 
 ```sh
-git clone https://github.com/lzhs1995/multi-agent-collaboration.git
-cd multi-agent-collaboration
-git checkout main
-python3 scripts/manage_install.py install
-python3 scripts/manage_install.py install --apply
-python3 scripts/manage_install.py doctor
+git clone https://github.com/lzhs1995/multi-agent-collaboration-upgrade.git
+cd multi-agent-collaboration-upgrade
+python3 -B scripts/orchestration_planner.py validate --plan tests/fixtures/orchestration-plan.json
+python3 -B scripts/orchestration_planner.py schedule --plan tests/fixtures/orchestration-plan.json
+python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orchestration-plan.json
 ```
 
-Install defaults to dry-run. It links this checkout into both clients' skill
-directories and merges only this project's hooks. Existing foreign skill
-directories are refused, never overwritten. Keep the checkout at its installed
-path. Complete active work before installation or upgrading; restart/reload client
-configuration only at a user-approved boundary, never replace an agent session.
+These three commands were run successfully on the unchanged default-branch planner on 2026-11-10:
 
-```sh
-python3 scripts/manage_install.py uninstall --apply
-```
+| Command | Actual output | Meaning |
+|---|---|---|
+| `validate` | `PASS`, 7 nodes | The example satisfies the graph contract. |
+| `schedule` | `PASS`, 5 waves; 2 parallel waves | Dependencies and executor/write-scope limits determine the schedule. |
+| `benchmark` | `offline_schedule_estimate`; 790 → 600 seconds, 24.051% reduction, 1.317× | Arithmetic from the fixture's assigned durations; **not measured agent execution time**. |
 
-Uninstall removes only entries and links owned by this checkout. JSON backups
-remain beside the original configs and may contain credentials: keep them private.
-Other settings and hooks survive. Use `--home /absolute/sandbox` to test installation
-without touching real client configuration.
+The planner does not dispatch these tasks, call models, install hooks or launch sessions. The example's session labels and input paths are fixture data, not live identity evidence. Reading this repository does not require running the inherited MAC installer.
 
-## Use
+## Target architecture: outward coordination, inward teamwork
 
-Ask the supervisor to use `$multi-agent-collaboration`, then provide the objective
-and designated existing executor. Both agents must read SKILL.md. The harness
-binds their identity and task; scripts do not log in or start a replacement agent.
+![Target architecture: cmux workspaces contain Herdr chapter teams; chapter supervisors coordinate with a senior supervisor.](assets/architecture.svg)
 
-```sh
-python3 scripts/mac_harness.py --help
-python3 scripts/mac_harness.py preflight --task-id example-review \
-  --artifact-root /absolute/path/to/example-review --executor-surface surface:7 --executor claude
-```
+For a dissertation with four core chapters, each chapter has a cmux workspace containing one Herdr session. A chapter supervisor assigns bounded work to executors and receives their results. The four chapter supervisors coordinate across workspaces with a senior supervisor, who reconciles definitions, methods, evidence and the complete manuscript.
 
-Replace the example surface with a freshly verified binding. Do not paste task
-prompts manually: use the finalized task-pack and callback entrypoints described
-in [SKILL.md](SKILL.md). Public defaults preserve the current model and refuse
-unknown compose text. Machine-specific preferences belong in local task settings.
+| Layer | Responsibility | Status in this repository |
+|---|---|---|
+| Herdr inside a terminal | Chapter-team roles, local handoffs, progress, review and recovery | Target workflow; no Herdr native adapter is certified here. |
+| cmux across terminals/workspaces | Address the right supervisor, preserve identity and route cross-team handoffs | Target outer layer; this branch's inherited live contract is narrower and requires the same workspace. |
+| Shared collaboration rules | Scope, one writer per scope, receipts, result consumption and bounded review | Readable and manually reusable; automatic enforcement depends on the actual adapter. |
+| Research workflow | Source fidelity, scientific limits, chapter acceptance and manuscript integration | Owned by the existing thesis-refiner skill, not by a terminal runtime. |
 
-## Verification And Boundaries
+cmux and Herdr provide runtime capabilities; the rules determine how a team uses them. Keep **pure-cmux collaboration** and the existing [`multi-agent-collaboration`](https://github.com/lzhs1995/multi-agent-collaboration) and **论文精炼助手 / thesis-refiner** skills. An inward Herdr rules module can reuse the shared contract and delegate cross-workspace coordination to the outer module. It does not require deleting or silently replacing either skill.
 
-```sh
-python3 scripts/test_all.py
-```
+## Four cooperation modes
 
-Tests use isolated files and mocked agent surfaces, without sending live prompts.
-Offline coverage is not certification of every cmux/client version. `doctor`
-proves configured hooks can execute benign payloads; a real task still needs the
-current-session handshake and current-task guards. Linux is an offline-test target,
-not a live UI transport. There is no Windows/tmux or ACP adapter in this release.
+| Mode | Working pattern |
+|---|---|
+| Peer collaboration | Equal participants propose, compare and cross-review results; name an integrator before writing shared output. |
+| Moderated dispatch | A coordinator assigns bounded tasks and consolidates the answers. |
+| Delegated specialization | A senior supervisor decomposes the specification; specialist teams own separate deliverables. |
+| Closed-loop iteration | Work follows an ordered implementation → review → revision loop with a stop condition. |
 
-See [lessons](references/lessons.md), [security](SECURITY.md), and
-[version history](CHANGELOG.md). MIT; cmux, Codex and Claude remain separate products.
+These are reusable workflow choices, not four runtime modes implemented by the current planner.
 
-## Isolated orchestration upgrade
+## Five collaboration rules
 
-This public upgrade branch adds an experimental, CLI-owned graph adapter in
-[`scripts/orchestration_planner.py`](scripts/orchestration_planner.py). Claude
-Code or Codex can author a dependency graph; the adapter validates it, schedules
-bounded ready waves, and emits task-pack seeds for the existing
-`mac_harness.py`/`cmux_bridge` lifecycle. It never starts a replacement session
-or calls a third-party model API. See [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)
-and [`RESEARCH-FINDINGS.md`](RESEARCH-FINDINGS.md) for the evidence review and
-the limits of the offline benchmark.
+1. **Traceable handoffs.** Include task/session identity, objective, exact source/result hashes, write scope, next action and acceptance criteria. Receipt, full-body reading and result acceptance are separate events.
+2. **Visible progress.** During an active, authorized collaboration episode, update progress at least once per minute and notify the coordinator when work stops. A timer or stored status alone does not prove that an agent was awakened.
+3. **Two-way attention.** Use only the adapter's supported interruption or queue mechanism. Confirm that the complete message reached the original conversation; queueing does not prove consumption.
+4. **Bounded review.** Run one scoped review, then revisit only reported issues, within at most three rounds. Preserve the original round budget across retries and recovery.
+5. **Recover without replay.** Record intent before a side effect. If the outcome is unknown, read back the original attempt; do not resend, reset the session or repeat the action merely to obtain a clearer result.
+
+## Agent and platform capabilities
+
+Any agent that can read files can use these instructions. With a shell and Python it can run the deterministic offline planner. That does **not** make its native CLI a supported execution target.
+
+| Client | Documentation entry | Offline planning | Native transport and end-to-end status |
+|---|---|---|---|
+| Codex CLI | [AGENTS.md](AGENTS.md) | Available with Python/shell | `codex_cli` exists in the inherited schema; live session, delivery and callback evidence are still required. |
+| Claude Code | [CLAUDE.md](CLAUDE.md) → AGENTS | Available with Python/shell | `claude_code_cli` exists in the inherited schema; live session, delivery and callback evidence are still required. |
+| Gemini CLI | [GEMINI.md](GEMINI.md) → AGENTS; read manually if imports are unavailable | Available with Python/shell | No Gemini native transport in this branch; **not verified**. |
+| OpenCode and other agents | Read [AGENTS.md](AGENTS.md) and the [quickstart](docs/agent-quickstart.md) explicitly | Available with Python/shell | No OpenCode native transport in this branch; **not verified**. |
+
+Automatic instruction discovery is client/version dependent and has not been tested across all clients. The schema accepts only Claude/Codex native transport labels; do not rename an unsupported client to pass validation. The historical live runtime requires macOS and cmux. Linux is an offline-test target; Windows, tmux and ACP interoperability are not certified by this release. The [ACP inventory](policies/acp-capability-matrix.json) is dated capability observation, not an implemented adapter.
+
+## What has and has not been delivered
+
+Status snapshot: **2026-11-10**. Documentation changes do not promote experimental runtime code.
+
+| Scope | Evidence and boundary |
+|---|---|
+| Default-branch runtime baseline | Historical planner at [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a); the three offline commands above passed. |
+| Separate experimental candidate | [`fix/official-native-topology-20261105`, pinned `a264ce0`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/a264ce06e17b2facd4590e1d16d95cefbb745cbf); [four Ubuntu/macOS × Python 3.10/3.14 CI jobs passed](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42622913098). Those results belong to that candidate. |
+| Formal experimental acceptance | **0/33 business runs; 0/15 paired comparisons.** Preparation, CI and standalone diagnostics do not fill those slots. |
+| Native collaboration efficiency | **Not accepted.** The fixture's 24.051% estimate is not a live speedup; the paired experimental track is not a Herdr-versus-cmux comparison. |
+| Nested chapter teams and recovery | Cross-workspace supervisor coordination, real callbacks/body consumption, three availability states and full chapter-team integration still need end-to-end evidence. |
+
+For the historical planner, see [orchestration](docs/ORCHESTRATION.md), [offline validation](verification/ORCHESTRATION-VALIDATION.md) and the [inherited native SKILL contract](SKILL.md). Its `multi-agent-collaboration` name and legacy platform references are retained historical material, not instructions to overwrite installed skills. Use the current, authorized domain skill for actual research work.
+
+Public examples should contain portable paths and synthetic data. Keep credentials, private transcripts and account-specific configuration outside public commits; see [SECURITY.md](SECURITY.md). The [privacy scope](docs/publication-privacy.md) records the current fixture cleanup: older commits and other branch tips still retain historical private content. Whole-history sanitization remains open.
+
+MIT. cmux, Herdr, Codex, Claude Code, Gemini CLI and OpenCode are separate projects. This repository does not imply their endorsement or universal compatibility.

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">cmux outside, Herdr inside: target research collaboration architecture</title>
+  <desc id="desc">A senior supervisor coordinates four chapter workspaces through cmux. Each workspace hosts one Herdr session containing a supervisor and executors. Skills define shared rules and a research workflow. This is a target architecture, not evidence of a completed live run.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101c30"/><stop offset="1" stop-color="#192d47"/></linearGradient>
+  </defs>
+  <rect width="1280" height="720" rx="24" fill="url(#bg)"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="60" y="66" font-size="16" font-weight="700" letter-spacing="3" fill="#6fe5ca">MULTI-AGENT COLLABORATION UPGRADE</text>
+    <text x="60" y="126" font-size="43" font-weight="700" fill="#f5f8ff">One research team. Two coordination layers.</text>
+    <text x="60" y="164" font-size="21" fill="#bdcbe1">Codex + Claude Code · shared rules · traceable results</text>
+    <rect x="938" y="44" width="282" height="32" rx="16" fill="#293e59"/>
+    <text x="1079" y="66" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1" fill="#d7e4f7">TARGET ARCHITECTURE</text>
+    <rect x="456" y="214" width="368" height="66" rx="16" fill="#203b4b" stroke="#6fe5ca" stroke-width="2"/>
+    <text x="640" y="242" text-anchor="middle" font-size="20" font-weight="700" fill="#f5f8ff">Senior supervisor</text>
+    <text x="640" y="265" text-anchor="middle" font-size="15" fill="#a8ddcf">Whole-thesis integration</text>
+    <g stroke="#6fe5ca" stroke-width="2" fill="none"><path d="M640 280V316M195 348V316H1085V348M491 316V348M789 316V348"/></g>
+    <rect x="60" y="296" width="268" height="30" rx="15" fill="#101c30"/>
+    <text x="75" y="317" font-size="15" font-weight="700" fill="#6fe5ca">CMUX / across workspaces</text>
+    <g fill="#17263e" stroke="#59718f" stroke-width="1.5">
+      <rect x="60" y="348" width="270" height="240" rx="18"/>
+      <rect x="356" y="348" width="270" height="240" rx="18"/>
+      <rect x="654" y="348" width="270" height="240" rx="18"/>
+      <rect x="950" y="348" width="270" height="240" rx="18"/>
+    </g>
+    <g font-size="19" font-weight="700" fill="#f5f8ff">
+      <text x="80" y="383">Chapter 1</text><text x="376" y="383">Chapter 2</text><text x="674" y="383">Chapter 3</text><text x="970" y="383">Chapter 4</text>
+    </g>
+    <g font-size="14" fill="#b4a1f5">
+      <text x="80" y="411">HERDR / within one terminal</text><text x="376" y="411">HERDR / within one terminal</text><text x="674" y="411">HERDR / within one terminal</text><text x="970" y="411">HERDR / within one terminal</text>
+    </g>
+    <g fill="#244858">
+      <rect x="80" y="432" width="230" height="48" rx="8"/><rect x="376" y="432" width="230" height="48" rx="8"/><rect x="674" y="432" width="230" height="48" rx="8"/><rect x="970" y="432" width="230" height="48" rx="8"/>
+    </g>
+    <g fill="#f5f8ff" font-size="17" text-anchor="middle">
+      <text x="195" y="462">Chapter supervisor</text><text x="491" y="462">Chapter supervisor</text><text x="789" y="462">Chapter supervisor</text><text x="1085" y="462">Chapter supervisor</text>
+    </g>
+    <g stroke="#93a7c7" stroke-width="1.5" fill="none"><path d="M195 480V493H135V506M195 493H255V506M491 480V493H431V506M491 493H551V506M789 480V493H729V506M789 493H849V506M1085 480V493H1025V506M1085 493H1145V506"/></g>
+    <g fill="#343756">
+      <rect x="80" y="506" width="110" height="53" rx="8"/><rect x="200" y="506" width="110" height="53" rx="8"/>
+      <rect x="376" y="506" width="110" height="53" rx="8"/><rect x="496" y="506" width="110" height="53" rx="8"/>
+      <rect x="674" y="506" width="110" height="53" rx="8"/><rect x="794" y="506" width="110" height="53" rx="8"/>
+      <rect x="970" y="506" width="110" height="53" rx="8"/><rect x="1090" y="506" width="110" height="53" rx="8"/>
+    </g>
+    <g fill="#e3dcff" font-size="16" text-anchor="middle">
+      <text x="135" y="538">Executor</text><text x="255" y="538">Executor</text><text x="431" y="538">Executor</text><text x="551" y="538">Executor</text><text x="729" y="538">Executor</text><text x="849" y="538">Executor</text><text x="1025" y="538">Executor</text><text x="1145" y="538">Executor</text>
+    </g>
+    <path d="M60 624H1220" stroke="#415774"/>
+    <text x="60" y="661" font-size="19" font-weight="700" fill="#f5f8ff">Skills define the workflow.</text>
+    <text x="60" y="690" font-size="16" fill="#bdcbe1">Traceable handoffs · visible progress · bounded review · recoverable work</text>
+    <text x="1220" y="661" text-anchor="end" font-size="16" fill="#6fe5ca">Pure cmux remains supported as a workflow.</text>
+    <text x="1220" y="690" text-anchor="end" font-size="14" fill="#bdcbe1">Live nested collaboration acceptance: pending</text>
+  </g>
+</svg>
