@@ -1,7 +1,11 @@
-"""Freeze a new live-v2 candidate without starting a client or installing MAC."""
+"""Freeze a new live-v2 candidate without a model turn or MAC installation.
+
+Explicit hook review may run one offline metadata server before config freeze.
+"""
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -21,11 +25,11 @@ from upgrade_live_integrity import artifact_ref
 from upgrade_live_patch import PRIVATE_MODULES, private_imports, transform_live
 from upgrade_live_runtime import RELEASE_MANIFEST_SCHEMA, release_members
 from upgrade_materialize import hook_config, rendered_helper
-from upgrade_startup_contract import (GOAL_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, GOAL_LANES, MAX_INSTRUCTION_BYTES,
     RESPONSE_OBSERVATION, RESPONSE_OBSERVER_FILE, RESPONSE_OBSERVER_PIN, response_observer_path,
     CONTINUITY_REGISTRATION, CONTINUITY_CURRENT_PIN, STARTUP_CONTINUITY, PRE_EXEC_HOLD,
     bun_preload_option, client_environment, native_goal_condition, pressure_lane_document,
-    pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup)
+    pressure_startup_prompt, readiness_prompt, station_client, station_rpc, validate_startup, task_lane_document)
 from upgrade_socket_boundary import SOCKET_POLICY, boundary_plan, extend_profile
 from upgrade_body_read import reader_instructions
 from upgrade_child_budget_protocol import POLICY as CHILD_POLICY, registered_hooks, child_socket
@@ -41,7 +45,22 @@ SUPPORT = ("upgrade_controller_scope.py", "upgrade_handshake_identity.py", "upgr
            "upgrade_toml.py", "upgrade_toml_re.py",
            "upgrade_child_hook.py", "upgrade_child_budget_protocol.py",
            "upgrade_native_outcomes.py", "upgrade_startup_continuity.py", "upgrade_readiness_evidence.py",
-           "upgrade_stage_fence.py", "upgrade_codex_package.py")
+           "upgrade_stage_fence.py", "upgrade_codex_package.py",
+           "upgrade_rpc_peer.py", "upgrade_dynamic_route.py", "upgrade_task_rpc.py",
+           "upgrade_task_operations.py", "upgrade_task_creation.py", "upgrade_task_thread.py",
+           "upgrade_task_startup.py", "upgrade_task_actor.py", "upgrade_task_socket_policy.py", "upgrade_task_tui.py", "upgrade_task_roles.py",
+           "upgrade_task_readiness.py", "upgrade_task_hook_preflight.py", "upgrade_task_control.py", "upgrade_task_bindings.py", "upgrade_task_network.py",
+           "upgrade_task_descriptors.py", "upgrade_task_target.py", "upgrade_task_target_contract.py",
+           "upgrade_task_callback_client.py", "upgrade_task_callback_sender.py", "upgrade_task_callback_route.py",
+           "upgrade_task_callback_contract.py", "upgrade_task_bridge_context.py", "upgrade_task_sender.py",
+           "upgrade_task_busy_evidence.py",
+           "upgrade_task_message_wire.py", "upgrade_task_message_sender.py", "upgrade_task_message_contract.py", "upgrade_task_message_route.py",
+           "upgrade_task_streams.py",
+           "upgrade_task_observer_protocol.py", "upgrade_task_observer_client.py", "upgrade_task_observer_routes.py",
+           "upgrade_task_observer_budget.py",
+           "upgrade_task_observer_evidence.py", "upgrade_task_mach_policy.py", "upgrade_task_fd_contract.py",
+           "upgrade_task_adoption_evidence.py", "upgrade_task_runtime_policy.py", "upgrade_task_adoption.py",
+           "upgrade_cmux_inventory.py")
 
 
 def immutable_bytes(path, raw, *, executable=False, secret=False):
@@ -55,6 +74,18 @@ def render_private_support(support):
     buffers, changes = {}, []
     for name in SUPPORT:
         raw = read_regular(support / name)
+        transformations=["private_live_support", "distinct_module_namespace"]
+        if name=="upgrade_task_actor.py":
+            # The startup copy serves readiness only. Business input belongs to
+            # the retained external campaign service, whose exact production
+            # gate is deliberately not shipped in this private controller.
+            source=raw.decode()
+            begin=source.index('    def start_next_turn(self,plan_ref):\n')
+            end=source.index('    def _bindings(self):\n',begin)
+            source=source[:begin]+('    def start_next_turn(self,plan_ref):\n'
+                '        require(False,"TASK_SERVICE_EXTERNAL_CAMPAIGN_INPUT_REQUIRED")\n\n')+source[end:]
+            raw=source.encode()
+            transformations.append("private_readiness_service_no_campaign_input")
         if name in ("upgrade_live_entry.py", "upgrade_client_probe.py", "upgrade_bootstrap.py", "upgrade_claude_ps.py", "upgrade_body_read.py", "upgrade_child_hook.py"):
             raw = add_bootstrap(raw.decode()).replace("_upgrade_install_scope()",
                                                      "_upgrade_install_scope(live=True)").encode()
@@ -63,7 +94,7 @@ def render_private_support(support):
         compile(raw, private_name, "exec", dont_inherit=True)
         buffers["scripts/" + private_name] = (raw, False)
         changes.append({"path": "scripts/" + private_name, "source": file_ref(support / name),
-                        "transformations": ["private_live_support", "distinct_module_namespace"],
+                        "transformations": transformations,
                         "after": {"sha256": digest(raw), "bytes": len(raw)}})
     # Vendor notices travel with the private copy, under the same manifest.
     for name in ("licenses/TOMLI-LICENSE", "docs/VENDORED-TOMLI.md"):
@@ -82,17 +113,49 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                      continuity_registration=False, child_budget=False, startup_continuity=False,
                      station_launchers=None, pre_exec_hold=False, existing_workspace_uuid=None,
                      semantic_sender=False, existing_split_targets=None, existing_tab_targets=None,
-                     codex_package=None):
+                     codex_package=None, task_startup=None, task_model_network=False,
+                     task_callback_network=False, task_observer_network=False, task_message_network=False,
+                     task_mach_boundary=False, task_native_descriptors=False, task_runtime_policy=False,
+                     review_codex_hooks=False):
     """station_launchers: {"mg", "magpie": executables, "codex": {"station", "base_url"},
     "claude": {"station", "key"}} launches every lane and the Codex server through mg.
     pre_exec_hold: every lane waits before any native exec until an exact release."""
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
+    require(type(review_codex_hooks) is bool and (not review_codex_hooks or task_startup is not None),
+            "STARTUP_HOOK_REVIEW_REQUIRES_NEW_TASK")
+    require(type(task_model_network) is bool and (not task_model_network or task_startup is not None),
+            "STARTUP_TASK_NETWORK_REQUIRES_EXPLICIT_TASK")
+    require(type(task_callback_network) is bool and (not task_callback_network or task_model_network),
+            "STARTUP_TASK_CALLBACK_NETWORK_REQUIRES_MODEL_NETWORK")
+    require(type(task_observer_network) is bool and (not task_observer_network or task_callback_network),
+            "STARTUP_TASK_OBSERVER_NETWORK_REQUIRES_CALLBACK_NETWORK")
+    require(type(task_message_network) is bool and (not task_message_network or task_observer_network),
+            'STARTUP_TASK_MESSAGE_NETWORK_REQUIRES_OBSERVER_NETWORK')
+    require(type(task_mach_boundary) is bool and (not task_mach_boundary or task_observer_network),
+            "STARTUP_TASK_MACH_REQUIRES_OBSERVER_NETWORK")
+    require(type(task_native_descriptors) is bool and (not task_native_descriptors or task_mach_boundary),
+            "STARTUP_TASK_DESCRIPTORS_REQUIRE_MACH_BOUNDARY")
+    require(type(task_runtime_policy) is bool and (not task_runtime_policy or task_native_descriptors),
+            "STARTUP_TASK_RUNTIME_POLICY_REQUIRES_DESCRIPTORS")
     require(type(semantic_sender) is bool, "STARTUP_SEMANTIC_SENDER_CHANGED")
     require(type(pre_exec_hold) is bool, "STARTUP_PRE_EXEC_HOLD_CHANGED")
     require(type(continuity_registration) is bool, "STARTUP_CONTINUITY_REGISTRATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(startup_continuity) is bool and (not startup_continuity or continuity_registration),
             "STARTUP_FAILURE_REQUIRES_PRIVATE_CONTINUITY")
+    if task_startup is not None:
+        from upgrade_task_startup import TURN_FIELDS, validate_plan_operations
+        task_fields = {"task_id", "controller_id", "authority_ref", "startup_text", "base_instructions", "operations"}
+        require(isinstance(task_startup, dict) and set(task_startup) in (
+                task_fields, task_fields | TURN_FIELDS, task_fields | TURN_FIELDS | {"binding_slots"})
+                and pre_exec_hold and not startup_continuity and goal_startup is not None
+                and station_launchers is not None and codex_package is not None
+                and native_policy == SOCKET_POLICY, "STARTUP_TASK_EXPLICIT_TOPOLOGY_REQUIRED")
+        validate_plan_operations(task_startup)
+        require(task_startup["operations"].get("ready") == {"kind":"readiness","payload":{}},
+                "STARTUP_TASK_READY_OPERATION_REQUIRED")
+        require(all(isinstance(task_startup[k], str) and 0 < len(task_startup[k].encode()) <= MAX_INSTRUCTION_BYTES
+                    for k in ("startup_text", "base_instructions")), "STARTUP_TASK_INSTRUCTIONS_REQUIRED")
     require(existing_split_targets is None or existing_tab_targets is None,
             'ONE_EXISTING_TARGET_MODE_REQUIRED')
     for target_name, targets in (('split', existing_split_targets), ('tab', existing_tab_targets)):
@@ -173,16 +236,40 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                     and 0 < incoming["bytes"] <= MAX_INSTRUCTION_BYTES,
                     "STARTUP_INSTRUCTIONS_INVALID")
             raw = read_ref(incoming, "pressure lane instructions").decode("utf-8")
-            document = pressure_lane_document(controller, context["python"]["path"],
-                executable_pins["rtk"]["path"], lane, raw).encode()
+            document = (task_lane_document(raw) if task_startup is not None and lane == "codex" else
+                pressure_lane_document(controller, context["python"]["path"],
+                    executable_pins["rtk"]["path"], lane, raw)).encode()
             path = paths["config"] / (lane + "-instructions.md")
             instruction_buffers[lane] = document
             refs[lane] = dict(path=str(path), bytes=len(document), sha256=digest(document), mode=0o444)
             if lane in GOAL_LANES:
                 conditions[lane] = native_goal_condition(goal_startup[lane], path)
-        goal_contract = dict(schema=GOAL_SCHEMA, goal_startup=conditions, lane_instructions=refs)
+        goal_contract = dict(schema=TASK_SCHEMA if task_startup is not None else GOAL_SCHEMA,
+                             goal_startup=conditions, lane_instructions=refs)
     codex_original, claude_original = (read_provider_configuration()
         if provider_configuration is None else provider_configuration)
+    network = None
+    if task_model_network:
+        from upgrade_task_network import network_contract
+        network = network_contract(station,claude_original,
+            evidence_root=paths["evidence"] if task_callback_network else None, observer=task_observer_network,
+            messages=task_message_network)
+    task_plan_ref, task_plan_raw = None, None
+    if task_startup is not None:
+        from orchestration_common import canonical
+        from upgrade_task_startup import PLAN_SCHEMA, MULTI_PLAN_SCHEMA, BINDING_PLAN_SCHEMA, TURN_FIELDS
+        from upgrade_task_readiness import readiness_base_instructions, readiness_text
+        require(all(isinstance(codex_original.get(k), str) and codex_original[k]
+                    for k in ("model", "model_provider")), "STARTUP_TASK_MODEL_CONFIGURATION_REQUIRED")
+        plan = dict(task_startup)
+        plan["startup_text"] = readiness_text(plan["startup_text"])
+        plan["base_instructions"] = readiness_base_instructions(plan["base_instructions"])
+        schema = BINDING_PLAN_SCHEMA if "binding_slots" in plan else MULTI_PLAN_SCHEMA if TURN_FIELDS <= set(plan) else PLAN_SCHEMA
+        task_plan_raw = canonical(dict(schema=schema, **plan,
+            native_root=str(roots["codex"]), work_root=str(paths["state"] / "work"),
+            model=codex_original["model"], model_provider=codex_original["model_provider"]))
+        task_plan_ref = dict(path=str(paths["config"] / "task-startup.json"), bytes=len(task_plan_raw),
+                             sha256=digest(task_plan_raw), mode=0o444)
     credential_files = {} if credential_files is None else credential_files
     require(set(credential_files) <= {"codex", "claude"}, "unknown credential source")
     secrets = {name: read_regular(checked_path(path)) for name, path in credential_files.items()}
@@ -282,6 +369,21 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         binding["station_launchers"] = station
     if package is not None:
         binding["codex_package"] = package
+    if task_plan_ref is not None:
+        binding["task_startup"] = task_plan_ref
+    if network is not None:
+        binding["task_model_network"] = network
+    if task_mach_boundary:
+        from upgrade_task_mach_policy import contract
+        binding['task_mach_boundary'] = contract()
+    if task_native_descriptors:
+        from upgrade_task_fd_contract import contract
+        binding['task_native_descriptors'] = contract()
+    if task_runtime_policy:
+        from upgrade_task_runtime_policy import contract
+        binding['task_runtime_policy'] = contract()
+    if review_codex_hooks:
+        binding['codex_hook_review'] = 'official-reviewed-hooks-before-freeze-v1'
     verify_tree(source_pin)
     for path in paths.values():
         path.mkdir(mode=0o700, exist_ok=False)
@@ -298,6 +400,9 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
     Path(manifest["path"]).chmod(0o444)
     pins = {k: v for k, v in executable_pins.items() if not k.endswith("_wrapper")}
     pins["python"] = context["python"]
+    if task_plan_ref is not None:
+        pins["task_startup"] = immutable_bytes(Path(task_plan_ref["path"]), task_plan_raw)
+        require(pins["task_startup"] == task_plan_ref, "STARTUP_TASK_PLAN_WRITE_CHANGED")
     if continuity_registration:
         # This is the original scheduler/guardian CURRENT contract, scoped to
         # this immutable private release. It neither installs shared hooks nor
@@ -348,6 +453,11 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                    "This first opt-in protocol supports non-fork foreground children only; no background launch or handback note. "
                    "The original parent must read the full pinned body and consume the exact SHA. "
                    "Missing service or uncertain proof means preserve the slot and continue original bounded work.\n")
+    if task_startup is not None:
+        policy += ("\nThis topology uses an externally controlled Codex task thread. "
+                   "For Codex, the registered dynamic operation_ids are the collaboration interface. "
+                   "Do not invoke raw cmux/Herdr/shell senders or infer caller authority from threadSource. "
+                   "Both original Claude lanes retain their own actual hook and Goal checks.\n")
     if semantic_sender:
         # R545 P1: S2 only. The commands carry the campaign pin, so they stay in
         # the campaign's frozen sender-duties file; this clause only names it.
@@ -375,7 +485,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         provider = "codex" if lane == "codex" else "claude"
         if provider == "codex":
             (root / "credential-observations").mkdir(mode=0o700)
-            config_files = {"config.toml": codex_config(codex_original, root, provider_hooks[provider]),
+            config_files = {"config.toml": codex_config(codex_original, root, provider_hooks[provider],
+                                                       task_tools=task_startup is not None),
                             "hooks.json": (json.dumps(provider_hooks[provider], sort_keys=True) + "\n").encode(),
                             "AGENTS.md": policy.encode(),
                             "credential-observations/enabled-v1": b"ccc-request-credentials-v1\n"}
@@ -401,8 +512,22 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
             write_json(root / ".claude.json", claude_seed, exclusive=True)
             (root / ".claude.json").chmod(0o600)
         for name, raw in config_files.items():
+            if review_codex_hooks and lane == 'codex' and name == 'config.toml':
+                # Exact official trust writes must finish BEFORE this config is
+                # frozen and registered. No old startup pin is rewritten.
+                continue
             pins[lane + "/" + name] = immutable_bytes(root / name, raw,
                 secret=name in ("settings.json", "credential-observations/enabled-v1") or name.startswith("mg-profiles/"))
+        if review_codex_hooks and lane == 'codex':
+            from upgrade_hook_review import prepare as prepare_hook_review
+            config_seed = write_bytes_once(root / 'config.toml', config_files['config.toml'])
+            proof = prepare_hook_review(pins['codex'], config_seed, pins['codex/hooks.json'],
+                source=private_pin, python_ref=pins['python'], work_root=work,
+                directory=paths['evidence'] / 'codex-hook-review')
+            (root / 'config.toml').chmod(0o444)
+            pins['codex/config.toml'] = artifact_ref(root / 'config.toml')
+            pins['codex_hook_review'] = immutable_bytes(paths['config'] / 'codex-hook-review.json',
+                (json.dumps(proof, sort_keys=True) + '\n').encode())
         if provider in secrets:
             name = "auth.json" if provider == "codex" else ".credentials.json"
             pins[lane + "/" + name] = immutable_bytes(root / name, secrets[provider], secret=True)
@@ -412,13 +537,18 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
                            socket_boundary=socket_boundary if provider == "codex" else None,
                            station=station_client(station, lane, context["python"]["path"],
                                                   executable_pins["mg"]["path"] if station is not None else None))
-        argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
-                                           goal_contract["goal_startup"])
-                    if goal_contract is not None else
-                    readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
+        if review_codex_hooks and lane == 'codex':
+            require(argv.count('--dangerously-bypass-hook-trust') == 1,
+                    'STARTUP_REVIEWED_HOOK_ARGUMENT_CHANGED')
+            argv.remove('--dangerously-bypass-hook-trust')
+        if not (task_startup is not None and lane == "codex"):
+            argv.append(pressure_startup_prompt(lane, goal_contract["lane_instructions"],
+                                               goal_contract["goal_startup"])
+                        if goal_contract is not None else
+                        readiness_prompt(controller, context["python"]["path"], binaries["rtk"], lane))
         env = client_environment(roots, paths, lane, binaries["rtk"],
                                  response_observation=response_observation, child_budget=child_budget,
-                                 station=station is not None)
+                                 station=station is not None, task_model_network=network is not None)
         clients[lane] = dict(provider=provider, native_root=str(root), session_id=session,
                              argv=argv, environment=env)
     writable = [paths[name] for name in ("state", "campaigns", "evidence", "tmp")]
@@ -429,7 +559,24 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         profile = sandbox_profile(writable, denied)
         if lane == "codex" and socket_boundary is not None:
             profile = extend_profile(profile, socket_boundary)
+        if network is not None and lane in ("claude_a","claude_b"):
+            from upgrade_task_network import model_only_profile
+            profile = model_only_profile(profile,network,lane)
+        if task_mach_boundary and lane in ("claude_a", "claude_b"):
+            from upgrade_task_mach_policy import restrict
+            profile = restrict(profile, boundary=binding['task_mach_boundary'], lane=lane)
         pins[lane + "_sandbox"] = immutable_bytes(paths["config"] / (lane + ".sb"), profile)
+        if lane == "codex" and task_startup is not None:
+            from upgrade_task_socket_policy import restrict_agent_connections
+            server_profile = restrict_agent_connections(profile, socket_boundary["physical"], socket_boundary["advertised"])
+            if network is not None:
+                from upgrade_task_network import model_only_profile
+                server_profile = model_only_profile(server_profile,network,"codex")
+            if task_mach_boundary:
+                from upgrade_task_mach_policy import restrict
+                server_profile = restrict(server_profile, boundary=binding['task_mach_boundary'],
+                                          lane='codex-server')
+            pins["codex_server_sandbox"] = immutable_bytes(paths["config"] / "codex-server.sb", server_profile)
     patch_ref = write_json(paths["controllers"] / "patches-v2.json", dict(version=2,
         source=source_pin, changes=changes, compatibility_fixes=["original_gate_canonical_ack"],
         live_adoption=False, native_reception=False, measured_efficiency=False), exclusive=True)
@@ -449,6 +596,8 @@ def materialize_live(context_ref, arm, *, binaries, protected_surface_uuids=(),
         startup["socket_boundary"] = socket_boundary
     if goal_contract is not None:
         startup.update(goal_contract)
+    if task_plan_ref is not None:
+        startup["task_startup"] = task_plan_ref
     if existing_workspace_uuid is not None:
         # R511: allocate side panes in this existing workspace; launch never creates one.
         startup["existing_workspace_uuid"] = str(uuid.UUID(existing_workspace_uuid))

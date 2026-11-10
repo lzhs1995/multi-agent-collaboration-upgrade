@@ -86,7 +86,7 @@ def _index(reader, start, end):
     return index, signature.hexdigest()
 
 
-def sender_history(reader, start, end, receiver, sender, targets, *, state_root=None, refusal_context=None):
+def sender_history(reader, start, end, receiver, sender, targets, *, state_root=None, refusal_context=None,task_scope=None):
     index, indexed_signature = _index(reader, start, end)
     committed, pending, generations, aliases = {}, {}, {}, {}
     proof = dict(version=1, start=start, end=end, cached_reads=[], sender_calls=[], completed_stores=0)
@@ -191,6 +191,14 @@ def sender_history(reader, start, end, receiver, sender, targets, *, state_root=
                     pending[key] = current
 
             for call in invocation_calls(name, arguments, static=static):
+                if call["kind"]=="task_control":
+                    from upgrade_task_input_history import verify_unrelated
+                    require(item["calls"]==1,"TASK_INPUT_DUPLICATE_ORIGINAL_CALL")
+                    source=verify_unrelated(reader,ref,call,task_scope)
+                    proof["sender_calls"].append(dict(invocation=ref,kind=call["kind"],parsed=copy.deepcopy(call),source=source))
+                    require(len(proof["cached_reads"])+len(proof["sender_calls"])<=MAX_PROOFS,
+                            "native input provenance observation bound exceeded")
+                    continue
                 try:
                     require_unrelated(call, receiver, sender, targets, state_root=state_root)
                 except ContractError as exc:

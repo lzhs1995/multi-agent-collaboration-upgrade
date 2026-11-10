@@ -11,7 +11,7 @@ import shlex
 import stat
 import uuid
 
-from orchestration_common import checked_path, digest, file_ref, json_ref, read_regular, require
+from orchestration_common import checked_path, digest, file_ref, json_ref, read_ref, read_regular, require
 from upgrade_client_isolation import (LANES, NATIVE_POLICY, STATION_LAUNCHERS, claude_ps_wrapper, client_argv,
                                       control_socket, environment, private_native_roots, sandbox_profile,
                                       station_argv, station_config, station_server_argv, verify_client_temp)
@@ -23,6 +23,7 @@ FIELDS = {"schema", "context", "arm", "controller", "native_policy", "pins", "cl
           "rpc", "work_root", "workspace_name", "protected_surface_uuids", "stop_path",
           "adoption_path", "authorization"}
 GOAL_SCHEMA = "upgrade-startup-v3"
+TASK_SCHEMA = "upgrade-startup-task-v1"
 GOAL_LANES = {"claude_a", "claude_b"}
 GOAL_FIELDS = {"goal_startup", "lane_instructions"}
 MAX_INSTRUCTION_BYTES = 256 * 1024
@@ -176,6 +177,18 @@ def pressure_lane_document(controller, python, rtk, lane, responsibilities):
             "## Registered lane responsibilities\n\n" + responsibilities + "\n")
 
 
+def task_lane_document(responsibilities):
+    require(isinstance(responsibilities, str) and responsibilities.strip()
+            and "\x00" not in responsibilities and len(responsibilities.encode()) <= MAX_INSTRUCTION_BYTES,
+            "STARTUP_INSTRUCTIONS_INVALID")
+    return ("# Registered Codex task-thread responsibilities\n\n"
+            "Use only the controller-registered upgrade_collaboration.execute operations. "
+            "Select an existing operation_id; never invent shell commands, another task, paths or targets. "
+            "The controller returns the original operation result; UNKNOWN is read-only recovery, not retry. "
+            "Readiness does not authorize business actions before independent adoption. "
+            "Keep this exact task thread and its native records.\n\n" + responsibilities + "\n")
+
+
 def pressure_startup_prompt(lane, instructions, goals):
     path = instructions[lane]["path"]
     if lane in GOAL_LANES:
@@ -256,16 +269,27 @@ def readiness_prompt(controller, python, rtk, lane):
             "正式任务须等待独立 adoption 核验。保留本会话，不得新建替代会话。")
 
 
-def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False, station=False):
+def client_environment(roots, paths, lane, rtk, *, response_observation=False, child_budget=False,
+                       station=False, task_model_network=False):
     require(type(response_observation) is bool, "STARTUP_RESPONSE_OBSERVATION_CHANGED")
     require(type(child_budget) is bool, "STARTUP_CHILD_BUDGET_CHANGED")
     require(type(station) is bool, "STARTUP_STATION_LAUNCHERS_CHANGED")
+    require(type(task_model_network) is bool, "STARTUP_TASK_NETWORK_ENV_CHANGED")
     result = environment(roots, paths, lane, station=station)
     # Frozen native binaries do not use PATH resolution. Tools still need a
     # bounded ordinary system PATH; no account launcher/CCC alias is imported.
     result["PATH"] = os.pathsep.join(dict.fromkeys(map(str, (
         paths["bin"], Path(rtk).parent, "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"))))
     if lane != "codex":
+        if task_model_network:
+            # This topology deliberately forbids the raw cmux socket. Use the
+            # wrapper's documented integration opt-out: it preserves cmux's
+            # real endpoint environment and forwards the private --settings
+            # hooks unchanged. Otherwise its failed ping takes the detached-
+            # shell path and deletes CMUX_* before exec. Registered skill hooks
+            # and the task observer/callback channels remain enabled; the
+            # native wrapper's cmux UI integration is not claimed as active.
+            result["CMUX_CLAUDE_HOOKS_DISABLED"] = "1"
         result["PATH"] = str(paths["bin"] / "claude-tools") + os.pathsep + result["PATH"]
         if child_budget:
             # This first opt-in protocol binds foreground non-fork native
@@ -288,10 +312,13 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     default a recovered stage's own frozen pins; a builder passes the pins it is
     about to freeze. Each must name the original path and match exactly."""
     spec = json_ref(ref, "startup")
-    goal_mode = spec.get("schema") == GOAL_SCHEMA
+    task_mode = spec.get("schema") == TASK_SCHEMA
+    goal_mode = spec.get("schema") in (GOAL_SCHEMA, TASK_SCHEMA)
     fields = FIELDS | ({"socket_boundary"} if spec.get("native_policy") == SOCKET_POLICY else set())
     if goal_mode:
         fields |= GOAL_FIELDS
+    if task_mode:
+        fields |= {"task_startup"}
     if "existing_workspace_uuid" in spec:
         # R511: side panes in one pinned existing workspace instead of a new one.
         existing = spec["existing_workspace_uuid"]
@@ -308,7 +335,7 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 and set(targets.values()) <= set(spec["protected_surface_uuids"]),
                 'STARTUP_EXISTING_TARGET_INVALID')
         fields |= {target_field}
-    require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA),
+    require(set(spec) == fields and spec["schema"] in ("upgrade-startup-v2", GOAL_SCHEMA, TASK_SCHEMA),
             "STARTUP_FIELDS_CHANGED")
     source = checked_path(spec["controller"])
     if controller is not None:
@@ -320,6 +347,46 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
     startup_continuity_enabled(binding)
     child_budget = child_budget_enabled(binding)
     station = station_launchers_enabled(binding)
+    hook_review = binding.get('codex_hook_review')
+    require(hook_review is None or (task_mode and
+            hook_review == 'official-reviewed-hooks-before-freeze-v1'),
+            'STARTUP_HOOK_REVIEW_POLICY_CHANGED')
+    if task_mode:
+        from upgrade_task_startup import plan_value
+        plan = plan_value(spec["task_startup"])
+        require(binding.get("task_startup") == spec["task_startup"]
+                and plan["native_root"] == spec["clients"]["codex"]["native_root"]
+                and plan["work_root"] == spec["work_root"]
+                and pre_exec_hold_enabled(binding) and station is not None
+                and spec["native_policy"] == SOCKET_POLICY and "codex_package" in binding
+                and not startup_continuity_enabled(binding), "STARTUP_TASK_TOPOLOGY_CHANGED")
+        require(stage_controller is None, "STARTUP_TASK_LEGACY_STAGE_REFUSED")
+        from upgrade_client_isolation import TASK_TOOL_REDUCTION
+        import upgrade_toml as tomllib
+        config = tomllib.loads(read_ref(spec["pins"]["codex/config.toml"]).decode("utf-8"))
+        require(all(config.get(key) == value for key, value in TASK_TOOL_REDUCTION.items()),
+                "STARTUP_TASK_TOOL_REDUCTION_CHANGED")
+        if "task_model_network" in binding:
+            from upgrade_task_network import CALLBACK_SCHEMA, OBSERVER_SCHEMA, network_contract
+            for lane in GOAL_LANES:
+                original=json.loads(read_ref(spec["pins"][lane+"/settings.json"]))
+                observer = binding["task_model_network"].get("schema") == OBSERVER_SCHEMA
+                callback = binding["task_model_network"].get("schema") in (CALLBACK_SCHEMA, OBSERVER_SCHEMA)
+                require(binding["task_model_network"]==network_contract(station,original,
+                        evidence_root=binding["evidence_root"] if callback else None, observer=observer,
+                        messages=binding['task_model_network'].get('registered_messages',False)),
+                        "STARTUP_TASK_MODEL_NETWORK_CHANGED")
+    else:
+        require("task_startup" not in binding and "task_model_network" not in binding
+                and "task_mach_boundary" not in binding and "task_native_descriptors" not in binding
+                and "task_runtime_policy" not in binding,
+                "STARTUP_TASK_DOWNGRADE_REFUSED")
+    from upgrade_task_mach_policy import enabled as mach_enabled, restrict as restrict_mach
+    mach_boundary = mach_enabled(binding)
+    from upgrade_task_fd_contract import enabled as descriptors_enabled
+    descriptors_enabled(binding)
+    from upgrade_task_runtime_policy import enabled as runtime_policy_enabled
+    runtime_policy_enabled(binding)
     if goal_mode:
         require(isinstance(spec["goal_startup"], dict) and set(spec["goal_startup"]) == GOAL_LANES
                 and isinstance(spec["lane_instructions"], dict)
@@ -371,6 +438,14 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                 "work_AGENTS.md", "work_CLAUDE.md", "claude-startup-state.json",
                 "control_sandbox", *[x + "_sandbox" for x in LANES]}
     local = {"helper": paths["bin"] / "cmux-agent", "claude_ps": paths["bin"] / "claude-tools/ps"}
+    if hook_review is not None:
+        required.add('codex_hook_review')
+        local['codex_hook_review'] = paths['config'] / 'codex-hook-review.json'
+    if task_mode:
+        required |= {"task_startup", "codex_server_sandbox"}
+        local.update(task_startup=paths["config"] / "task-startup.json",
+                     codex_server_sandbox=paths["config"] / "codex-server.sb")
+        require(pins.get("task_startup") == spec["task_startup"], "STARTUP_TASK_PLAN_PIN_CHANGED")
     if continuity_registration:
         required.add(CONTINUITY_CURRENT_PIN)
         current_path = paths["state"] / "CURRENT.json"
@@ -450,6 +525,16 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                          if (stage_controller is None or k not in lane_hooks) and k not in recovered)
         # A recovered file is verified as exactly as the pin it supersedes.
         verify_artifacts(recovered.values())
+    if hook_review is not None:
+        proof = json_ref(pins['codex_hook_review'])
+        require(proof.get('schema') == hook_review
+                and proof.get('configuration') == pins['codex/hooks.json']
+                and all(proof.get('config_final', {}).get(k) == pins['codex/config.toml'][k]
+                        for k in ('path', 'bytes', 'sha256'))
+                and proof.get('metadata_processes') == 1 and proof.get('thread_starts') == 0
+                and proof.get('model_turns') == 0 and proof.get('automatic_execution_proven') is False
+                and config.get('hooks') == {'state': proof.get('states')},
+                'STARTUP_HOOK_REVIEW_RECEIPT_CHANGED')
     require(pins["claude_ps"]["mode"] == 0o555
             and read_regular(pins["claude_ps"]["path"]) == claude_ps_wrapper(source, pins["python"]["path"]),
             "STARTUP_CLAUDE_PS_CHANGED")
@@ -466,8 +551,25 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
             profile = sandbox_profile(writable, denied)
             if lane == "codex":
                 profile = extend_profile(profile, boundary)
+            if "task_model_network" in binding and lane in GOAL_LANES:
+                from upgrade_task_network import model_only_profile
+                profile = model_only_profile(profile,binding["task_model_network"],lane)
+            if mach_boundary and lane in GOAL_LANES:
+                profile = restrict_mach(profile, boundary=binding['task_mach_boundary'], lane=lane)
             require(read_regular(pins[lane + "_sandbox"]["path"]) == profile,
                     "STARTUP_SOCKET_PROFILE_CHANGED:" + lane)
+        if task_mode:
+            from upgrade_task_socket_policy import restrict_agent_connections
+            server_profile = restrict_agent_connections(read_regular(pins["codex_sandbox"]["path"]),
+                boundary["physical"], boundary["advertised"])
+            if "task_model_network" in binding:
+                from upgrade_task_network import model_only_profile
+                server_profile = model_only_profile(server_profile,binding["task_model_network"],"codex")
+            if mach_boundary:
+                server_profile = restrict_mach(server_profile, boundary=binding['task_mach_boundary'],
+                                               lane='codex-server')
+            require(read_regular(pins["codex_server_sandbox"]["path"]) == server_profile,
+                    "STARTUP_TASK_SERVER_PROFILE_CHANGED")
     socket = control_socket(paths, socket_boundary=boundary)
     mg = pins["mg"]["path"] if station is not None else None
     require(spec["rpc"] == station_rpc(station, socket, pins["codex"]["path"], pins["python"]["path"], mg,
@@ -506,12 +608,16 @@ def validate_startup(ref, *, controller=None, verify_pins=True, stage_controller
                            session_id=client["session_id"], remote_socket=socket if provider == "codex" else None,
                            socket_boundary=boundary if provider == "codex" else None,
                            station=station_client(station, lane, pins["python"]["path"], mg))
-        argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
-                    if goal_mode else
-                    readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
+        if hook_review is not None and lane == 'codex':
+            argv.remove('--dangerously-bypass-hook-trust')
+        if not (task_mode and lane == "codex"):
+            argv.append(pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
+                        if goal_mode else
+                        readiness_prompt(source, pins["python"]["path"], pins["rtk"]["path"], lane))
         require(client["argv"] == argv and client["environment"] ==
                 client_environment(roots, paths, lane, pins["rtk"]["path"],
                                    response_observation=response_observation, child_budget=child_budget,
-                                   station=station is not None),
+                                   station=station is not None,
+                                   task_model_network="task_model_network" in binding),
                 "STARTUP_ARGUMENTS_OR_ENV_CHANGED")
     return spec, binding

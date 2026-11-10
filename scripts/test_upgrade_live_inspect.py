@@ -799,6 +799,28 @@ class InspectorFlowTests(unittest.TestCase):
         self.assertEqual(set(lanes), set(LANES))
         self.assertEqual({s["workspace_uuid"] for s in result["sessions"].values()}, {self.workspace})
 
+    def test_task_tui_wrong_remote_refuses_before_dynamic_readiness(self):
+        import os
+        from upgrade_rpc_peer import server_pin
+        self.spec['schema'] = 'upgrade-startup-task-v1'
+        self.spec['rpc']['argv'] = ['/fixture/codex', 'app-server']
+        server = dict(self.server, argv=self.spec['rpc']['argv'], file_identity=[1, 2, 3, 4])
+        client = self.clients[self.launches['codex']['surface_uuid']]
+        sid = client['session_id']
+        client['argv'] = ['/fixture/codex', '--remote', 'unix:///wrong/socket', 'resume', sid]
+        anchor = dict(schema='upgrade-task-thread-read-anchor-v1', thread_id=sid,
+            native_root=self.spec['clients']['codex']['native_root'],
+            server=server_pin(server, uid=os.getuid()), socket=dict(path=self.spec['rpc']['path']))
+        with patch('upgrade_task_readiness.task_startup_result', return_value=(None, dict(thread_id=sid), anchor)), \
+             patch('upgrade_task_readiness.task_readiness') as dynamic:
+            result, lanes = self.inspect_fixture()
+        self.assertEqual(result['errors']['codex'], 'TASK_TUI_REMOTE_TARGET_CHANGED')
+        self.assertNotIn('codex', result['sessions'])
+        self.assertFalse(result['startup_ready'])
+        self.assertFalse(result['business_adoption_supported'])
+        self.assertEqual(set(lanes), {'claude_a', 'claude_b'})
+        dynamic.assert_not_called()
+
     def test_failed_claude_startup_is_observed_without_adoption_or_model_claim(self):
         import upgrade_startup_continuity as continuity
         self.binding["context"] = write_json(self.root / "context.json", {"experiment_id": "original-task"})

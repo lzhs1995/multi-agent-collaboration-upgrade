@@ -218,6 +218,9 @@ def send_body(campaign, run_id, request_id):
         return 75
     # Shared locks, original intents/fences and deduplication remain helper-owned.
     # Inherit the helper result verbatim, even if pending. No manufactured receipt.
+    if 'task_controls' in campaign:
+        from upgrade_task_message_source import send
+        return send(campaign,sample,'semantic')
     return subprocess.run(sample["helper_argv"], check=False).returncode
 
 
@@ -254,8 +257,14 @@ def read_requests(campaign, batch, order):
     for request_id in order:
         item = by_id[request_id]
         notice = json_ref({k: item["source"]["intent"][k] for k in ("path", "sha256", "bytes")})["payload"]
+        command = read_command(campaign["python"]["path"], campaign["controller"]["path"], notice)
+        if 'task_controls' in campaign:
+            from upgrade_task_semantic import control, samples
+            original = [s for s in samples(campaign) if s['request_id'] == request_id]
+            require(len(original) == 1, 'TASK_SEMANTIC_ORIGINAL_READ_SLOT_REQUIRED')
+            command = control(campaign, 'semantic-read', original[0]['run_id'], request_id)
         requests.append(dict(request_id=request_id, notice=notice,
-            command=read_command(campaign["python"]["path"], campaign["controller"]["path"], notice),
+            command=command,
             inner_body_sha256=item["sha256"], original_source=item["source"]))
     return requests
 
@@ -276,9 +285,15 @@ def observe_body_exposure(campaign, header, record, native_end, readers, *, not_
         original = request["original_source"]["native_record"]
         notice = reader.record(original)
         from upgrade_body_read_evidence import stamp
-        proof = body_read_evidence(reader.records(start, end), provider=reader.provider,
-            session_id=reader.session["session_id"], notice=request["notice"], command=request["command"],
-            not_before=stamp(notice), not_after=parse_time(not_after).timestamp())
+        if 'task_controls' in campaign:
+            from upgrade_task_semantic import typed_read_evidence
+            proof = typed_read_evidence(reader, fence=start, until=end, notice=request['notice'],
+                command=request['command'], not_before=stamp(notice), not_after=parse_time(not_after).timestamp(),
+                request_id=request['request_id'], body_sha256=request['inner_body_sha256'])
+        else:
+            proof = body_read_evidence(reader.records(start, end), provider=reader.provider,
+                session_id=reader.session["session_id"], notice=request["notice"], command=request["command"],
+                not_before=stamp(notice), not_after=parse_time(not_after).timestamp())
         if len(proof) != 1 or proof[0]["call_record"]["offset"] < original["offset"] + original["length"]:
             unresolved.append(request["request_id"])
             continue
@@ -409,7 +424,15 @@ def semantic_closeout(co, data, readers, native_end, *, not_after):
                 "--disposition", str(value.get("disposition")), "--reason", str(value.get("reason"))]
             for node in value.get("work") or []:
                 argv += ["--work", str(node)]
-            pair = _disposition_pair(records, argv, ref, not_before=not_before, not_after=not_after_epoch)
+            if 'task_controls' in co.campaign:
+                from upgrade_task_semantic import disposition_pair
+                try:
+                    pair = disposition_pair(co, reader, run_id, rid, ref, item['read'],
+                                            until=end, not_after=not_after_epoch)
+                except (ContractError, ValueError, KeyError, TypeError, OSError):
+                    pair = None
+            else:
+                pair = _disposition_pair(records, argv, ref, not_before=not_before, not_after=not_after_epoch)
             if pair is None:
                 gaps.append("one native disposition call with its own output required")
             else:

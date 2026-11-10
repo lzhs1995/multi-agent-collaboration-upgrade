@@ -20,6 +20,11 @@ unjournaled metadata records, stays UNKNOWN. The journal proves what a
 registered session invoked and recorded inside this run, not when it wrote it,
 nor the sender's exit status: closeout must pin it, and payloads need a
 run-unique marker because identical text cannot be told apart.
+
+An explicitly registered task_dispatch transport indexes its original typed
+dispatch journal after receipt. Its original RPC, actor, pre-input fence and
+exact native landing provide the producer proof; the index cannot supply a
+missing original intent or authorize another send.
 """
 from __future__ import annotations
 
@@ -41,7 +46,7 @@ REGISTRATION_SCHEMA = "upgrade-input-producers-v1"
 RESULT_SCHEMA = "upgrade-input-provenance-v1"
 PRODUCER_CLASS = {"upgrade_driver": "MACHINE", "mac_bridge": "MACHINE", "lane_agent": "MACHINE",
                   "operator_console": "HUMAN_REGISTERED"}
-TRANSPORTS = ("cmux_helper",)
+TRANSPORTS = ("cmux_helper","task_dispatch")
 HELPER_NAMES = ("cmux-agent", "cmux_agent_adapter.py")
 HELPER_MODES = ("send", "ask")
 CLASSES = ("HUMAN_REGISTERED", "MACHINE", "UNKNOWN")
@@ -150,7 +155,11 @@ def _registration(ref, run_id):
         require(isinstance(session, dict) and session.get("provider") in ("claude", "codex")
                 and isinstance(session.get("session_id"), str) and isinstance(session.get("transcript"), dict),
                 "registered producer session required")
-        found[producer["id"]] = dict(producer, transport=_transport(producer.get("transport")))
+        transport=_transport(producer.get("transport"))
+        if transport["kind"]=="task_dispatch":
+            require(producer["kind"]=="lane_agent" and session["provider"]=="codex",
+                    "typed dispatch requires the registered Codex lane agent")
+        found[producer["id"]] = dict(producer, transport=transport)
     return found
 
 
@@ -162,6 +171,9 @@ def _transport(value):
     recompute the exact bytes a receiver must land instead of trusting the sender.
     """
     require(isinstance(value, dict) and value.get("kind") in TRANSPORTS, "registered sender transport required")
+    if value["kind"]=="task_dispatch":
+        from upgrade_task_input_provenance import validate_transport
+        return validate_transport(value)
     helper, home = value.get("helper"), value.get("home")
     require(isinstance(helper, str) and os.path.isabs(helper)
             and os.path.basename(helper) in HELPER_NAMES, "registered helper must be an absolute shared helper path")
@@ -188,6 +200,7 @@ def expected_payload(producer, reader, *, mode, message, request_id):
     identity, so a producer cannot assert a payload it did not actually compose.
     """
     transport = producer["transport"]
+    require(transport["kind"]=="cmux_helper","helper transport required")
     session = reader.session
     identity = dict(workspace_uuid=transport["workspace_uuid"],
                     caller_surface_uuid=transport["caller_surface_uuid"],
@@ -273,6 +286,27 @@ class ProvenanceJournal:
         with exclusive_lock(self._lock(), wait_seconds=5):
             return self._append(dict(kind="landed", intent_id=intent_id, refs=[dict(ref) for ref in refs],
                                      at=utc_now()))
+
+    def task_delivery(self, *, producer_id, lane, bundle):
+        """Index existing original dispatch evidence; never synthesize its intent.
+
+        The .84 attempt owns the pre-input fence and the typed actor owns the
+        original invocation. This post-receipt index grants neither authority.
+        """
+        producer=self.producers.get(producer_id)
+        require(producer is not None and producer["transport"]["kind"]=="task_dispatch",
+                "registered typed dispatch producer required")
+        ident="typed-dispatch-"+digest(canonical(bundle))
+        value=dict(kind="task_delivery",intent_id=ident,producer=dict(id=producer_id,kind=producer["kind"]),
+                   lane=lane,bundle=bundle)
+        with exclusive_lock(self._lock(),wait_seconds=5):
+            _,entries=_entries(read_regular(self.path),self.run_id)
+            existing=[entry for entry in entries if entry.get("intent_id")==ident]
+            if existing:
+                require(len(existing)==1 and all(existing[0].get(k)==v for k,v in value.items()),
+                        "original typed delivery index changed")
+                return existing[0]
+            return self._append(dict(value,at=utc_now()))
 
 
 def _foreground(call, item):
@@ -400,7 +434,7 @@ def lane_producer_sessions(registration, run_id, readers, starts, ends):
 
 
 def classify_inputs(journal, registration, run_id, readers, starts, ends, *, producer_sessions,
-                    not_before, not_after):
+                    not_before, not_after,fixtures=False):
     """Attribute every native input unit of a closed run; unverifiable units stay UNKNOWN.
 
     producer_sessions maps each registered producer id to dict(reader, start, end) of its session.
@@ -427,8 +461,11 @@ def classify_inputs(journal, registration, run_id, readers, starts, ends, *, pro
             calls[pid] = _producer_calls(producer, producer_sessions.get(pid))
         except ERRORS as exc:
             result["unresolved"].append(dict(intent_id=None, producer_id=pid, reason=str(exc)))
-    intents, landings, claims = {}, {}, {}
+    intents, landings, claims,typed = {}, {}, {},[]
     for entry in entries:
+        if entry.get("kind")=="task_delivery":
+            typed.append(entry)
+            continue
         bucket = {"intent": intents, "landed": landings}.get(entry.get("kind"))
         if bucket is None:
             result["unresolved"].append(dict(intent_id=entry.get("intent_id"), reason="UNKNOWN_ENTRY_KIND"))
@@ -449,6 +486,14 @@ def classify_inputs(journal, registration, run_id, readers, starts, ends, *, pro
                 claims.setdefault(key, []).append((ident, PRODUCER_CLASS[mine[0]["producer"]["kind"]], call))
         except ERRORS as exc:
             result["unresolved"].append(dict(intent_id=ident, reason=str(exc)))
+    for entry in typed:
+        try:
+            from upgrade_task_input_provenance import claim_delivery
+            key,call=claim_delivery(entry,registration,run_id,readers,units,bounds,window,producers,producer_sessions,
+                                    fixtures=fixtures)
+            claims.setdefault(key,[]).append((entry["intent_id"],"MACHINE",call))
+        except ERRORS as exc:
+            result["unresolved"].append(dict(intent_id=entry.get("intent_id"),reason=str(exc)))
     for unit in ordered:
         found = claims.get(_key(unit["ref"]), [])
         # Run-unique payloads leave at most one claimant; never let a second one pick a winner.

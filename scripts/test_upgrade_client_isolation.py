@@ -71,6 +71,24 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             clean_child_environment({"CMUX_SURFACE_ID": str(uuid.uuid4())})
 
+    def test_task_configuration_removes_shell_without_claiming_global_allowlist(self):
+        original={"model":"original-model","model_provider":"custom",
+            "model_providers":{"custom":{"base_url":"http://127.0.0.1:3465/v1"}},
+            "features":{"shell_tool":True,"multi_agent":True},"agents":{"enabled":True},
+            "mcp_servers":{"host":{"command":"/outside/command"}},"allowed_tools":["unreal-setting"]}
+        config=tomllib.loads(codex_config(original,self.root,self.hooks,task_tools=True).decode())
+        self.assertEqual(config["model"],original["model"])
+        self.assertEqual(config["model_providers"],original["model_providers"])
+        self.assertFalse(config["features"]["shell_tool"])
+        self.assertFalse(config["features"]["multi_agent_v2"])
+        self.assertTrue(config["features"]["code_mode"])
+        self.assertFalse(config["agents"]["enabled"])
+        self.assertEqual(config["web_search"],"disabled")
+        for key in ("mcp_servers","allowed_tools"):
+            self.assertNotIn(key,config)
+        legacy=tomllib.loads(codex_config(original,self.root,self.hooks).decode())
+        self.assertNotIn("features",legacy)
+
     def test_cli_arguments_are_structured_and_do_not_duplicate_claude_hooks(self):
         odd = self.root / "spaces $(untrusted) `text`"
         args = client_argv("claude", odd, self.root, self.root, session_id=str(uuid.uuid4()))
@@ -173,6 +191,35 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         expected = args[:5] + args[6:]
         self.assertEqual(result.stdout.decode().split("\0")[:-1], expected)
+
+    @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS Seatbelt")
+    def test_codex_zsh_heredoc_uses_private_prefix_without_widening_sandbox(self):
+        native = private_native_roots(self.paths)["codex"]
+        (native / "tmp").mkdir(parents=True, mode=0o700)
+        self.paths["tmp"].mkdir(mode=0o700)
+        prepare_client_temp(self.paths, "codex")
+        profile = self.root / "codex-shell.sb"
+        profile.write_bytes(sandbox_profile([native, self.paths["tmp"]]))
+        outside = self.root / "outside"
+        outside.write_text("unchanged")
+        env = clean_child_environment(environment(private_native_roots(self.paths), self.paths, "codex"))
+        env.pop("TMPPREFIX", None)
+        payload = "private here-document\n" * 600
+        script = "/bin/cat <<'PRIVATE_EOF'\n" + payload + "PRIVATE_EOF\n"
+        argv = [str(SANDBOX), "-f", str(profile), "/bin/zsh", "-f", "-c", script]
+        before = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(before.returncode, 0, "baseline must reproduce the denied /tmp heredoc")
+        self.assertIn("temp file", before.stderr)
+        config = tomllib.loads(codex_config({}, native, self.hooks).decode())
+        env.update(config["shell_environment_policy"]["set"])
+        after = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertEqual(after.stdout, payload)
+        denied = subprocess.run([str(SANDBOX), "-f", str(profile), "/bin/zsh", "-f", "-c",
+            'print pollution > "$1"', "test", str(outside)],
+            env=env, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(outside.read_text(), "unchanged")
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists(), "requires macOS Seatbelt")
     def test_actual_child_temporary_files_stay_private_and_outside_writes_fail(self):

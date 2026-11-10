@@ -540,8 +540,14 @@ class Coordinator:
         require(gates["campaign"] == self.campaign_ref and gates["authorization"] == self.campaign["authorization"],
                 "claim authorization evidence changed")
         read_ref(gates["authorization"])
-        require(gates["identity_source"] == ("offline_fixture" if self.fixtures else "live_kernel_and_native_foreground"),
+        identity_source=("offline_fixture" if self.fixtures else "live_kernel_and_original_task_rpc"
+                         if "task_controls" in self.campaign else "live_kernel_and_native_foreground")
+        require(gates["identity_source"] == identity_source,
                 "claim identity provenance changed")
+        if identity_source=="live_kernel_and_original_task_rpc":
+            from upgrade_task_enrollment import verify_claim_provenance
+            verify_claim_provenance(self.campaign,self.campaign_ref,gates.get("actor"),
+                                    run_id=self.spec["run_id"],node_id=key)
         for lane, actual in gates["identity"].items():
             require(lane in self.campaign["sessions"] and
                     all(self.campaign["sessions"][lane].get(k) == v for k, v in actual.items()),
@@ -743,6 +749,9 @@ class Coordinator:
             gates = dict(campaign=self.campaign_ref, authorization=self.campaign["authorization"],
                          identity_source="offline_fixture" if self.fixtures else "live_kernel_and_native_foreground",
                          identity=identity, states={k: v.value for k, v in states.items()}, scope=str(output), inputs=self.campaign["inputs"])
+            if not self.fixtures and "task_controls" in self.campaign:
+                from upgrade_task_enrollment import claim_provenance, IDENTITY_SOURCE
+                gates.update(identity_source=IDENTITY_SOURCE,actor=claim_provenance(self.campaign))
             gates["context"] = self._decision_context(node_id, gates, lane=lane, lanes=lanes)
             verdict = decide(gates["context"], provider)
             require(verdict.outcome is Outcome.ALLOW, verdict.reason)
@@ -897,6 +906,9 @@ class Coordinator:
         require(isinstance(advice, dict) and isinstance(advice.get("status"), str), "the published advice has no status")
         notice = reference_plan(text, body["marker"], directory)["text"]
         command = read_command(self.campaign["python"]["path"], self.campaign["controller"]["path"], notice)
+        if self.campaign.get("task_controls",{}).get("schema")=="upgrade-task-campaign-controls-v3":
+            from upgrade_task_advice import read_control
+            command=read_control(self.campaign,self.spec["run_id"],node_id)
         return dict(arm="advisory-on", advice_sha256=decision["advice_sha256"], notice=notice, command=command,
                     fence=fence, not_before_epoch=parse_time(self.header["started_at"]).timestamp(),
                     worker_status=advice["status"], worker_journal=journal), body

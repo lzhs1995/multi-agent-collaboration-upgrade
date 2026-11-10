@@ -300,11 +300,32 @@ class NativeReader:
             raise
         return stream
 
-    def snapshot(self):
+    def snapshot(self, *, complete_records=False):
+        require(type(complete_records) is bool, "native snapshot mode invalid")
         with self.open() as stream:
             st = os.fstat(stream.fileno())
             offset = st.st_size
+            if complete_records and offset:
+                # Explicit result observers may pin the last complete record
+                # while the same native writer appends its next line. Existing
+                # callers keep the strict EOF policy; no partial bytes count.
+                lower=max(0,offset-MAX_RECORD-1)
+                cursor=offset
+                while cursor>lower:
+                    start=max(lower,cursor-4096)
+                    stream.seek(start)
+                    suffix=stream.read(cursor-start)
+                    require(len(suffix)==cursor-start,"native journal truncated during snapshot")
+                    last=suffix.rfind(b"\n")
+                    if last>=0:
+                        offset=start+last+1
+                        break
+                    cursor=start
+                else:
+                    require(lower==0,"native partial record exceeds observation bound")
+                    offset=0
             head_size, tail_at = min(offset, 4096), max(0, offset - 4096)
+            stream.seek(0)
             prefix = stream.read(head_size)
             stream.seek(tail_at)
             tail = stream.read(offset - tail_at)
@@ -367,7 +388,8 @@ class NativeReader:
         return records[0][1]
 
     @contract_errors("undispatched native input")
-    def require_no_task_input(self, start, end, *, task_id, pack, notice, receiver, sender, state_root=None, refusal_context=None):
+    def require_no_task_input(self, start, end, *, task_id, pack, notice, receiver, sender, state_root=None, refusal_context=None,
+                              task_scope=None):
         """Separate actual inbound text and supervisor sender calls from reports."""
         from orchestration_inputs import input_texts
         from orchestration_input_history import sender_history
@@ -378,7 +400,7 @@ class NativeReader:
         require(inbound != outbound, "original sender/receiver lane required")
         if outbound:
             return sender_history(self, start, end, receiver, sender, targets,
-                                  state_root=state_root, refusal_context=refusal_context)
+                                  state_root=state_root, refusal_context=refusal_context,task_scope=task_scope)
         for _, record in self.records(start, end):
             if inbound:
                 for text in user_input_texts(record, self.provider) + queued_texts(record):
@@ -388,7 +410,7 @@ class NativeReader:
 
     @contract_errors("native actions")
     def action_summary(self, start, end, *, task_id, output_root, allow_empty=False,
-                       allow_incomplete=False, include_evidence=False, effect_policy=None):
+                       allow_incomplete=False, include_evidence=False, effect_policy=None, task_campaign=None):
         """Derive useful action, model, retries and interventions from raw records."""
         require(effect_policy in (None, OUTPUT_EFFECT_POLICY), "unregistered output effect policy")
         scoped = task_work if effect_policy is None else output_scoped_call
@@ -396,6 +418,7 @@ class NativeReader:
         tool_calls, completed_calls = {}, {}
         call_refs, result_refs, pending_refs, last_result_at = {}, {}, {}, {}
         effects = {}
+        typed_calls = set()
         user_texts = []
         prior = None
         for _, r in self.records(0, start):
@@ -431,6 +454,25 @@ class NativeReader:
                     model_seen.add(p["model"])
                 if r.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
                     args = p.get("arguments", p.get("input", ""))
+                    # Operation IDs contain no output path. Join them through
+                    # the original registration/ledger, never a synthetic shell
+                    # record. The reader also rejects missing campaign scope.
+                    typed = None
+                    if task_campaign is not None or isinstance(args, str) and "upgrade_collaboration__execute" in args:
+                        from upgrade_task_local_reader import action as typed_action
+                        typed = typed_action(self, ref, r, end, task_campaign, output_root)
+                    if typed is not None:
+                        key = p["call_id"]
+                        require(key not in tool_calls, "duplicate native tool call id")
+                        typed_calls.add(key)
+                        tool_calls[key] = parse_time(r["timestamp"])
+                        call_refs[key] = ref
+                        if effect_policy is not None: effects[key] = "WRITE"
+                        returned = typed["returned"]
+                        if returned is not None:
+                            completed_calls[key] = (parse_time(returned["timestamp"]), typed["failed"])
+                            result_refs[key] = returned["result_record"]
+                        continue
                     if effect_policy is not None and output_scoped_call(
                             args if isinstance(args, str) else json.dumps(args, ensure_ascii=False), output_root):
                         require(isinstance(args, str), "task-bound native arguments must be text")
@@ -447,7 +489,8 @@ class NativeReader:
                             effects[p["call_id"]] = call_output_effect(self.provider, p.get("name"), decoded)
                 if r.get("type") == "response_item" and p.get("type") in ("function_call_output", "custom_tool_call_output"):
                     output = p.get("output")
-                    complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
+                    if p.get("call_id") not in typed_calls:
+                        complete(p.get("call_id"), output, r, ref, p.get("is_error") is True)
                 if r.get("type") == "event_msg" and p.get("type") == "error":
                     failed_api += 1
             else:
@@ -553,7 +596,10 @@ def delivery_identity(receiver, sender):
 
 
 def check_native_binding(binding, receiver, sender, text, *, fixtures=False, uuid_semantics=False):
-    require(binding.get("schema") == "native-delivery-v1", "original native binding required")
+    from upgrade_task_target_evidence import check_target
+    from upgrade_task_sender_evidence import verify_source
+    verify_source(binding,sender,receiver,fixtures=fixtures)
+    check_target(binding, receiver)
     require(binding.get("provider") == receiver["provider"] and binding.get("session_id") == receiver["session_id"],
             "receiver session mismatch")
     require(binding.get("process") == receiver["process"] and binding.get("tty") == receiver["tty"],
@@ -611,7 +657,28 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     attempt = attempts[-1]
     require(receipt.get("attempt") == refs[-1]["path"] and receipt.get("confirmed") is True, "receipt not bound to original attempt")
     b = attempt.get("native_binding", {})
-    require(receipt.get("native_binding") == b and b.get("schema") == "native-delivery-v1", "original native binding required")
+    require(receipt.get("native_binding") == b, "original native binding required")
+    task_callback = (b.get("schema") == "native-delivery-task-v1"
+                     and "completion_callback" in attempt.get("binding", {}))
+    # Select authority from the pinned original attempt, never removable receipt
+    # flags. A sender-confirmed callback must carry the same original result;
+    # all other TASK callback settlements require the enrolled receiver proof.
+    result = attempt.get("result", {})
+    sender_confirmed = (attempt.get("phase") == "CONFIRMED" and isinstance(result, dict)
+                        and result.get("confirmed") is True
+                        and result.get("confirmation_source") == "native_user_message_v1"
+                        and result.get("native_binding") == b
+                        and isinstance(result.get("native_proof"), dict)
+                        and result["native_proof"] == receipt.get("native_proof"))
+    if ("receiver_task_actor" in receipt or "receiver_authentication" in receipt
+            or task_callback and not sender_confirmed):
+        from upgrade_task_callback import verify_receiver
+        verify_receiver(receipt, receiver, sender)
+    if ("task_reconciler" in receipt or b.get("task_sender") is not None
+            and (not sender_confirmed or receipt.get("reconciled_read_only") is True)
+            and "completion_callback" not in attempt.get("binding",{})):
+        from upgrade_task_reconcile import verify_receipt
+        verify_receipt(receipt,bundle,sender,receiver,fixtures=fixtures)
     # Task receipts store `binding`; callback receipts flatten the binding fields
     # and retain identity in the original attempt/native binding.
     if "binding" in receipt:
@@ -632,7 +699,8 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
     for item in process["birth"]:
         count(item, "process birth")
     reader = NativeReader(receiver, fixtures=fixtures)
-    original_offset = reader.verify_pin(b["transcript"])
+    original_offset = check_native_binding(b, receiver, sender, text, fixtures=fixtures,
+                                           uuid_semantics=uuid_semantics)
     events = attempt.get("events")
     require(isinstance(events, list) and all(isinstance(e, dict) for e in events), "input events missing")
     inputs = [e for e in events if e.get("phase") in ("PASTE_INTENT", "NATIVE_INPUT_INTENT")]
@@ -664,6 +732,15 @@ def verify_delivery(bundle, receiver, sender, text, *, fixtures=False, uuid_sema
             require(req.get("method") == "turn/start", "native input method invalid")
             require(req.get("observed_status") == "idle", "idle turn observation missing")
         require(req.get("transport") == "codex-native-input-v1" and req.get("params") == params, "native input request/overrides changed")
+        if b["schema"] == "native-delivery-task-v1":
+            require(req.get("socket") == b["task_target"]["socket"],
+                    "TASK_TARGET_ORIGINAL_INPUT_CHANGED")
+            if 'task_message_route' in req:
+                from upgrade_task_message_route import verify_input
+                verify_input(b,req,attempt)
+            elif req.get("method")=="turn/start" or 'task_callback_route' in req:
+                from upgrade_task_callback_route import verify_input
+                verify_input(b,req,attempt)
         require(fence.get("native_request_sha256") == digest(json.dumps(req, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()), "native request hash mismatch")
         peer = req.get("socket", {})
         for name in ("uid", "peer_uid", "mode", "device", "inode"):

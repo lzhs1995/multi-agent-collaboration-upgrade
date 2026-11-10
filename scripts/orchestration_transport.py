@@ -122,6 +122,9 @@ class PinnedRuntime:
                 "--expected-executor-uuid", receiver["surface_uuid"]]
 
     def harness(self, argv, operation_root):
+        if "task_controls" in self.campaign:
+            from upgrade_task_harness import invoke
+            return invoke(self,argv,operation_root)
         verify_tree(self.campaign["controller"])
         read_ref(self.campaign["python"])
         stdout, stderr = operation_root / "stdout.txt", operation_root / "stderr.txt"
@@ -139,29 +142,55 @@ class PinnedRuntime:
             return bridge.task_pack_notice(pack)
 
     def submit(self, surface, notice, pack, *, reconcile_only):
+        if "task_controls" in self.campaign:
+            from upgrade_task_dispatch import submit
+            with self.modules("cmux_bridge","cmux_workspace_guard","mac_upgrade_task_bridge_context") as modules:
+                return submit(self,*modules,surface,notice,pack,reconcile_only=reconcile_only)
         with self.modules("cmux_bridge") as (bridge,):
             return bridge.submit_task_pack(surface, notice, pack, confirm_lines=200,
                                            force_compose=False, reconcile_only=reconcile_only)
 
     def settle_callback(self, pack, transcript, line):
+        if "task_controls" in self.campaign:
+            from upgrade_task_callback import reconcile
+            with self.modules("cmux_bridge", "callback_native_evidence", "delivery_receipts", "availability_contract") as modules:
+                return reconcile(self.campaign, pack, *modules, transcript=transcript, line=line)
         with self.modules("cmux_bridge", "callback_native_evidence") as (bridge, callback):
             # The actual foreground supervisor and environment are retained.
             # Never invoke the executor's submit_completion_callback here.
             return callback.reconcile_received(pack, bridge, transcript=transcript, line=line)
 
+    def reconcile_task(self,surface,notice,pack,operation_root):
+        from upgrade_task_reconcile import reconcile
+        with self.modules("cmux_bridge","cmux_workspace_guard","mac_upgrade_task_bridge_context") as modules:
+            return reconcile(self,*modules,surface,notice,pack,operation_root)
+
     def freeze_disarm(self, task_id):
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
-            return freeze_original(self.campaign, task_id, *modules)
+            frozen=freeze_original(self.campaign, task_id, *modules)
+            if "task_controls" in self.campaign:
+                from upgrade_task_disarm import check_frozen
+                check_frozen(self,frozen)
+            return frozen
 
     def observe_disarm(self, frozen):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return observe_original(self.campaign, frozen, *modules)
 
     def disarm(self, frozen):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return invoke_disarm(self.campaign, frozen, *modules)
 
     def recover_disarm(self, frozen, action):
+        if "task_controls" in self.campaign:
+            from upgrade_task_disarm import check_frozen
+            check_frozen(self,frozen)
         with self.modules("mac_harness", "executor_reask_lifecycle", "executor_reask") as modules:
             return invoke_recovery(self.campaign, frozen, action, *modules)
 
@@ -191,6 +220,9 @@ def disarm_sources(campaign, campaign_ref, directory, task_id, terminal):
 @contract_errors("scoped disarm")
 def verify_disarm(co, key, info, terminal):
     """An original return or bounded recovery must prove every reservation gone."""
+    if "task_controls" in co.campaign and not co.fixtures:
+        from upgrade_task_disarm import verify_provenance
+        verify_provenance(co,key,info,terminal)
     lease = co._lease(key, info)
     require(lease["released_at"] is not None and lease["released_by"] == terminal,
             "scoped disarm requires the exact terminal's released lease")
@@ -198,6 +230,9 @@ def verify_disarm(co, key, info, terminal):
     ref = file_ref(checked_path(directory / "disarm.json"))
     record = json_ref(ref)
     args, intent_ref, result_ref = disarm_sources(co.campaign, co.campaign_ref, directory, info["task_id"], terminal)
+    if "task_controls" in co.campaign and not co.fixtures:
+        from upgrade_task_disarm import verify_marker
+        verify_marker(co,key,info,json_ref(args["frozen"]))
     require(set(record) == {"version", "task_id", "terminal", "frozen", "operation_result", "proof_kind", "proof"} and
             type(record["version"]) is int and record["version"] == 3 and
             all(record[k] == v for k, v in args.items()) and record["operation_result"] == result_ref,
@@ -350,6 +385,8 @@ class Transport:
     def _received(self, info):
         bundle = self._bundle(info)
         verify_dispatched(self.campaign, self.co.header, self.node, info, bundle, fixtures=self.co.fixtures)
+        from upgrade_task_input_provenance import publish
+        publish(self,bundle)
         self.co.transition(self.key, State.DISPATCHED, {"delivery": bundle})
         return bundle
 
@@ -416,9 +453,13 @@ class Transport:
                 original_attempts([file_ref(p) for p in sorted(directory.glob("attempt-*.json"))])
                 pack, notice = info["prepared"]["pack"], info["prepared"]["notice"]
                 args = dict(pack=pack, notice=notice, reconcile_only=True)
-                self.journal(info).observation("reconcile-task", args, lambda _: self.runtime.submit(
-                    self.receiver["surface_uuid"], read_ref(notice).decode(),
-                    pack["path"], reconcile_only=True))
+                def observe_original(operation_root):
+                    if "task_controls" in self.campaign and not self.co.fixtures:
+                        return self.runtime.reconcile_task(self.receiver["surface_uuid"],read_ref(notice).decode(),
+                                                           pack["path"],operation_root)
+                    return self.runtime.submit(self.receiver["surface_uuid"],read_ref(notice).decode(),
+                                               pack["path"],reconcile_only=True)
+                self.journal(info).observation("reconcile-task", args, observe_original)
                 return self._received(info)
             return self._uncertain("original dispatch result is absent; no new input")
         except Exception as exc:
@@ -464,55 +505,62 @@ class Transport:
 
     def disarm(self):
         with self.co.node_locks(self.key):
-            state, info = self.current()
-            require(state in (State.ACCEPTED, State.FAILED_PRESERVED), "only a verified terminal task may disarm")
-            if not self.co.fixtures:
-                from orchestration_campaign import require_live_identity
-                require_live_identity(self.campaign)
-            terminal = next(e for e in reversed(self.co.events()) if e["node_id"] == self.key)
-            terminal_ref = file_ref(self.co.root / "events" / f"{terminal['seq']:06d}.json")
-            lease = self.co._lease(self.key, info)
-            require(lease["released_at"] is not None and lease["released_by"] == terminal_ref,
-                    "scoped disarm requires the exact terminal's released lease")
-            path = self.root / "disarm.json"
-            if path.exists():
-                return verify_disarm(self.co, self.key, info, terminal_ref)
-            frozen_path = self.root / "disarm-frozen.json"
-            operation = self.root / "operations/scoped-disarm"
-            recovery_root = self.root / "disarm-recovery"
-            if not frozen_path.exists():
-                require(not operation.exists() and not recovery_root.exists(),
-                        "cannot backfill a frozen marker after original disarm intent")
-                write_json(frozen_path, self.runtime.freeze_disarm(info["task_id"]), exclusive=True)
-            frozen_ref = file_ref(checked_path(frozen_path))
-            frozen = json_ref(frozen_ref)
-            validate_frozen(frozen, info["task_id"], self.campaign["sessions"]["codex"]["workspace_uuid"],
-                            object_sha(self.campaign["controller"]), uuid_semantics=campaign_version(self.campaign) == 3)
-            args = dict(task_id=info["task_id"], terminal=terminal_ref, frozen=frozen_ref)
-            if not (operation / "intent.json").exists():
-                require(not recovery_root.exists(), "recovery has no original disarm intent")
-                try:
-                    self.journal(info).once("scoped-disarm", args, lambda _: self.runtime.disarm(frozen))
-                except PendingOperation:
-                    pass  # Preserve ERROR exactly; recovery is separately numbered.
-            args, intent_ref, result_ref = disarm_sources(self.campaign, self.co.campaign_ref, self.root,
-                                                        info["task_id"], terminal_ref)
-            proof, kind = None, None
-            if result_ref is not None and not recovery_root.exists():
-                result = json_ref(result_ref)
-                if result["status"] == "RETURNED":
-                    try:
-                        validate_result(result["value"], frozen)
-                        require(parse_time(json_ref(intent_ref)["created_at"]) <=
-                                parse_time(result["value"]["before"]["observed_at"]) <=
-                                parse_time(result["value"]["observed_at"]) <= parse_time(result["completed_at"]),
-                                "disarm result outside original operation")
-                        proof, kind = result["value"], "ORIGINAL_RETURN"
-                    except (ContractError, KeyError, TypeError):
-                        pass
-            if kind is None:
-                proof = Recovery(recovery_root, frozen_ref, intent_ref, result_ref, self.runtime).run()
-                kind = "BOUNDED_RECOVERY"
-            record = dict(version=3, **args, operation_result=result_ref, proof_kind=kind, proof=proof)
-            write_json(path, record, exclusive=True)
+            if "task_controls" in self.campaign and not self.co.fixtures:
+                from upgrade_task_disarm import run
+                return run(self)
+            return self._disarm_locked()
+
+    def _disarm_locked(self):
+        """Caller holds the original node locks across action and recovery."""
+        state, info = self.current()
+        require(state in (State.ACCEPTED, State.FAILED_PRESERVED), "only a verified terminal task may disarm")
+        if not self.co.fixtures:
+            from orchestration_campaign import require_live_identity
+            require_live_identity(self.campaign)
+        terminal = next(e for e in reversed(self.co.events()) if e["node_id"] == self.key)
+        terminal_ref = file_ref(self.co.root / "events" / f"{terminal['seq']:06d}.json")
+        lease = self.co._lease(self.key, info)
+        require(lease["released_at"] is not None and lease["released_by"] == terminal_ref,
+                "scoped disarm requires the exact terminal's released lease")
+        path = self.root / "disarm.json"
+        if path.exists():
             return verify_disarm(self.co, self.key, info, terminal_ref)
+        frozen_path = self.root / "disarm-frozen.json"
+        operation = self.root / "operations/scoped-disarm"
+        recovery_root = self.root / "disarm-recovery"
+        if not frozen_path.exists():
+            require(not operation.exists() and not recovery_root.exists(),
+                    "cannot backfill a frozen marker after original disarm intent")
+            write_json(frozen_path, self.runtime.freeze_disarm(info["task_id"]), exclusive=True)
+        frozen_ref = file_ref(checked_path(frozen_path))
+        frozen = json_ref(frozen_ref)
+        validate_frozen(frozen, info["task_id"], self.campaign["sessions"]["codex"]["workspace_uuid"],
+                        object_sha(self.campaign["controller"]), uuid_semantics=campaign_version(self.campaign) == 3)
+        args = dict(task_id=info["task_id"], terminal=terminal_ref, frozen=frozen_ref)
+        if not (operation / "intent.json").exists():
+            require(not recovery_root.exists(), "recovery has no original disarm intent")
+            try:
+                self.journal(info).once("scoped-disarm", args, lambda _: self.runtime.disarm(frozen))
+            except PendingOperation:
+                pass  # Preserve ERROR exactly; recovery is separately numbered.
+        args, intent_ref, result_ref = disarm_sources(self.campaign, self.co.campaign_ref, self.root,
+                                                    info["task_id"], terminal_ref)
+        proof, kind = None, None
+        if result_ref is not None and not recovery_root.exists():
+            result = json_ref(result_ref)
+            if result["status"] == "RETURNED":
+                try:
+                    validate_result(result["value"], frozen)
+                    require(parse_time(json_ref(intent_ref)["created_at"]) <=
+                            parse_time(result["value"]["before"]["observed_at"]) <=
+                            parse_time(result["value"]["observed_at"]) <= parse_time(result["completed_at"]),
+                            "disarm result outside original operation")
+                    proof, kind = result["value"], "ORIGINAL_RETURN"
+                except (ContractError, KeyError, TypeError):
+                    pass
+        if kind is None:
+            proof = Recovery(recovery_root, frozen_ref, intent_ref, result_ref, self.runtime).run()
+            kind = "BOUNDED_RECOVERY"
+        record = dict(version=3, **args, operation_result=result_ref, proof_kind=kind, proof=proof)
+        write_json(path, record, exclusive=True)
+        return verify_disarm(self.co, self.key, info, terminal_ref)

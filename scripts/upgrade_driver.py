@@ -274,6 +274,19 @@ class Driver:
         return self.once(group + "-bootstrap", "bootstrap",
             lambda: publish_bootstrap(runtime_ref, campaign_ref, instructions_ref), observed)
 
+    def _task_owner(self, group, runtime_ref, runtime, spec, campaign_path):
+        from upgrade_task_owner_contract import observe_owner
+        path = self.root / "groups" / group / "task-owner.json"
+        original = json_ref(file_ref(path)) if path.exists() else None
+        if original is not None:
+            require(original.get("runtime") == runtime_ref, "TASK_DRIVER_OWNER_RUNTIME_CHANGED")
+        result = observe_owner(runtime_ref, runtime, spec, campaign_path,
+                               driver_ref=self.ref,
+                               original=None if original is None else original["owner"])
+        if original is None and result["owner"] is not None:
+            write_json(path, dict(runtime=runtime_ref, owner=result["owner"]), exclusive=True)
+        return result
+
     def _clock(self, stamp, key):
         return elapsed(dict(started_at=stamp[key], created_at=stamp[key],
             started_monotonic_ns=stamp["monotonic_ns"], boot_id=stamp["boot_id"], launch_start=None))
@@ -409,6 +422,8 @@ class Driver:
         _, runtime = validate_live_runtime(runtime_ref)
         runtime_observation(self.registration, runtime_ref, runtime)
         spec = json_ref(runtime["startup"])
+        from upgrade_startup_contract import TASK_SCHEMA
+        task_mode = spec.get("schema") == TASK_SCHEMA
         group_info = group_registration(self.registration_ref, group, runtime["context"], runtime["arm"])
         context = json_ref(runtime["context"])
         campaign_path = Path(context["paths"]["campaigns"]) / runtime["arm"] / group_info["campaign_id"] / "campaign.json"
@@ -449,6 +464,15 @@ class Driver:
         bootstrap_action = self.root / "actions" / (group + "-bootstrap")
         bootstrapped = (bootstrap_action / "result.json").exists() or (
             (bootstrap_action / "intent.json").exists() and (Path(spec["adoption_path"]).parent / "bootstrap.json").exists())
+        task_owner = None
+        if task_mode:
+            # This topology has one retained connection owner. The schedule
+            # driver observes its adoption/attachment; it must not publish an
+            # old bootstrap or create a competing adoption attempt.
+            require(not (bootstrap_action / "intent.json").exists(),
+                    "TASK_DRIVER_LEGACY_BOOTSTRAP_REFUSED")
+            task_owner = self._task_owner(group, runtime_ref, runtime, spec, campaign_path)
+            bootstrapped = task_owner["campaign_attachment"] is not None
         if not bootstrapped:
             if startup_clock["seconds"] is None:
                 return self.halt("Original startup clock cannot be measured", "UNKNOWN", [launch_ref])
@@ -460,6 +484,8 @@ class Driver:
                 return dict(status="WAITING_ORIGINAL_LAUNCH", step=step, input_operations=0)
             require_running(self.registration_ref)
             self._check_overall_deadline()
+            if task_mode:
+                return dict(task_owner, step=step)
             result = control(runtime_ref, "adopt")
             failure = self.startup_failure(runtime_ref, result)
             if failure is not None:
@@ -478,9 +504,13 @@ class Driver:
         require(campaign["runtime"] == runtime_ref and campaign["registration"] == self.registration_ref,
                 "original frozen campaign changed")
         if not bootstrapped:
+            if task_mode:
+                return dict(status="WAITING_ORIGINAL_TASK_CAMPAIGN_ATTACH", step=step,
+                            owner=task_owner["owner"], input_operations=0)
             return dict(self._bootstrap(group, runtime_ref, spec, campaign_ref), step=step)
         # Validate the immutable publication, including a crash with no result.
-        self._bootstrap(group, runtime_ref, spec, campaign_ref)
+        if not task_mode:
+            self._bootstrap(group, runtime_ref, spec, campaign_ref)
         failure = self.supervisor_failure(campaign_ref, campaign)
         if failure is not None and failure["status"] != "WAITING_NATIVE_OBSERVATION":
             return failure

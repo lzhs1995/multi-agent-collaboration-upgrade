@@ -70,11 +70,39 @@ print(json.dumps(modules, sort_keys=True))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ModuleNotFoundError: No module named 'mac_upgrade_toml'", result.stderr)
 
+    def test_private_readiness_service_cannot_enter_external_campaign_input(self):
+        result=self.probe('''
+from mac_upgrade_task_actor import TaskService
+from mac_upgrade_common import ContractError
+service=object.__new__(TaskService)
+try:
+    service.start_next_turn({})
+except ContractError as exc:
+    assert str(exc)=="TASK_SERVICE_EXTERNAL_CAMPAIGN_INPUT_REQUIRED"
+else:
+    raise AssertionError("private startup service sent business input")
+assert "upgrade_task_enrollment" not in sys.modules
+assert "upgrade_task_campaign" not in sys.modules
+''')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_missing_private_parser_dependency_has_no_public_fallback(self):
         (self.scripts / "mac_upgrade_toml_re.py").unlink()
         result = self.probe("import mac_upgrade_client_isolation")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ModuleNotFoundError: No module named 'mac_upgrade_toml_re'", result.stderr)
+
+    def test_private_task_reader_refuses_old_contract_without_source_fallback(self):
+        result = self.probe('''
+from mac_upgrade_task_adoption import read
+from mac_upgrade_common import ContractError
+try:read({'task_startup':{}})
+except ContractError as exc:assert str(exc)=='TASK_ADOPTION_RUNTIME_POLICY_REQUIRED'
+else:raise AssertionError('legacy TASK admitted')
+assert not any(n.startswith('upgrade_') for n in sys.modules)
+assert 'mac_upgrade_live_control' not in sys.modules
+''')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 
 if __name__ == "__main__":

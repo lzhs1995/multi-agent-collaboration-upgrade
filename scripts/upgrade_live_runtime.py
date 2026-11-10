@@ -245,6 +245,9 @@ def validate_adoption_candidate(runtime_ref, proof, *, runtime=None, allow_stopp
     spec = json_ref(runtime["startup"])
     if not allow_stopped:
         require(not os.path.lexists(spec["stop_path"]), "EXPERIMENT_STOP_REQUESTED")
+    if spec.get('schema') == 'upgrade-startup-task-v1':
+        from upgrade_task_adoption_publisher import verify_candidate
+        return verify_candidate(runtime_ref, runtime, spec, proof, allow_stopped=allow_stopped)
     require(proof.get("schema") == "upgrade-live-adoption-v2"
             and proof.get("runtime") == runtime_ref and proof.get("startup") == runtime["startup"]
             and proof.get("verified") is True and proof.get("input_operations") == 0,

@@ -343,6 +343,9 @@ def prepared_supervisor(campaign, node, gate, info=None):
 @contract_errors("prepared task")
 @native_verification
 def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_harness import verify_prepared_harness
+        verify_prepared_harness(campaign,header,node,info)
     require(set(proof) == {"pack", "notice", "handshake", "identity_gate", "validation"},
             "complete prepared-task evidence required")
     directory = node_directory(campaign, header, node)
@@ -354,6 +357,9 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
             proof["notice"]["path"] == str(directory / "task-notice.txt"), "prepared task paths changed")
     pack = json_ref(pack_ref, "finalized task pack")
     gate = json_ref(proof["identity_gate"], "identity gate")
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_bridge import verify_gate
+        verify_gate(campaign,header,node,info,gate)
     supervisor = prepared_supervisor(campaign, node, gate, info)
     if campaign_version(campaign) == 3:
         from orchestration_pack_inputs import verify_inputs
@@ -395,6 +401,9 @@ def verify_prepared(campaign, header, node, info, proof, *, fixtures=False):
     handshake_notice = read_ref(proof["handshake"]["notice"]).decode()
     handshake_delivery = verify_delivery(proof["handshake"]["delivery"], receiver, sender, handshake_notice, fixtures=fixtures,
                                          uuid_semantics=campaign_version(campaign) == 3)
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_sender_evidence import verify_delivery_source
+        verify_delivery_source(handshake_delivery,file_ref(directory/"operations/preflight/task-actor.json"))
     body = handshake.get("dispatch_body_reference")
     if body:
         require(proof["handshake"].get("body") == {k: body[k] for k in ("path", "sha256", "bytes")}, "handshake body pin changed")
@@ -444,10 +453,18 @@ def _dispatch_intent(campaign, header, node, info, ref, prepared, *, fixtures):
 @contract_errors("task delivery")
 @native_verification
 def verify_dispatched(campaign, header, node, info, bundle, *, fixtures=False):
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_dispatch import verify_provenance
+        root=node_directory(campaign,header,node)
+        actor=file_ref(root/"operations/submit-task-pack/task-actor.json")
+        verify_provenance(campaign,header,node,info,actor)
     prepared = verify_prepared(campaign, header, node, info, info["prepared"], fixtures=fixtures)
     intent = _dispatch_intent(campaign, header, node, info, info["dispatch_intent"], prepared, fixtures=fixtures)
     delivered = verify_delivery(bundle, campaign["sessions"][claim_lane(node, info)], campaign["sessions"]["codex"],
                                 prepared["notice"], fixtures=fixtures, uuid_semantics=campaign_version(campaign) == 3)
+    if "task_controls" in campaign and not fixtures:
+        from upgrade_task_sender_evidence import verify_delivery_source
+        verify_delivery_source(delivered,actor)
     binding = delivered["attempt"]["binding"]
     require(binding.get("task_id") == info["task_id"] and binding.get("marker") == info["task_id"] and
             binding.get("task_pack_sha256") == info["prepared"]["pack"]["sha256"], "dispatch task/pack hash mismatch")
@@ -546,7 +563,7 @@ def validate_candidate(campaign, header, node, info, ref, *, fixtures=False, rer
     else:
         require(evidence["review_kind"] == "solo_self_review", "local work must use solo_self_review")
     readers[lane].action_summary(lower, ends[lane], task_id=info["task_id"],
-        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     return evidence
 
 
@@ -657,7 +674,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         # this boundary, even when the transport claims it did not send input.
         observation = readers[lane].action_summary(info["native_start"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         require(observation["attempted_task_calls"] == 0, "business action contradicts zero-input claim")
         require(not value["output_tree"]["files"] and not value["output_tree"]["directories"],
                 "zero-input settlement requires genuinely empty output")
@@ -668,7 +685,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         require(protocol["callback_at"] <= at, "failure settlement precedes original callback")
         observation = readers[lane].action_summary(protocol["delivery_record"]["offset"], ends[lane],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         last = observation["last_potential_write_at" if campaign_effect_policy(campaign) else "last_action_at"]
         require(last is None or parse_time(last) <= protocol["callback_at"],
                 "output work continued after callback")
@@ -676,7 +693,7 @@ def verify_failure_value(campaign, header, node, info, value, *, fixtures=False,
         require(reason == "local_boundary" and info["mode"] == "local_cli", "no proven terminal write boundary")
         readers["codex"].action_summary(info["native_start"]["offset"], value["failure_native"]["offset"],
                         task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                        effect_policy=campaign_effect_policy(campaign))
+                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     return dict(status="FAILED_PRESERVED", evidence_class=evidence_class(campaign, "verified_cli_failure", fixtures),
                 **task_identity(campaign, header, node), settled_at=at.isoformat(), boundary=reason)
 
@@ -724,7 +741,7 @@ def verify_node(campaign, header, node, info, evidence, *, fixtures=False, rerun
                 "local work requires honest solo_self_review; no invented self ACK/callback")
         action_start, action_end = start, acceptance["offset"]
     action = readers[lane].action_summary(action_start, action_end, task_id=info["task_id"],
-        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign))
+        output_root=info["output_root"], effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
     first = parse_time(action["first_action_at"])
     require(parse_time(info["started_at"]) <= first <= accepted_at, "useful action lies outside node lifetime")
     if protocol:

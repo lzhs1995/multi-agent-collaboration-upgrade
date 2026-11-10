@@ -13,7 +13,7 @@ import uuid
 
 from orchestration_common import (ContractError, digest, file_ref, json_ref, parse_time, read_regular,
                                   require, strict_json)
-from upgrade_startup_contract import (GOAL_SCHEMA, is_readiness_command, pressure_startup_prompt,
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, is_readiness_command, pressure_startup_prompt,
                                       readiness_command, readiness_prompt)
 
 
@@ -85,7 +85,7 @@ def command_in_tool(arguments, command, keys):
     return is_readiness_command(executed_command(arguments, keys), command)
 
 
-def completed_probe(value, lane, spec):
+def completed_probe(value, lane, spec, *, observer_binding=None):
     """Recognize the actual probe result inside supported native tool envelopes."""
     expected = dict(status="UPGRADE_READINESS_TOOL_COMPLETED", lane=lane,
                     native_root=spec["clients"][lane]["native_root"],
@@ -99,7 +99,14 @@ def completed_probe(value, lane, spec):
                     or item.get("status") in ("running", "pending", "rejected")
                     or (item.get("session_id") is not None and item.get("exit_code") is None)):
                 failed.append(True)
-            if item == expected:
+            if observer_binding is None:
+                if item == expected:
+                    found.append(item)
+            elif set(item) == set(expected) | {'task_observer'} and all(item[k] == v for k,v in expected.items()):
+                from upgrade_task_observer_evidence import verify
+                verify(item['task_observer'], observer_binding,
+                       file_ref(Path(observer_binding['config_root'])/'startup-v2.json'),
+                       'codex-server' if lane == 'codex' else lane)
                 found.append(item)
             for key in ("content", "output", "value", "text"):
                 if key in item:
@@ -130,7 +137,10 @@ def completed_probe(value, lane, spec):
 
 
 def hook_matches(value, call, session, lane, spec, launches):
-    if (value.get("schema") != "upgrade-automatic-hook-observation-v2"
+    from upgrade_startup_contract import TASK_SCHEMA
+    schema=("upgrade-automatic-task-hook-observation-v1" if spec.get("schema")==TASK_SCHEMA and lane=="codex"
+            else "upgrade-automatic-hook-observation-v2")
+    if (value.get("schema") != schema
             or value.get("lane") != lane or value.get("startup") != call["startup"]
             or value.get("adoption_proven") is not False
             or value.get("direct_client") not in ((lane, "codex-server") if lane == "codex" else (lane,))):
@@ -267,7 +277,7 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         spec = stage_view(spec, stage)
     command = readiness_command(spec["controller"], spec["pins"]["python"]["path"],
                                 spec["pins"]["rtk"]["path"], lane)
-    goal_mode = spec.get("schema") == GOAL_SCHEMA and stage is None
+    goal_mode = spec.get("schema") in (GOAL_SCHEMA, TASK_SCHEMA) and stage is None
     prompt = (stage["prompts"][lane] if stage is not None else
               pressure_startup_prompt(lane, spec["lane_instructions"], spec["goal_startup"])
               if goal_mode else readiness_prompt(spec["controller"], spec["pins"]["python"]["path"],
@@ -351,8 +361,10 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
     require(len(prompts) == 1, "ORIGINAL_STARTUP_PROMPT_NOT_OBSERVED")
     require(len(calls) == call_count == 1, "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED")
     call = next(iter(calls.values()))
+    from upgrade_task_observer_evidence import enabled as observer_enabled, hook as observer_hook
+    observer_binding = binding if observer_enabled(binding) else None
     completed = [(ref, value) for ref, value in results.get(call["id"], [])
-                 if completed_probe(value, lane, spec)
+                 if completed_probe(value, lane, spec, observer_binding=observer_binding)
                  and ref["offset"] > call["record"]["offset"]]
     require(len(completed) == len(results.get(call["id"], [])) == 1, "READINESS_TOOL_RESULT_NOT_OBSERVED")
     require(prompts[0]["offset"] < call["record"]["offset"], "READINESS_PRECEDES_STARTUP_INPUT")
@@ -390,8 +402,12 @@ def readiness_evidence(native, session, lane, spec, startup_ref, binding, launch
         ref = file_ref(path)
         value = json_ref(ref, "automatic hook observation")
         if hook_matches(value, call, session, lane, spec, launches):
+            if observer_binding is not None:
+                observer_hook(value, binding, startup_ref)
             matched[value["payload"]["hook_event_name"]].append(ref)
         if nested is not None and hook_matches(value, nested, session, lane, spec, launches):
+            if observer_binding is not None:
+                observer_hook(value, binding, startup_ref)
             nested_matched[value["payload"]["hook_event_name"]].append(ref)
     used_nested = not all(matched.values()) and all(nested_matched.values())
     if used_nested:

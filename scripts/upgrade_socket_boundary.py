@@ -111,12 +111,14 @@ def extend_profile(profile, value):
                              for k in ("physical", "lock")).encode()
 
 
-def verify_kernel(pid, value, *, writer):
+def verify_kernel(pid, value, *, writer, physical_unlink_denied=False):
     from upgrade_client_isolation import sandbox_check
     # Darwin sandbox_check reports deny for absent literal paths even when the
     # corresponding create/bind succeeds. Never treat that query as evidence
     # about creation rights: this is a live-only check of existing endpoints.
     validate_boundary(value, value["advertised"], live=True)
+    require(type(physical_unlink_denied) is bool and (writer or not physical_unlink_denied),
+            "SOCKET_UNLINK_POLICY_INVALID")
     identities = {k: (Path(value[k]).lstat().st_dev, Path(value[k]).lstat().st_ino)
                   for k in ("advertised", "physical", "lock")}
     directory = Path(value["physical"]).parent
@@ -124,14 +126,16 @@ def verify_kernel(pid, value, *, writer):
     require(all(sandbox_check(pid, p, operation) for p in denied
                 for operation in ("file-write-data", "file-write-create", "file-write-unlink")),
             "SOCKET_SHARED_DIRECTORY_WRITE_ALLOWED")
-    require(all(sandbox_check(pid, value[k], operation) == (not writer)
+    require(all(sandbox_check(pid, value[k], operation) ==
+                (not writer or (physical_unlink_denied and k == "physical" and operation == "file-write-unlink"))
                 for k in ("physical", "lock")
                 for operation in ("file-write-data", "file-write-create", "file-write-unlink")),
             "SOCKET_EXACT_KERNEL_SCOPE_CHANGED")
     validate_boundary(value, value["advertised"], live=True)
     require(identities == {k: (Path(value[k]).lstat().st_dev, Path(value[k]).lstat().st_ino)
                            for k in identities}, "SOCKET_CHANGED_DURING_KERNEL_CHECK")
-    return dict(pid=pid, writer=writer, exact_paths=[value["physical"], value["lock"]],
+    return dict(pid=pid, writer=writer, physical_unlink_denied=physical_unlink_denied,
+                exact_paths=[value["physical"], value["lock"]],
                 shared_directory_writable=False, kernel_checked=True,
                 existing_endpoint_identities=identities)
 

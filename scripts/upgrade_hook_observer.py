@@ -13,9 +13,17 @@ import sys
 import time
 import uuid
 
-from orchestration_common import file_ref, read_regular, write_json
+from orchestration_common import file_ref, object_sha, read_regular, require, write_json
 from upgrade_native_roots import configuration
 from upgrade_startup_contract import continuity_registration_enabled
+
+
+def task_call_directory(binding, startup_ref, session_id, call_id):
+    """Exact new-task lookup key, not authentication or a newest-file selector."""
+    require(all(isinstance(value,str) and 0<len(value.encode())<=4096
+                for value in (session_id,call_id)), "TASK_HOOK_SCOPE_INVALID")
+    scope=object_sha(dict(startup=startup_ref,session_id=session_id,call_id=call_id))
+    return Path(binding["state_root"])/"hook-observations/codex/task-calls"/scope
 
 
 def hook_parents(expected_command, launches):
@@ -116,7 +124,17 @@ def record(payload, *, original_hook, scope_status=None):
         lane=lane, hook=original_hook, command=expected, configuration=hooks_ref,
         observed_at_ns=time.time_ns(), pid=os.getpid(), parents=parents, direct_client=client,
         payload=selected, scope_status=scope_status, adoption_proven=False, native_reception=False)
+    from upgrade_task_observer_evidence import enabled, capture
+    if (enabled(binding) and event in ('PreToolUse', 'PostToolUse')
+            and client in ('codex-server', 'claude_a', 'claude_b')):
+        value['task_observer'] = capture(binding, startup_ref, client, parents=parents)
     directory = Path(binding["state_root"]) / "hook-observations" / lane
+    from upgrade_startup_contract import TASK_SCHEMA
+    if spec.get("schema")==TASK_SCHEMA and lane=="codex" and event in ("PreToolUse","PostToolUse"):
+        sid=selected.get("session_id",selected.get("sessionId"))
+        call=selected.get("tool_use_id",selected.get("call_id",selected.get("tool_call_id")))
+        directory=task_call_directory(binding,startup_ref,sid,call)
+        value["schema"]="upgrade-automatic-task-hook-observation-v1"
     ref = write_json(directory / (str(value["observed_at_ns"]) + "-" + uuid.uuid4().hex + ".json"),
                      value, exclusive=True)
     Path(ref["path"]).chmod(0o400)

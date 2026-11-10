@@ -132,7 +132,8 @@ def decision_argument_fields(decision):
 
 
 def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, marker=None,
-                   decision=None, decision_fields=None):
+                   decision=None, decision_fields=None, boundary=None, reason=None, observation=None,
+                   advisory_registration=None):
     """Exact native supervisor tool request used to bind start/accept timestamps.
 
     This is returned for the supervisor to invoke, never appended to a journal by
@@ -148,6 +149,14 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
     they are appended in that frozen order so the reconstructed script and the
     original native call can only ever agree byte for byte.
     """
+    if "task_controls" in campaign:
+        from upgrade_task_campaign import campaign_control
+        return campaign_control(campaign, campaign_ref, action, run_id, node_id=node_id,
+                                marker=marker, decision=decision, decision_fields=decision_fields,
+                                boundary=boundary, reason=reason,observation=observation,
+                                advisory_registration=advisory_registration)
+    require(boundary is None and reason is None and observation is None and advisory_registration is None,
+            "typed operation fields require explicit task controls")
     argv = ["rtk", "proxy", campaign["python"]["path"], "-B",
             str(Path(campaign["adapter"]["path"]) / "scripts" / "orchestration_run.py"),
             "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"],
@@ -171,6 +180,13 @@ def control_script(campaign, campaign_ref, action, run_id, *, node_id=None, mark
 
 
 def native_control(reader, ref, script):
+    if isinstance(script,dict):
+        from upgrade_task_control import native_invocation
+        require("task_invocation" in ref, "TASK_CONTROL_TYPED_EVIDENCE_REQUIRED")
+        result=native_invocation(reader,ref["task_invocation"],script,allow_intended=True)
+        require({k:v for k,v in ref.items() if k!="task_invocation"}==result["native"],
+                "TASK_CONTROL_NATIVE_REFERENCE_CHANGED")
+        return result["at"]
     record = reader.record(ref)
     payload = record.get("payload", {})
     require(record.get("type") == "response_item" and payload.get("type") == "custom_tool_call" and
@@ -180,6 +196,12 @@ def native_control(reader, ref, script):
 
 
 def find_control(reader, script, *, after=0):
+    if isinstance(script,dict):
+        from upgrade_task_control import native_invocation
+        evidence=file_ref(Path(script["evidence_directory"])/(script["operation_id"]+".json"))
+        result=native_invocation(reader,evidence,script,allow_intended=True)
+        require(result["native"]["offset"]>=after, "TASK_CONTROL_BEFORE_ORIGINAL_FENCE")
+        return dict(result["native"],task_invocation=evidence)
     end = reader.snapshot()["offset"]
     matches = []
     for ref, record in reader.records(after, end):
@@ -236,8 +258,9 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
                 and set(registrations) == {r["run_id"] for r in campaign.get("runs") or [] if isinstance(r, dict)},
                 "input provenance needs exactly one frozen producer registration per run")
         from upgrade_input_provenance import registered_producers
+        from upgrade_task_input_provenance import validate_campaign_producers
         for run_id, ref in registrations.items():
-            registered_producers(ref, run_id)
+            validate_campaign_producers(campaign,registered_producers(ref,run_id))
     else:
         require("input_provenance" not in campaign, "input provenance belongs to its own metric definition")
     require(finite(campaign.get("minimum_improvement_percent"), "improvement threshold") == 15,
@@ -343,6 +366,9 @@ def validate_campaign(ref, *, fixtures=False, check_runtime=True):
             verify_tree(campaign[name])
         read_ref(campaign["python"], "frozen Python")
         require(str(Path(sys.executable).resolve()) == campaign["python"]["path"], "use the frozen Python executable")
+    if "task_controls" in campaign:
+        from upgrade_task_campaign import validate_controls
+        validate_controls(campaign, fixtures=fixtures)
     return campaign
 
 
@@ -427,6 +453,9 @@ def canonical_live_uuids(session):
 
 
 def require_live_identity(campaign):
+    if "task_controls" in campaign:
+        from upgrade_task_enrollment import current_identity
+        return current_identity(campaign)
     observed = collect_live_sessions(campaign)
     require(set(observed) == set(campaign["sessions"]), "original live session lanes missing")
     for lane, actual in observed.items():

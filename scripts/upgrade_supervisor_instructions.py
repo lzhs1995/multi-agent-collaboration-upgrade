@@ -58,6 +58,9 @@ def render(campaign_ref):
     campaign = validate_campaign(campaign_ref)
     require(campaign.get("version") == 3 and campaign.get("evidence_class") == "cli_campaign_v3",
             "supervisor instructions require the original live v3 campaign")
+    if "task_controls" in campaign:
+        from upgrade_task_instructions import initial_text
+        return initial_text(campaign_ref)
     command = shlex.join(["rtk", "proxy", campaign["python"]["path"], "-B",
         str(Path(campaign["adapter"]["path"]) / "scripts/orchestration_run.py"),
         "--campaign", campaign_ref["path"], "--campaign-sha256", campaign_ref["sha256"]])

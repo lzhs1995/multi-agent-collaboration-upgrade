@@ -202,6 +202,10 @@ def freeze_campaign(request_ref):
             # This explicit S2-only copy is outside the 84-file corpus tree.
             write_bytes_once(root / BODY_PATH, read_ref(registration["semantic_input"], "S2 semantic input"))
             campaign["semantic_input"] = file_ref(root / BODY_PATH)
+        from upgrade_task_campaign import original_controls
+        task_controls = original_controls(campaign, runtime)
+        if task_controls is not None:
+            campaign['task_controls'] = task_controls
         # Re-read the same adopted original files, including their current model.
         # A fresh external native inventory is verified again by every real run.
         capture_adopted_sessions(request["runtime"], request["adoption"])

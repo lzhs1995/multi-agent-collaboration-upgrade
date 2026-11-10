@@ -16,7 +16,21 @@ PRIVATE_MODULES = {name: "mac_" + name for name in (
     "upgrade_body_read", "upgrade_toml", "upgrade_toml_re",
     "upgrade_child_hook", "upgrade_child_budget_protocol", "upgrade_native_outcomes", "upgrade_startup_continuity",
     "upgrade_readiness_evidence", "upgrade_stage_fence", "upgrade_existing_workspace",
-    "upgrade_codex_package")}
+    "upgrade_codex_package", "upgrade_rpc_peer", "upgrade_dynamic_route", "upgrade_task_rpc",
+    "upgrade_task_operations", "upgrade_task_creation", "upgrade_task_thread",
+    "upgrade_task_startup", "upgrade_task_actor", "upgrade_task_socket_policy", "upgrade_task_tui", "upgrade_task_roles",
+    "upgrade_task_readiness", "upgrade_task_hook_preflight", "upgrade_task_control", "upgrade_task_bindings", "upgrade_task_network",
+    "upgrade_task_descriptors", "upgrade_task_target", "upgrade_task_target_contract",
+    "upgrade_task_callback_client", "upgrade_task_callback_sender", "upgrade_task_callback_route",
+    "upgrade_task_callback_contract", "upgrade_task_bridge_context", "upgrade_task_sender",
+    "upgrade_task_busy_evidence",
+    "upgrade_task_message_wire", "upgrade_task_message_sender", "upgrade_task_message_contract", "upgrade_task_message_route",
+    "upgrade_task_streams",
+    "upgrade_task_observer_protocol", "upgrade_task_observer_client", "upgrade_task_observer_routes",
+    "upgrade_task_observer_budget",
+    "upgrade_task_observer_evidence", "upgrade_task_mach_policy", "upgrade_task_fd_contract",
+    "upgrade_task_adoption_evidence", "upgrade_task_runtime_policy", "upgrade_task_adoption",
+    "upgrade_cmux_inventory")}
 PRIVATE_MODULES["orchestration_common"] = "mac_upgrade_common"
 
 
@@ -808,6 +822,19 @@ def live_gates(name, text):
     return text
 
 
+def explicit_harness_main(text):
+    """Same original parser/dispatch for CLI or a bounded in-process caller."""
+    text = replace_once(text, "def main():\n", "def main(argv=None):\n"
+        "    raw_argv = list(sys.argv[1:] if argv is None else argv)\n"
+        "    if raw_argv and raw_argv[0] in ('experiment-launch', 'experiment-client', 'experiment-inspect'):\n"
+        "        from upgrade_live_entry import main as experiment_main\n"
+        "        raise SystemExit(experiment_main(raw_argv))\n")
+    text = replace_once(text, "    args = p.parse_args()", "    args = p.parse_args(raw_argv)")
+    if "    raw_argv = sys.argv[1:]\n" in text:
+        text = replace_once(text,"    raw_argv = sys.argv[1:]\n","")
+    return text
+
+
 def transform_live(name, text, paths, controller, *, compatibility):
     original = text
     text = native_readers(name, text)
@@ -815,13 +842,20 @@ def transform_live(name, text, paths, controller, *, compatibility):
     before_gates = text
     text = live_gates(name, text)
     gates_changed = text != before_gates
+    from upgrade_task_target_patch import task_target_paths
+    before_target = text
+    text = task_target_paths(name, text)
+    task_target_changed = text != before_target
+    from upgrade_task_bridge_patch import task_bridge_paths
+    before_bridge = text
+    text = task_bridge_paths(name,text)
+    from upgrade_task_observer_patch import task_observer_paths
+    text = task_observer_paths(name,text)
+    task_bridge_changed = text != before_bridge
     if name == "mac_harness.py":
         # This remains the harness double gate, with a structured, pinned
         # startup contract. It never uses the legacy paste-to-shell launcher.
-        text = replace_once(text, "def main():\n", "def main():\n"
-            "    if len(sys.argv) > 1 and sys.argv[1] in ('experiment-launch', 'experiment-client', 'experiment-inspect'):\n"
-            "        from upgrade_live_entry import main as experiment_main\n"
-            "        raise SystemExit(experiment_main(sys.argv[1:]))\n")
+        text = explicit_harness_main(text)
     text, changes = transform_python(name, text, paths, controller, compatibility=compatibility)
     text = replace_once(text, "_upgrade_install_scope()", "_upgrade_install_scope(live=True)")
     text = private_imports(text)
@@ -830,6 +864,10 @@ def transform_live(name, text, paths, controller, *, compatibility):
         changes.append("authenticated_private_native_roots")
     if gates_changed:
         changes.append("original_input_adoption_gate_or_automatic_hook_observer")
+    if task_target_changed:
+        changes.append("explicit_task_target_original_native_delivery")
+    if task_bridge_changed:
+        changes.append("explicit_original_actor_bridge")
     if name == "mac_harness.py":
         changes.append("structured_experiment_startup_double_gate")
         changes.append("exact_bridge_probe_screen_evidence")

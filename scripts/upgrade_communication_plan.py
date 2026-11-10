@@ -199,9 +199,13 @@ def resolve_sample(campaign, sample):
             f"point={sample['stage']}; claim={claim_pin['sha256']}; binding={binding_sha}; "
             "no reply required; not business acceptance.")
     helper, identities = _route(campaign)
+    command = _bound_command(campaign, sample['request_id'])
+    if 'task_controls' in campaign and sender == 'codex':
+        from upgrade_task_communication import control
+        command = control(campaign, 'communication-send', sample['request_id'])
     return dict(sample, sender=sender, receiver=receiver, body=body, helper=helper,
         sender_surface_uuid=identities[sender], receiver_surface_uuid=identities[receiver],
-        command=_bound_command(campaign, sample["request_id"]),
+        command=command,
         helper_command=_send_command(helper, identities[receiver], sample["request_id"], body),
         resolution="ORIGINAL_CLAIM_PINNED", claimed_peer=peer,
         binding_resolution_pins=dict(run=header_pin, claim=claim_pin, executor_binding=binding_pin))
@@ -231,6 +235,11 @@ def campaign_plan(campaign):
         command = _send_command(helper, receiver, sample["request_id"], sample["body"])
         result.append(dict(sample, helper=helper, sender_surface_uuid=identities[sample["sender"]],
                            receiver_surface_uuid=receiver, command=command))
+    if 'task_controls' in campaign:
+        from upgrade_task_communication import control
+        for sample in result:
+            if sample['sender'] == 'codex':
+                sample['command'] = control(campaign, 'communication-send', sample['request_id'])
     return result
 
 
@@ -238,6 +247,11 @@ def supervisor_messages(campaign):
     samples = [s for s in campaign_plan(campaign) if s["sender"] == "codex"]
     if not samples:
         return ""
+    if 'task_controls' in campaign:
+        return ('\nOriginal ordinary communication: choose each registered communication-send operation '
+                'once at its named after_dispatch or before_accept boundary. Original claim resolution '
+                'determines the Claude peer. These samples are not task acceptance. Claude still sends '
+                'its own before_business/after_business commands; do not execute those on its behalf.\n')
     lines = ["\nAdditional warm-run communication sampling (identical A1/B load).", RULES,
              "For each listed Claude node, execute after_dispatch immediately after its original dispatch "
              "returns, and before_accept after its original callback is verified and immediately before "
@@ -310,6 +324,9 @@ def send_sample(campaign, request_id):
     # The helper owns all original input intents, deduplication, shared locks,
     # native checks and receipts. Inherit stdout/stderr without reconstructing
     # its result. The caller collects this one process, even after exit 75.
+    if 'task_controls' in campaign:
+        from upgrade_task_message_source import send
+        return send(campaign,sample,'ordinary')
     return subprocess.run(shlex.split(sample["helper_command"]), check=False).returncode
 
 

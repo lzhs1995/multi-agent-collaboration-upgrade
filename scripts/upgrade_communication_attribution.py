@@ -23,7 +23,7 @@ ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError,
           OverflowError, RecursionError, Uncertain)
 
 
-def _original(sample, campaign, state, readers, starts, ends, not_before, not_after):
+def _original(sample, campaign, state, readers, starts, ends, not_before, not_after, *, fixtures=False):
     sender, receiver = (campaign["sessions"][sample[k]] for k in ("sender", "receiver"))
     identity = canonical_identity(dict(workspace_uuid=receiver["workspace_uuid"], caller_surface_uuid=sender["surface_uuid"],
                     target_surface_uuid=receiver["surface_uuid"], target_pane_uuid=receiver["pane_uuid"]))
@@ -50,11 +50,17 @@ def _original(sample, campaign, state, readers, starts, ends, not_before, not_af
     attempt, attempt_pin = json_file(journal / "attempt-0001.json")
     expected_binding = original_dispatch_binding(attempt, journal, identity, marker, payload)
     binding = attempt["native_binding"]
-    need(binding.get("schema") == "native-delivery-v1" and binding.get("identity") == expected_binding["identity"]
+    need(binding.get("schema") in ("native-delivery-v1","native-delivery-task-v1") and binding.get("identity") == expected_binding["identity"]
          and binding.get("payload_sha256") == sha(payload)
          and all(binding.get(k) == receiver[k] for k in ("provider", "session_id", "process", "tty")),
          "ORIGINAL_RECEIVER_BINDING_CHANGED")
+    if isinstance(sample.get('command'), dict):
+        from upgrade_task_sender_evidence import verify_source
+        verify_source(binding, sender, receiver, fixtures=fixtures)
     event, fence = original_event(attempt, binding, payload)
+    if binding['schema']=='native-delivery-task-v1':
+        from upgrade_task_message_route import verify_input
+        verify_input(binding,event['native_request'],attempt)
     reader, lane = readers[sample["receiver"]], sample["receiver"]
     bound_offset = reader.verify_pin(binding["transcript"])
     fence_offset = reader.verify_pin(fence)
@@ -85,6 +91,12 @@ def _scan(items, readers, starts, ends):
     for lane, reader in readers.items():
         outgoing = [item for item in items if item["sample"]["sender"] == lane]
         incoming = [item for item in items if item["sample"]["receiver"] == lane]
+        for item in outgoing:
+            command = item['sample']['command']
+            if isinstance(command, dict):
+                from orchestration_campaign import find_control
+                verified = find_control(reader, command, after=starts[lane])
+                item['typed_call'] = {k: v for k, v in verified.items() if k != 'task_invocation'}
         for ref, record in reader.records(starts[lane], ends[lane]):
             session_valid = _session_valid(record, reader)
             text = native_text(record, reader.provider, "user")
@@ -92,10 +104,16 @@ def _scan(items, readers, starts, ends):
                 if text == item["payload"] and len(item["notices"]) < 2:
                     item["notices"].append((ref, stamp(record), session_valid))
             calls, _ = calls_and_results(record, reader.provider)
+            p = record.get('payload', {})
+            typed = record.get('type') == 'response_item' and p.get('type') == 'custom_tool_call'
+            if typed and not any(call[0] == p.get('call_id') for call in calls):
+                calls.append((p.get('call_id'), '__task_control__', p.get('input')))
             for call_id, name, args in calls:
                 for item in outgoing:
                     try:
-                        matches = valid_command(name, args, item["sample"]["command"])
+                        command = item['sample']['command']
+                        matches = (typed and p.get('input') == command['script']
+                                   if isinstance(command, dict) else valid_command(name, args, command))
                     except (ValueError, TypeError):
                         matches = False
                     if matches and len(item["calls"]) < 2:
@@ -107,6 +125,10 @@ def _scan(items, readers, starts, ends):
             for _, record in reader.records(starts[lane], ends[lane]):
                 _session_valid(record, reader)
                 calls, _ = calls_and_results(record, reader.provider)
+                p = record.get('payload', {})
+                if record.get('type') == 'response_item' and p.get('type') == 'custom_tool_call' \
+                        and not any(call[0] == p.get('call_id') for call in calls):
+                    calls.append((p.get('call_id'), '__task_control__', p.get('input')))
                 for call_id, _, _ in calls:
                     if isinstance(call_id, str) and call_id in ids:
                         counts[call_id] += 1
@@ -115,7 +137,7 @@ def _scan(items, readers, starts, ends):
 
 
 def attribute_samples(campaign, header, native_end, readers, *, samples, not_after,
-                      schema="upgrade-communication-attribution-v1"):
+                      schema="upgrade-communication-attribution-v1", fixtures=False):
     """Return deterministic evidence; any unverifiable input remains unknown."""
     result = dict(schema=schema, inputs=[], unresolved=[])
     items = []
@@ -128,7 +150,7 @@ def attribute_samples(campaign, header, native_end, readers, *, samples, not_aft
         for sample in samples:
             try:
                 sample = resolve_sample(campaign, sample)
-                items.append(_original(sample, campaign, state, readers, starts, ends, first, last))
+                items.append(_original(sample, campaign, state, readers, starts, ends, first, last, fixtures=fixtures))
             except ERRORS as exc:
                 result["unresolved"].append(dict(request_id=sample["request_id"], reason=type(exc).__name__))
         _scan(items, readers, starts, ends)
@@ -137,6 +159,8 @@ def attribute_samples(campaign, header, native_end, readers, *, samples, not_aft
             try:
                 need(len(item["calls"]) == len(item["notices"]) == 1, "ONE_CALL_AND_NATIVE_NOTICE_REQUIRED")
                 call, call_id, call_at, call_session = item["calls"][0]
+                need('typed_call' not in item or call == item['typed_call'],
+                     'TASK_COMMUNICATION_ORIGINAL_NATIVE_CALL_CHANGED')
                 notice, notice_at, notice_session = item["notices"][0]
                 need(isinstance(call_id, str) and call_id and item["call_id_counts"][call_id] == 1,
                      "ONE_ORIGINAL_CALL_ID_REQUIRED")

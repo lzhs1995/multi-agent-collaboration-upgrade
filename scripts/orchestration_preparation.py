@@ -243,7 +243,12 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         value = result["value"]
         expected_files = {"intent.json", "result.json"}
         if name in HARNESS_STAGES:
-            require(set(value) == {"returncode", "stdout", "stderr"} and
+            actor_fields = {"task_actor"} if "task_controls" in campaign and not fixtures else set()
+            if "task_actor" in value:
+                from upgrade_task_harness import verify_provenance
+                verify_provenance(campaign,header,node,info,name,value["task_actor"],arguments["argv"],refs["intent"],fixtures=fixtures)
+                actor_fields={"task_actor"};expected_files.add("task-actor.json")
+            require(set(value) == {"returncode", "stdout", "stderr"} | actor_fields and
                     type(value["returncode"]) is int and value["returncode"] == 0,
                     "original harness success and complete stdout/stderr required")
             for stream in ("stdout", "stderr"):
@@ -272,12 +277,14 @@ def verify_preparation_exit(campaign, header, node, info, proof, *, fixtures=Fal
         end = reader.verify_pin(ends[lane])
         require(start <= reader.verify_pin(proof["native_end"][lane]) <= end, "preparation native fences changed")
         actions = reader.action_summary(start, end, task_id=info["task_id"], output_root=info["output_root"], allow_empty=True,
-                                        effect_policy=campaign_effect_policy(campaign))
+                                        effect_policy=campaign_effect_policy(campaign), task_campaign=campaign if "task_controls" in campaign else None)
         require(actions["attempted_task_calls"] == 0, "business action contradicts preparation exit")
         if lane in ("codex", lane_id):
             reader.require_no_task_input(start, end, task_id=info["task_id"], pack=prepared["pack"], notice=checked["notice"],
                                          receiver=receiver, sender=campaign["sessions"]["codex"],
                                          refusal_context=dict(controller=campaign["controller"], python=campaign["python"]),
+                                         task_scope=(dict(campaign=campaign,run_id=header["run"]["run_id"],node_id=node["id"])
+                                                     if "task_controls" in campaign else None),
                                          **({"state_root": state_root(campaign)} if campaign_version(campaign) == 3 else {}))
     return dict(completed_at=previous.isoformat(), observed_at=proof["observed_at"])
 

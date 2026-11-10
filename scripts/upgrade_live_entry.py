@@ -112,6 +112,7 @@ def stage_bound(source):
 
 def start_server(ref, spec, binding, env):
     """Start the one pinned private server, with no automatic restart."""
+    require('task_startup' not in binding, 'TASK_SERVER_EXTERNAL_RELEASE_REQUIRED')
     import cmux_daemon_identity as identity
     control = Path(binding["state_root"]) / "startup"
     socket = Path(spec["rpc"]["path"])
@@ -452,6 +453,10 @@ def start_client(ref, spec, binding, lane):
     surface = str(uuid.UUID(os.environ["CMUX_SURFACE_ID"]))
     workspace = str(uuid.UUID(os.environ["CMUX_WORKSPACE_ID"]))
     require(surface not in spec["protected_surface_uuids"], "PRODUCTION_SURFACE_REFUSED")
+    descriptor_seal=None
+    if "task_startup" in binding:
+        from upgrade_task_descriptors import seal_terminal_descriptors
+        descriptor_seal=seal_terminal_descriptors()
     client = spec["clients"][lane]
     env = clean_child_environment(client["environment"])
     # Only the validated opt-in contract can introduce observer state. A parent
@@ -470,6 +475,8 @@ def start_client(ref, spec, binding, lane):
                   pid=process["pid"], birth=process["birth"], surface_uuid=surface,
                   workspace_uuid=workspace, native_root=client["native_root"],
                   planned_session_id=client.get("session_id"), provider=client["provider"])
+    if descriptor_seal is not None:
+        record["terminal_descriptors"]=descriptor_seal
     launched = write_json(Path(binding["state_root"]) / "startup" / (lane + ".json"), record, exclusive=True)
     if pre_exec_hold_enabled(binding):
         # Held before chdir, the Codex server and exec: the pane's exact UUIDs
@@ -483,11 +490,23 @@ def start_client(ref, spec, binding, lane):
     os.chdir(spec["work_root"])
     os.umask(0o077)
     if lane == "codex":
-        start_server(ref, spec, binding, env)
+        if 'task_startup' in binding:
+            from upgrade_task_tui import wait_original_server
+            wait_original_server(ref, spec, binding)
+        else:
+            start_server(ref, spec, binding, env)
     require(not Path(spec["stop_path"]).exists(), "EXPERIMENT_STOP_REQUESTED")
     # Native CLI positional input is the pinned initial readiness instruction,
     # not an existing-session sender or an invented receipt.
-    os.execve(client["argv"][0], client["argv"], env)
+    argv = client["argv"]
+    if lane == "codex" and "task_startup" in binding:
+        from upgrade_task_tui import task_tui_argv
+        argv = task_tui_argv(ref, spec, binding, env)
+    if "task_startup" in binding:
+        from upgrade_task_descriptors import exec_terminal_client
+        exec_terminal_client(argv,env)
+        raise ContractError("TASK_LAUNCH_EXEC_RETURNED")
+    os.execve(argv[0], argv, env)
 
 
 def main(argv=None):
