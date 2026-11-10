@@ -58,16 +58,16 @@ For a four-chapter project, the target workflow is one Herdr team per cmux works
 |---|---|
 | Instructions were read | The intended file's complete relevant content was available to the agent. |
 | Offline graph passed | Original command result and exit status for the actual graph. |
-| Native message arrived | The complete payload appears in the bound original receiver's native record. |
-| Result was consumed | The receiver read the full result and recorded the corresponding source/hash. |
+| Native notice arrived | A fresh user message containing the attempt's unique marker appears in the bound original receiver's native record. A file-reference notice proves receipt of that notice only. |
+| Result was consumed | The receiver read the full result and recorded the corresponding source/hash. For a file-reference notice, verify the exact UTF-8 body against its declared byte count and SHA-256 before reading it. |
 | Result was accepted | An authorized reviewer checked the task's acceptance criteria. |
 | Live efficiency improved | Comparable real executions and correctness/interaction evidence, not a fixture estimate or CI. |
 
-Receipt does not imply reading; reading does not imply acceptance. Reconcile uncertain outcomes against the original attempt. Review once, then only the reported issues, with a total budget of at most three rounds.
+Receipt does not imply reading; reading does not imply acceptance. A SHA/path notice does not require the full body to appear as a native user message. Keep the notice receipt, body verification, full-body reading and acceptance as separate evidence. Reconcile uncertain outcomes against the original attempt. Review once, then only the reported issues, with a total budget of at most three rounds.
 
 During an active authorized collaboration episode, publish progress at least every 60 seconds and notify on stop. Use the supported interrupt/queue route; do not invent recurring model prompts to simulate a heartbeat. Interrupted work resumes from original intent and evidence instead of replaying an unknown action.
 
-繁體中文：收到、讀完、接受及釋放資源分別記錄。進行中的已授權協作至少每分鐘回報，停止就通知；只有實際通道支援時才使用插話或排隊。結果不明只讀回原次；審查最多三輪，不因恢復重置預算。
+繁體中文：原接收端新增含唯一標記的使用者訊息，只能證明通知收到。若通知以路徑和 SHA 指向正文，另核對完整 UTF-8 正文的位元組數與 SHA-256，再讀取正文；不要求正文另成一則原生使用者訊息。收到、驗真、讀完、接受及釋放資源分別記錄。進行中的已授權協作至少每分鐘回報，停止就通知；只有實際通道支援時才使用插話或排隊。結果不明只讀回原次；審查最多三輪，不因恢復重置預算。
 
 ## Runtime and publication boundaries
 
