@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Multi-Agent Collaboration Upgrade logo</title>
+  <desc id="desc">Four terminal workspaces linked around a shared coordinator. Each workspace contains three agent panes.</desc>
+  <rect width="256" height="256" rx="56" fill="#101c30"/>
+  <g stroke="#6fe5ca" stroke-width="5" fill="none">
+    <path d="M80 80L128 128L176 80M80 176L128 128L176 176"/>
+  </g>
+  <g fill="#1d304b" stroke="#a9b9d5" stroke-width="3">
+    <rect x="28" y="30" width="77" height="66" rx="12"/>
+    <rect x="151" y="30" width="77" height="66" rx="12"/>
+    <rect x="28" y="160" width="77" height="66" rx="12"/>
+    <rect x="151" y="160" width="77" height="66" rx="12"/>
+  </g>
+  <g fill="#6fe5ca">
+    <rect x="40" y="43" width="53" height="13" rx="4"/>
+    <rect x="163" y="43" width="53" height="13" rx="4"/>
+    <rect x="40" y="173" width="53" height="13" rx="4"/>
+    <rect x="163" y="173" width="53" height="13" rx="4"/>
+  </g>
+  <g fill="#b4a1f5">
+    <rect x="40" y="64" width="23" height="20" rx="4"/>
+    <rect x="70" y="64" width="23" height="20" rx="4"/>
+    <rect x="163" y="64" width="23" height="20" rx="4"/>
+    <rect x="193" y="64" width="23" height="20" rx="4"/>
+    <rect x="40" y="194" width="23" height="20" rx="4"/>
+    <rect x="70" y="194" width="23" height="20" rx="4"/>
+    <rect x="163" y="194" width="23" height="20" rx="4"/>
+    <rect x="193" y="194" width="23" height="20" rx="4"/>
+  </g>
+  <circle cx="128" cy="128" r="17" fill="#6fe5ca" stroke="#101c30" stroke-width="5"/>
+</svg>
