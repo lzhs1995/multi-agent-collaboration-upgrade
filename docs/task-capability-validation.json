@@ -1,0 +1,125 @@
+{
+  "schema": "task-capability-extension-validation-v3",
+  "status": "OFFLINE_PASS_NOT_LIVE",
+  "base_commit": "a264ce06e17b2facd4590e1d16d95cefbb745cbf",
+  "files": [
+    {
+      "path": "scripts/upgrade_task_capability_extension.py",
+      "bytes": 21721,
+      "sha256": "daaa0d7628d7ffecf28767a1d8169e5e8bedb21ff67edbf79b484bcd771ed4c3"
+    },
+    {
+      "path": "scripts/upgrade_task_capability_service.py",
+      "bytes": 14866,
+      "sha256": "5c29d9095ed9570add0354e90c97b0751610b3b7f0d739ee076ffa200363f249"
+    },
+    {
+      "path": "scripts/upgrade_task_inquiry_capability.py",
+      "bytes": 22064,
+      "sha256": "dc442921688f15d1a97f4bcf08ea9dbe50298531d54b3a4227b9e14fc5c85c39"
+    },
+    {
+      "path": "scripts/test_upgrade_task_capability_extension.py",
+      "bytes": 38829,
+      "sha256": "ab9cb482c787f25d890e02f62e096e839dafb7c85f01baf3e2f77ad9d1cad31f"
+    },
+    {
+      "path": "docs/task-capability-extension.md",
+      "bytes": 10038,
+      "sha256": "48a77d45bd6203c5e08b62d13a8f7c0acb81eee892fda4a1dbe00426ea78e14a"
+    }
+  ],
+  "extension_tests": {
+    "initial_suite": 26,
+    "template_delta": 2,
+    "distinct_cases": 36,
+    "executions": 44,
+    "full_suite_repeated": false,
+    "final_delta": "Optional original-template overall_task exact binding; only affected and new cases rerun.",
+    "channel_v2_new_cases": 6,
+    "channel_v2_affected_existing_cases": 4,
+    "service_reconstruction_new_cases": 3,
+    "service_reconstruction_affected_existing_cases": 3
+  },
+  "existing_regression": {
+    "cases": 70,
+    "modules": [
+      "test_upgrade_task_actor",
+      "test_upgrade_task_service",
+      "test_upgrade_task_service_turns",
+      "test_upgrade_task_operations",
+      "test_upgrade_continuity_native"
+    ]
+  },
+  "original_controller_probes": {
+    "status_cases": [
+      "ACK",
+      "BLOCKED",
+      "WAITING_DEPENDENCY",
+      "SOLO"
+    ],
+    "original_template_case": "WAITING_DEPENDENCY with enrolled overall_task",
+    "production_functions_executed": [
+      "build_text",
+      "write_channels",
+      "scheduler.binding",
+      "valid_reply",
+      "reply_record",
+      "_consume_authenticated_locked"
+    ],
+    "global_guard_imported": false,
+    "live_consumer_identity_verified": false,
+    "two_cycle_same_service": {
+      "status": "PASS",
+      "operation_calls": 4,
+      "fixture_ask_spacing_seconds": 70,
+      "current_channel_replaced": true,
+      "original_consumption_core_both_cycles": true,
+      "new_model_turns": 0,
+      "live_identity_verified": false
+    }
+  },
+  "logs": [
+    {
+      "name": "extension-suite-v1.log",
+      "bytes": 4676,
+      "sha256": "140d89573fe06027672a51f4b7cfd48f8dd975a3666877037ad7508de7192d95"
+    },
+    {
+      "name": "template-delta-v1.log",
+      "bytes": 484,
+      "sha256": "36ffce920522ea9c57830378c712ff126d4f2e4cbfd3da02d315def7c6953e89"
+    },
+    {
+      "name": "original-regression-v1.log",
+      "bytes": 14029,
+      "sha256": "44c65263935eff35ce8fd070a38ef9ffc5598dd9af924d6ce184fe1a6f240cb4"
+    },
+    {
+      "name": "channel-v2-targeted-v1.log",
+      "bytes": 1860,
+      "sha256": "21de0285802c6decf22c07c7f2cc7bb8544324ff6e0841072f364f87a5bdf556"
+    },
+    {
+      "name": "service-reconstruction-delta-v1.log",
+      "bytes": 1277,
+      "sha256": "f6a8bc9a96e40314a728a4beb06be29ce17b00cefbf7456a116df229c0a12add"
+    }
+  ],
+  "original_files_changed": false,
+  "models_called": 0,
+  "live_inputs": 0,
+  "limits": [
+    "Retained owner must explicitly integrate CapabilityService at the original normal closed-turn boundary.",
+    "No real scheduler two-cycle acceptance, Stop hook or authenticated foreground executor consumption.",
+    "Claude peer route has its own owner, tests and deployment boundary.",
+    "No j14 campaign modification, replay, new campaign or business acceptance.",
+    "Channel-v2 second read requires the original consumption and new issued ask to exist; it does not start the scheduler or retry premature calls."
+  ],
+  "service_reconstruction_fix": {
+    "issue": "P1",
+    "durable_owner_once_per_activation": true,
+    "reconstruction_allowed": false,
+    "unknown_and_completion_records_preserved": true
+  }
+}
