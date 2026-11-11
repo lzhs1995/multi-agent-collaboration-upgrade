@@ -4,7 +4,7 @@ This is a public **workflow candidate**, not an installer or live validation rep
 
 | 层 / Layer | 本包如何使用 / Use | 实证边界 / Boundary |
 |---|---|---|
-| Official Herdr | Read installed `herdr --skill` and `herdr --help` for supported IDs, prompt/read/wait and caller rules | The observed 0.9.5 guidance requires the caller inside `HERDR_ENV=1`; external callers do not control/status a focused session or bypass that rule with a selector. No live dispatch is certified here. |
+| Official Herdr | Read installed `herdr --skill` and `herdr --help` for supported IDs, prompt/read/wait and caller rules | The skill defaults to an internal caller. Explicit user authorization for an existing external target can override that skill default, only through a supported exact selector and verified original endpoint. Keep the real environment and existing task controller; a selector grants no authority. No formal live dispatch is certified here. |
 | RaviTharuma/cmux-herdr | Optional third-party UI/topology bridge | Not Herdr official. Pills, cached association and role labels do not prove native identity, message reading or task acceptance. |
 | MAC Herdr/cmux profiles | Use the task's already-bound controller for transport, intent, identity, receipts and recovery | Public reference `d652490` is documentation provenance, not permission to migrate old tasks. Pure cmux remains supported by its own applicable profile. |
 | Nested inner/outer skills | Assign chapter work, consume results and coordinate chapter supervisors with senior | One shared contract; four routing modes and five rules; no new transmission protocol or enforcement service. |

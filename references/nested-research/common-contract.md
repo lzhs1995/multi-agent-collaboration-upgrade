@@ -23,6 +23,12 @@
 
 领域规则使用实际任务 pin 的 thesis-refiner，科学、Word/PDF/NotebookLM 门槛按本次产物是否适用；非 Word 的定义/证据包无需先完成整篇论文桌面验收。传输成功不证明论文正确。[四章模板](../../templates/nested-research/four-chapters.json)提供空接口；填表不是入组、启动或接管。
 
+## 精确端点与外部协调
+
+官方 Herdr skill 默认要求内部调用环境。用户明确指定从外部协调某个既有 Herdr 环境时，用户的任务授权优先于该 skill 默认；实际 CLI 能力和已登记任务的执行合同仍须满足。先读本机 `herdr --skill` / `--help`，确认该版本支持显式 session/server selector；每条命令保持同一 selector，核实真实 server/socket、pane/terminal、原 native SID 与前台进程。外部调用的 HERDR_ENV 保持真实值，不伪造为 1。未获该范围授权、目标不明或 CLI 不支持精确端点时，只读离线资料或交给已有内部角色，不控制默认或焦点会话。
+
+selector 只是地址，不是身份或执行权。新获授权的普通联络可以沿上述原生通道进行，但不能用它替代旧控制器要求的调用者认证、正式 dispatch、资源租约或实验准入，不能迁移旧任务。输入前仍保留实际草稿／对话框、原互斥、意图与原生转录边界；原生收件、全文读取、产物和采纳分别验证。消息遇 UNKNOWN 时继续核原次，不能另选通道重发。上述规则适用于内外两个入口，不增第二套发送器。
+
 ## 规则一：fingerprint 交接
 
 实质交接复用原登记与证据，只补本次相关动作必需、尚缺的字段；涉及的终点字段可包括：机器标识；cmux workspace/pane/surface UUID；Herdr server selector/socket、server PID/birth/executable 与内 workspace/tab/pane/terminal；native agent kind、原 SID、PID/birth/PGID/TTY/executable；原 transcript 路径/device/inode、边界字节数与 SHA；采集时间和证据路径。非 Herdr 原生终点将内层明确记 null，此值合法，不填假值。refs 可导航，UUID/原 SID 才作绑定；数字 pane 名在不同 server 重复，不可全局寻址。

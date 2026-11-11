@@ -56,7 +56,11 @@ The senior supervisor consumes each accepted chapter delta and reconciles cross-
 
 ## Runtime boundary / 執行邊界
 
-The observed official Herdr 0.9.5 instructions require the caller inside `HERDR_ENV=1`. Follow the installed official guidance. An external caller may read documentation but must not use a selector, forged environment value, MAC profile prose or UI cache to bypass that boundary. Route authorized work through the already-bound participant in the appropriate environment; if no supported route exists, report `ROUTE_UNAVAILABLE` and continue independent offline work.
+The official Herdr skill defaults to a caller inside `HERDR_ENV=1`. Explicit user authorization to coordinate a designated existing Herdr environment takes precedence over that skill default. Read the installed CLI guidance and use an explicit session/server selector only when that version supports it; retain the selector on every call and verify the original server, terminal, native session and foreground process. Keep the actual environment unchanged. With no applicable authorization or supported exact route, use the already-bound internal participant or report `ROUTE_UNAVAILABLE`; never control whichever session happens to be focused.
+
+A selector is an address, not an identity credential. An authorized ordinary contact does not satisfy an old controller's separate caller-authentication, formal-dispatch, resource or experiment gates, and does not migrate old tasks. Draft checks, input locks, intent, original native receipt and full-body consumption still apply. The shared [exact-endpoint rule](../references/nested-research/common-contract.md#精确端点与外部协调) governs both skills.
+
+繁體中文：官方技能預設供 Herdr 內部呼叫者使用；使用者已明確指定外部協調範圍時，可沿已安裝 CLI 支援的精確 selector 操作該原有環境。保持真實環境值、原會話、草稿及任務控制器；不把地址當身分，也不把普通聯絡成功當作舊實驗門檻通過。
 
 Do not paste a chapter message into the outer terminal hosting Herdr. Native receipt, full-body reading, task acceptance, scientific acceptance and resource release remain separate observations under the original controller. The two skills preserve the user's four modes — peer, moderated, hierarchical and finite ring — and five rules: traceable handoff, 60-second progress, two-way supported attention, one full review with at most three total rounds, and intent-first recovery without replay.
 
