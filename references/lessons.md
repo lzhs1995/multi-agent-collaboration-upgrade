@@ -17,6 +17,29 @@
 
 ## Probe Discipline
 
+### r21 UUID selectors and original proof aliases
+
+The real v3 producer placed a UUID in `member.surface_ref` and keyed its
+`workspace_proofs` entry with that exact selector, while the proof's
+`target_surface_ref` remained a UI ref. The earlier identity fixture used only
+UI selectors. Registering the UUID selector and canonical UUID separately
+incorrectly rejected a self-alias; comparing the two ref strings then introduced
+a second refusal. r21 stopped before handshake input, with business 0/33.
+
+Canonicalize UUIDs and permit self-aliases only for the same canonical member.
+Register UI aliases only from the pinned original proof under the exact original
+selector key; require that proof's target UUID to match. Reject cross-member
+aliases, wrong UUID selectors, missing/differently keyed proofs and identity
+drift. Legacy UI selectors remain exact. Keep session/provider/pane and row-order
+checks, return the original objects unchanged, and never consult today's cmux
+inventory to reconstruct historical evidence. Requiring every member's original
+proof also prevents a malformed nonselected member from supplying an alias.
+
+`test_upgrade_identity.py` and `test_upgrade_handshake_capability.py` now cover
+that real producer shape, UUID case variants, original UI aliases and refusal
+boundaries. Local generated-controller pressure is not a live native receipt or
+proof of collaboration efficiency. See the [r21 terminal report](../docs/VALIDATION-20261019-R21.md).
+
 Use the producer's actual schema. Null, false, absent and zero are different
 observations. A SHA of empty bytes is evidence of empty bytes, not proof of a
 failed read: independently check the read outcome and byte count. Never reconstruct
@@ -48,3 +71,307 @@ workflow; do not invent peer review during a SOLO task.
 The detailed incident archive predates this public packaging and contains local
 observations. It is not normative for model choice, input ownership or present
 provider capability. SKILL.md and the tested public defaults take precedence.
+
+## Pressure and field experience
+
+The r7 experiment reached real readiness and automatic hooks in all three
+clients, but an inspector incorrectly compared a Codex outer exec call id with
+the inner CommandExecution hook id. Reconcile only the exact command and its
+successful output within the original thread, turn and call/result boundary.
+Negative cases must reject crossed turns, ambiguous commands, failed output and
+changed pins. Original-log revalidation never upgrades a failed pilot result.
+See `test_upgrade_live_inspect.py`.
+
+The first 24-process contention experiment admitted only 389 of 2400 independent
+reservations despite passing safety checks. An immediate nonblocking registry
+lock refusal was incorrectly counted like a genuine session/scope conflict.
+Distinguish these outcomes. Registry reserve/release now opt into at most five
+seconds of acquisition waiting; action/driver locks retain immediate refusal.
+Acquire and validate the original path inode before reading or writing a lease.
+Timeout, replaced/deleted lock paths and unknown or foreign terminal evidence
+cannot release ownership. See `test_orchestration_lock.py`,
+`test_orchestration_coordinator.py` and `test_orchestration_maintenance.py`.
+
+Repeat the 24-process, 100-round-per-mode matrix in a new evidence directory.
+Every independent round must admit 24/24, and shared-session/shared-scope rounds
+must admit exactly 1/24 with semantic refusals for the rest. Report latency,
+registry busy/timeouts, retained history and invalid/idempotent release checks.
+Keep failed reports immutable and publish corrections separately. Synthetic task
+events used by component pressure tests are not live callback receipts.
+
+The designated experience session's published maintenance notes and the thesis
+workspace's existing lessons supply additional boundaries: file request creation,
+hook exposure, full-body SHA consumption, native reception, callback settlement
+and business acceptance are separate observations. Do not call a pending file
+request a received message or an answered consultation. Keep the original
+controller, task, nonce, reservation and UNKNOWN evidence. Current v3 automatic
+hooks are advisory; inherited closeout gates are not session-wide tool locks.
+
+Thesis experience also shows that a small Word/Zotero fixture can pass while a
+full chapter times out. Keep realistic workload sizes, a single writer for
+Word/Zotero, account-wide NotebookLM sharing and independent output scopes.
+Do not use synthetic pressure, a tiny readiness request or offline scheduling
+estimates as proof of model collaboration speed. Use the frozen pilot and paired
+experiment, count failures, measure coordination overhead and verify correctness.
+
+The r8 experiment passed native readiness and automatic hook adoption in all
+three clients. After reading its bootstrap, the original Codex turn ended with
+HTTP 400 `invalid_encrypted_content`. This was not a missing-Claude result, and
+the native error alone does not identify an authentication, load or server root
+cause. Pilot remained 0/3 and pairs 0/15. A small successful readiness request
+cannot establish multi-turn provider compatibility or collaboration efficiency.
+
+`upgrade_failure_watch.py` now observes the frozen original Codex journal. Only
+a native `event_msg/task_complete` error after the original freeze fence can
+trigger early FAILED closeout. Quoted examples, tool errors and pre-freeze errors
+cannot. The observer verifies file identity and record hashes, advances a bounded
+cursor, holds progression for unread/partial data and retains the ordinary
+watchdog. First evidence survives a crash; a later append cannot hide a known
+failure. Completed measurements and failed/missing denominator slots remain in
+the report. Run `test_upgrade_failure_watch.py` and `test_upgrade_driver.py`;
+read-only detection on the original r8 journal is separately recorded and does
+not rerun or repair r8.
+
+Automatic hook invocation and authenticated request discovery also differ. The
+experience session's actual 0.4.34 hook audit shows a standalone Codex parent,
+while that release's `collect_hook` returns no native proof without a managed
+daemon and `authenticated_root` requires one. Preserve the pending request and
+report this code-path incompatibility; do not manufacture a hook receipt or use
+a simulated payload as proof that the target read it. A repair in an isolated
+maintenance copy does not update already installed hooks or create a missing
+native input control endpoint.
+
+The r15 live startup exposed a discovery-scope regression: Darwin
+`PROC_TTY_ONLY` includes foreign-UID login parents. All three actual client
+terminals included a UID 0 `/usr/bin/login`; the first BSD read returned EPERM
+before discovery reached the intended clients. The previous full-UID entrypoint
+had excluded these parents. A scope optimization must preserve both dimensions.
+Intersect kernel TTY and UID inventories; bracket each UID read with equal
+complete TTY sets, and require the same complete TTY set and UID intersection
+after inspecting every selected member. Exclude foreign users through kernel
+scope, never by swallowing EPERM. Same-UID permission errors, unknown reads,
+exits and identity drift still refuse, and daemon discovery keeps full-UID scope.
+Discrete equal samples are not an atomic snapshot and cannot rule out transient
+changes between reads. Validate real existing client TTYs as well as controlled
+controlling-PTY fixtures: a clean synthetic shell tree does not cover a real
+root login ancestor. Keep the original failed startup and its denominator;
+passing earlier tests cannot certify changed discovery code or live efficiency.
+
+The r18 probe failure preserved only screen hashes: two Claude lanes refused
+cleanup three times with no key input, yet later exact private-parser reads
+recognized both owned tokens. Different screen hashes cannot recover the earlier
+state, and correctly stripped NBSP does not establish a whitespace defect.
+Retain each exact raw screen and parsed body, prefix and busy subresults at the
+original observation. Diagnostic fields must not replace the original ownership,
+interrupted-Bash or key-budget checks. Test the actual materialized function with
+foreign drafts, active/queued input and transient screen sequences; keep failed
+probes untouched. Diagnostic coverage is not a successful live round.
+
+Real macOS devfs timestamps are activity counters, not stable TTY identity.
+Owned-PTY output changed mtime/ctime in 20/20 observations; separate grouped
+experiments distinguished slave output, slave input reads, master I/O, lstat
+and chmod. Keep path, device/inode, rdev, mode and ownership checks; ordinary
+output must not invalidate a device solely through ctime. Preserve all raw
+refusals: without the internal before/after pins, later causal reproduction
+cannot prove that each earlier device-change refusal had the same cause.
+Pressure runners also must separate per-scan invariants from whole-run activity,
+and retain partial result serialization failures alongside complete raw attempts.
+
+## r19 executor navigation latency
+
+The original Claude nodes took 885.253 and 1039.065 seconds from formal native
+task reception to their first business command. Those commands themselves took
+0.695 and 0.481 seconds through native tool-result return. There were 19 and 24
+tools before business execution, including missing readiness-file discovery and
+callback CLI discovery. Distinguish that whole interval from measured tool CPU
+time; it also includes model response latency. Two nodes cannot predict all 33
+slots or demonstrate a scheduling speedup.
+
+New v3 scopes bind preparation/adoption inputs and give the exact callback argv
+from the frozen Python, controller and task-pack paths. Freeze outputs first,
+invoke once, and collect the original process. A pane lock refusal still needs
+honest classification; it is not fixed by command text and never grants a blind
+send retry. Automatic v3 advisory hooks permit truthful stopping while callback
+confirmation, independent acceptance and release remain separate requirements.
+
+Evidence: `maintenance/r19-latency-audit/`; callback instruction regression:
+`validation/r19-executor-guidance-01/` (35/35, zero model requests/input).
+
+## r19 checker stdin isolation
+
+The original source_index candidate failed after callback reception: CPython
+3.14 `subprocess.run(input=...)` opened an anonymous pipe write descriptor, and
+the unchanged private audit called Darwin F_GETPATH on it. Actual anonymous
+pipe descriptors passed fstat but returned errno 9 from F_GETPATH; a named FIFO
+returned its real filesystem path. EBADF here does not prove a closed fd.
+
+The current checker uses a unique private campaign scratch directory, writes
+and verifies the canonical request, opens it read-only and unlinks its pathname
+before passing stdin to the one original child invocation. The temporary
+directory is cleaned on success or exception, never placed in business outputs.
+Keep the audit unchanged: external regular files, named FIFOs, symlinks and
+unbound descriptors are not exemptions. Keep checker/Python/adapter pins,
+timeout, result validation and post-execution output rehashing.
+
+Original native input fences and exact callback records were independently
+verified: source_index received at 13:03:46.256Z, inventory at 13:12:58.984Z.
+The deadline was 13:03:53.754Z; subsequent receipts and the new fix do not change
+the original 1 TIMEOUT + 32 MISSING or establish business acceptance. The errno 9
+trace explains the later independent-checker failure, not all preceding delay.
+Evidence: `maintenance/r19-checker-stdin/` in the 20261014-v1 evidence root.
+
+## r19 task-pack input completeness
+
+Both real r19 pilot packs were finalized with missing `role_map` and
+`pane_inventory` files. All 85 source entries in each pack existed. Claude B
+actually tried to read the declared role map and received `File does not exist`.
+The preparation chain ran preflight, scaffold, fill and finalize; preflight did
+not invoke the commands that generate the two files, and finalization plus
+`verify_prepared` did not validate them. Schema-required path strings do not
+establish input availability or correct task/identity bindings.
+
+New v3 preparation generates and binds both declared inputs through the original
+harness before finalization. The runtime verifies path, SHA, byte count, task,
+workspace, timestamps, unique terminal identities and the assigned executor.
+Inventory provider/title hints are not native identity authority. v2 retains its
+five stages; v3 uses seven, consistently in execution and historical recovery.
+Keep report and completion receipt as future outputs. Do not repair an in-flight
+pack by adding files after dispatch. The measured workload and
+dedicated callback implementations do not directly read these two fields, so
+their absence alone does not establish the cause of a whole-round timeout.
+The executor report requires a role-map reference, and the independent sentinel
+has its own role-map validation; those obligations still require real evidence.
+
+The original startup adoption was already verified, but neither pack provided
+its direct proof reference. Both executors performed extra startup/hook reads.
+New v3 packs carry the verified adoption path, hash and bytes, with a clear
+instruction to read that proof and check the assigned native identity. Runtime
+validation binds all three original sessions and the executor lane. Historical
+verification permits stopped sessions; live preparation and dispatch retain
+their independent current-state gates. Offline fixtures cannot claim live adoption.
+Preserve fresh input gates and evaluate subsequent contradictory observations;
+an old adoption PASS never overrides a current failure. A differently scoped
+`runtime-adoption-v1` unverified record does not by filename alone disprove the
+original live adoption. The observed extra work is not a measured causal share
+of total delay or proof of an end-to-end speedup from the proposed change.
+
+The repair passed 411 affected regression cases and local pressure with eight
+OS workers over ten rounds: 80 preparations, 2,080 complete prepared validations,
+480 rejected input mutations and 40 real flock conflicts. These are offline
+results, not live pilot, callback, paired efficiency or business acceptance.
+The first pressure runner overlapped intentional corruption with another lane's
+shared-state read and correctly hit the product hash gate; preserve that failure.
+The corrected runner separates both lanes' reads, mutations and restoration with
+barriers, without relaxing product checks. Record both runs separately.
+
+Keep the registered round deadline and an explicit delivery cutoff. When the
+agreed stopping condition is reached, publish failed and missing slots plus
+remaining defects. Do not start another version cycle merely to defer delivery.
+The r19 audit and stdout-summary candidate remain separate evidence: the latter
+reduces displayed bytes in a local measurement, with no demonstrated model cost
+or business latency improvement and no change to the frozen live experiment.
+# Bounded callback contention and campaign deadlines
+
+## Initial handshake and measured consumption (2026-10-19)
+
+A write-and-clear probe can remain blocked throughout native goal activity even
+when the guarded new-message route supports communication. New private
+controllers bind read-only capability to the actual prepared challenge, then
+retain the original input journal, one submission, native receipt and ACK.
+Capability is neither a receipt nor permission to replay. Keep the complete
+composer, native process/session and transcript prefix checks. Receipt existence
+alone is not a concurrency guard: the generated harness originally admitted two
+same-root calls before either wrote a receipt. Hold the original directory flock
+through the entire challenge/ACK transaction and recheck its inode before every
+receipt write and send; no new sidecar or old-controller migration is needed.
+
+The B0024 native audit established exact queued-command acceptance, task-pack
+access and complete reading of all six required files, but no matching native
+user record and no successful callback input. The executor also acknowledged
+omitting separate task acceptance. Measure queue acceptance, notice reception,
+body access, required-file reads, task acceptance, callback and supervisor
+business acceptance independently. Successful work cannot rewrite an original
+unconfirmed-delivery state. A maintenance inbox publication likewise does not
+prove hook exposure or a two-way exchange.
+
+The 99-case affected regression and 8-process/9600-check sandbox pressure passed;
+live observations and native records in the latter were fixtures. The separate
+7000-case sysctl pressure used real kernel processes. Neither establishes the
+33-round business benchmark or measured collaboration improvement.
+
+The r19 native audit observed two callback invocations only 0.693 seconds apart.
+The second refused on the pane lock before PREPARED or any input; this is not
+proof of duplicate native input. The first invocation returned after 8.323
+seconds. New materialized controllers allow only a first, normal callback to
+wait at most 15 seconds on the already opened pane-lock inode. They retain
+fail-fast task/target locks and old-attempt/reconciliation behavior, and refresh
+pack/report snapshots, availability, identity and journal evidence before
+PREPARED. No wait loop sends input, recreates a lock or extends a retry budget.
+
+The materialized Darwin-sandbox probe covers 16 contract boundaries plus 8
+forked processes issuing 80 distinct original callbacks through one pane lock.
+Its transport is simulated and stops before native input: these measurements
+establish lock behavior, not real Claude reception or business acceptance.
+
+An overall deadline must stop both scheduling and direct callback input. A
+schedule halt alone does not enter the private input gate, and a driver blocked
+inside source hashing cannot enforce its next tick on time. Use a separately
+running watchdog bound to the same immutable deadline, publish all private
+runtime stop markers before report work, and retain the first halt/report.
+Preserve the complete benchmark denominator and record actual stop errors and
+timestamps. Neither a marker nor process preservation proves that an in-flight
+remote model request was canceled.
+
+## r21 独立通信样本与握手竞争
+
+192条普通消息必须与正式task通知/callback分开：两臂各96，六组各32，每warm轮8。
+原生参与者本人从绑定helper单次发送，before/after不等于active/idle或goal；拒绝、
+queued、missing保留，不补样、不额外求ACK。helper即使短正文也附带换行header，
+从而生成MESSAGE_REFERENCE_V2；原生notice接收不证明完整body读取。
+实际生成握手的1600调用竞争仅100次模拟传输submit调用，另1500预期拒绝；真实模型输入0，
+不能作为真实模型提效结果。66项新增集成回归与58项独立审计已通过。
+
+## R32：区分无序路径集合与有序实验流程
+
+原准备脚本已物化七组配置，随后将 layout 的插入顺序与经过 JSON 排序的
+registration 顺序直接比较，错误报告路径范围变化。实际十四条唯一路径均未占用，
+逐组 advertised／physical／lock 映射全部一致；这不是 Claude 启动或 API 失败。
+
+修复采用两个独立判断：路径集合必须唯一且相等，组名到各路径的原绑定必须逐项相等。
+不能仅改成 set 后忽略重复路径，也不能把这一规则用于真正有序的33轮注册执行序列。
+
+原次恢复先重核七组仍未启动、原四脚本与全部冻结配置未变、旧原次已终态、
+十四条路径未占用和原绝对截止有效；随后只发布尚不存在的候选／授权元数据。
+没有重新物化、删除原根目录、重开批次或重放输入。恢复脚本及核验结果单独留证。
+未持久化的旧时点快照保持缺失，只报告恢复前后的重新观察，不补造过去的证明。
+这条恢复经验不授权处理已存在的原生输入或不确定投递。
+
+## R32：独立 lane 不应互等握手，验收提示不能滞留在慢调用后
+
+现场显示 A 已 PREPARED 后，advance 仍先执行 B 的同步 prepare，A 的派发因此等待。
+候选改为先 claim 所有符合条件的独立 lane，再优先 dispatch 已 PREPARED 的 lane，
+随后推进另一 lane 的 prepare。外层收尾、审阅、原次 reconcile 优先级保持原样。
+
+另一缺陷是本次已产生 candidate／恢复原次 ACCEPT 提示，却继续进入慢 reconcile
+或 prepare，主管拿不到提示便无法验收。现于下一次同步 transport 前返回仍有效的
+review handoff；最终重新核状态，删除已过期提示或返回原次验收恢复命令。
+既有 local-business handoff 优先，不自动 ACCEPT、不提前释放、不重放输入。
+
+三个针对慢 reconcile／后续 prepare 的反例在修复前真实失败，修复后完整 advance
+模块42项通过，独立增量复审无阻塞发现。该验证属于新候选，不计入冻结 R32 的
+原生压测结果；同步 dispatch 本身仍等待。attempted／counts 只活在本次调用中，
+不能宣称 max_steps=1 在持续 pre-intent 拒绝下跨调用无条件公平。
+
+## R32：callback 之后的只读检查不等于继续写入
+
+原验收器用“最后业务调用”代替“最后潜在写入”，把callback后成功的目录检查
+误判为改动产物；同时output_root紧邻分号时漏计真实workload。新冻结注册metrics
+v4及output-effects-v1，显式路径匹配涵盖shell分隔符，业务活动和潜在写入分别统计。
+仅成功、完整的原生Claude Read与受控干净shell ls可以排除；未知、失败、未完成
+调用继续保留。no_business_input和preparation exit仍检查全部业务活动。
+
+新任务包直接给出受控命令；先完成检查再callback仍是首选。当前Codex若只有
+functions.exec包装，就不具备后置读取豁免，必须在本地ACCEPT前完成输出检查。
+不能用合成native exec_command测试证明真实客户端具有该工具。45项反例及兼容
+回归通过，独立集成审查未发现新增必失败路径；这些不等于真实压力通过。旧三种
+metrics、R32原始失败与全部原始证据保持不变，后续新批次另报完整结果。

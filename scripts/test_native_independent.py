@@ -531,6 +531,67 @@ class NativeFileAcceptance(unittest.TestCase):
 
 
 class NativeSessionAcceptance(unittest.TestCase):
+    def write_peer_registration(self, case, **changes):
+        record = dict(pid=PID, kind="interactive", sessionId=SESSION,
+                      version="2.1.170", peerProtocol=1, entrypoint="cli",
+                      startedAt=(case.process["birth"][0] + 4) * 1000)
+        record.update(changes)
+        case.registration.write_text(json.dumps(record), encoding="utf-8")
+
+    def test_peer_registration_accepts_native_timestamp_after_kernel_birth(self):
+        with NativeCase() as case:
+            self.write_peer_registration(case)
+            binding, fence, intent = case.ready()
+            case.append(case.user_record())
+            result = native.probe(binding, PAYLOAD, paste_fence=fence, not_before=intent)
+            self.assertIs(result["confirmed"], True)
+            native.require_bound(case.bridge, TARGET, binding, PAYLOAD)
+
+    def test_peer_registration_rejects_stale_pid_future_and_invalid_timestamps(self):
+        for changed in (
+                {"startedAt": (EPOCH - 121) * 1000},
+                {"startedAt": (EPOCH + 1) * 1000},
+                {"startedAt": EPOCH - 116},
+                {"startedAt": True}, {"startedAt": None},
+                {"startedAt": str((EPOCH - 116) * 1000)},
+                {"startedAt": float((EPOCH - 116) * 1000)},
+                {"peerProtocol": 2}, {"peerProtocol": True},
+                {"entrypoint": "sdk"}, {"pid": PID + 1}, {"kind": "background"}):
+            with self.subTest(changed=changed), NativeCase() as case:
+                self.write_peer_registration(case, **changed)
+                with self.assertRaises(native.NativeDeliveryError):
+                    case.bind()
+
+    def test_peer_timestamp_does_not_override_invalid_legacy_birth(self):
+        with NativeCase() as case:
+            self.write_peer_registration(case, procStart="wrong")
+            with self.assertRaises(native.NativeDeliveryError):
+                case.bind()
+
+    def test_peer_registration_rejects_pid_reuse_and_process_race(self):
+        with NativeCase() as case:
+            self.write_peer_registration(case)
+            case.process["birth"] = [EPOCH - 1, 0]
+            with self.assertRaises(native.NativeDeliveryError):
+                case.bind()
+        with NativeCase() as case:
+            self.write_peer_registration(case)
+            changed = copy.deepcopy(case.process)
+            changed["birth"][1] += 1
+            with mock.patch.object(native.identity, "process", return_value=changed):
+                with self.assertRaisesRegex(native.NativeDeliveryError, "NATIVE_PROCESS_CHANGED"):
+                    native._live_session(case.process, "claude")
+
+    def test_peer_resume_changes_session_without_trusting_stale_argv(self):
+        with NativeCase() as case:
+            self.write_peer_registration(case)
+            binding = case.bind()
+            case.create_transcript(OTHER_SESSION)
+            self.write_peer_registration(case, sessionId=OTHER_SESSION)
+            with self.assertRaises(native.NativeDeliveryError):
+                native.require_bound(case.bridge, TARGET, binding, PAYLOAD)
+            self.assertEqual(case.bind()["session_id"], OTHER_SESSION)
+
     def test_native_registration_accepts_kernel_birth_in_utc_or_local_format(self):
         for local in (False, True):
             with self.subTest(local=local), NativeCase() as case:
@@ -676,4 +737,3 @@ class NativeSessionAcceptance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

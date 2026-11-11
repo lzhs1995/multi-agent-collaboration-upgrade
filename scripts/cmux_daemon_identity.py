@@ -51,7 +51,7 @@ class BsdInfo(ctypes.Structure):
                 ('start_usec', ctypes.c_uint64)]
 
 
-def _args(data):
+def _args(data, *, native_roots=False):
     argc = ctypes.c_int.from_buffer_copy(data[:4]).value
     if not 1 <= argc <= 65536:
         raise IdentityError('invalid process arguments')
@@ -72,11 +72,13 @@ def _args(data):
             raise IdentityError('invalid process environment')
         env[key] = value
     # Credentials never leave this reader.
-    return argv, {k: env[k.encode()].decode() for k in
-                  ('CMUX_SURFACE_ID', 'CMUX_WORKSPACE_ID', 'CODEX_THREAD_ID') if k.encode() in env}
+    selected = ('CMUX_SURFACE_ID', 'CMUX_WORKSPACE_ID', 'CODEX_THREAD_ID')
+    if native_roots:
+        selected += ('HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR')
+    return argv, {k: env[k.encode()].decode() for k in selected if k.encode() in env}
 
 
-def process(pid, *, arguments=True, validate_argv=True, allow_system_login=False):
+def process(pid, *, arguments=True, validate_argv=True, allow_system_login=False, native_roots=False):
     """Read a same-user process; raw inventory reads are not caller proof.
 
     Only candidate discovery may defer the argv-path rule. The selected caller
@@ -140,7 +142,8 @@ def process(pid, *, arguments=True, validate_argv=True, allow_system_login=False
                           ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
         if sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buf, ctypes.byref(length), None, 0) != 0:
             raise IdentityError('process arguments inaccessible')
-        argv, env = _args(buf.raw[:length.value])
+        argv, env = (_args(buf.raw[:length.value], native_roots=True) if native_roots
+                     else _args(buf.raw[:length.value]))
         executable = ctypes.create_string_buffer(4096)
         lib.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
         if lib.proc_pidpath(pid, executable, len(executable)) <= 0:

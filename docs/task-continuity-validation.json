@@ -1,0 +1,217 @@
+{
+  "schema": "task-continuity-candidate-validation-v1",
+  "status": "IMPLEMENTED_SCOPED_FIXTURE_VALIDATION_ONLY",
+  "base": "a264ce06e17b2facd4590e1d16d95cefbb745cbf",
+  "files": [
+    {
+      "path": "scripts/upgrade_task_continuity_capability.py",
+      "bytes": 18692,
+      "sha256": "3d7f0f2df3c92a5c58fa9752377579d93209d663504ca201904efdf0bbbe8258"
+    },
+    {
+      "path": "scripts/test_upgrade_task_continuity_capability.py",
+      "bytes": 14097,
+      "sha256": "0c896a46e465526c7e5ea532ae9216e682a0078cf98a05e1b5484bdc62abc60b"
+    },
+    {
+      "path": "scripts/upgrade_task_claude_continuity_route.py",
+      "bytes": 25414,
+      "sha256": "23aa5d850c1c31152123b2212779636a44e7af413993d7976a4cb6ee9c59beb9"
+    },
+    {
+      "path": "scripts/test_upgrade_task_claude_continuity_route.py",
+      "bytes": 20958,
+      "sha256": "92fb6033ae1fe5c287acd51070026fd8727393e2f6d8237dbabed2eb3faa795f"
+    },
+    {
+      "path": "docs/task-continuity-capability.md",
+      "bytes": 11220,
+      "sha256": "0b9f3985996e50adcfb29256174be235305d3042e2562c8db3a3d8a630b24384"
+    }
+  ],
+  "observed_test_runs": [
+    {
+      "tests": 16,
+      "seconds": 0.664,
+      "exit_code": 0,
+      "exec_session": 58038,
+      "final_tool_chunk": "1303c0",
+      "scope": "initial full restricted fixture suite"
+    },
+    {
+      "tests": 3,
+      "new_distinct_tests": 1,
+      "seconds": 0.214,
+      "exit_code": 0,
+      "exec_session": 64018,
+      "final_tool_chunk": "3c9706",
+      "scope": "peer accept/wrong-hash regression and new rejected-review-spends-budget case"
+    },
+    {
+      "tests": 3,
+      "new_distinct_tests": 2,
+      "seconds": 0.376,
+      "exit_code": 0,
+      "exec_session": 85078,
+      "final_tool_chunk": "66247b",
+      "scope": "complete original input/handoff bodies, binary refusal, missing native work output"
+    },
+    {
+      "tests": 6,
+      "passed": 3,
+      "failed": 3,
+      "seconds": 15.115,
+      "exit_code": 1,
+      "exec_session": 42084,
+      "native_command_id": "exec-d37fe148-167e-4993-a379-ea15b4b022bf",
+      "scope": "initial peer route real-socket fixture suite",
+      "failure": "Three clients queried macOS LOCAL_PEERPID after server had sent DONE and closed; original failures preserved."
+    },
+    {
+      "tests": 3,
+      "new_distinct_tests": 0,
+      "seconds": 5.699,
+      "exit_code": 0,
+      "exec_session": 12287,
+      "final_tool_chunk": "e88c0b",
+      "scope": "three failed peer cases only: independent file/native roundtrip, missing review read, no request replay"
+    },
+    {
+      "tests": 4,
+      "new_distinct_tests": 4,
+      "seconds": 8.27,
+      "exit_code": 0,
+      "exec_session": 58634,
+      "final_tool_chunk": "6bb64e",
+      "scope": "ROOT review regression: actual foreign server receives zero request bytes; slow partial frame total deadline; lost result ACK blocks read-result absent native output; UNKNOWN blocks later execution"
+    },
+    {
+      "tests": 2,
+      "new_distinct_tests": 0,
+      "seconds": 0.29,
+      "exit_code": 0,
+      "exec_session": 19884,
+      "final_tool_chunk": "a4e86c",
+      "scope": "exact PeerContext branch compatibility: original solo publication and forged-context refusal"
+    },
+    {
+      "tests": 2,
+      "new_distinct_tests": 1,
+      "seconds": 17.59,
+      "exit_code": 0,
+      "exec_session": 23374,
+      "final_tool_chunk": "ac64b0",
+      "scope": "Same integration review continuation: reject review-before-submission-read; affected genuine-socket peer happy path"
+    },
+    {
+      "tests": 5,
+      "new_distinct_tests": 4,
+      "seconds": 34.106,
+      "exit_code": 0,
+      "exec_session": 40904,
+      "final_tool_chunk": "6f762b",
+      "scope": "C2 same integration review: original stop before work, stop before result plus readonly evidence, stop after intent UNKNOWN/no artifact, exact stage stop derivation, affected peer happy path"
+    }
+  ],
+  "distinct_tests": 34,
+  "combined_latest_full_suite_rerun": false,
+  "real_rpc_or_model_or_ui_calls": 0,
+  "original_primitive_live_revalidation": false,
+  "production_nonce_lease_observation_wiring": false,
+  "claude_peer_only_tool_route": true,
+  "formal_business_increment": 0,
+  "documentation_write_note": "Initial shell heredoc was refused by panel guard before execution; file-only apply_patch succeeded, no client launch attempted.",
+  "input_body_publication": "Full UTF8 bodies, total <=128KiB, result requires complete native work output",
+  "prior_core_file_pins": [
+    {
+      "path": "scripts/upgrade_task_continuity_capability.py",
+      "bytes": 18427,
+      "sha256": "959b41cc0781cdb5dfb7a33726a0104e946e6020007eb0ddb160cb2ab5700142"
+    },
+    {
+      "path": "scripts/test_upgrade_task_continuity_capability.py",
+      "bytes": 14097,
+      "sha256": "0c896a46e465526c7e5ea532ae9216e682a0078cf98a05e1b5484bdc62abc60b"
+    },
+    {
+      "path": "docs/task-continuity-capability.md",
+      "bytes": 8072,
+      "sha256": "92e5d46a142cbffe28edc1a2e14fbbc9546cf11027b860fe8946ad358f4f8309"
+    }
+  ],
+  "claude_peer_only_route_live_deployed": false,
+  "peer_route_validation": {
+    "real_unix_sockets": true,
+    "real_kernel_peer_pid_and_ancestry": true,
+    "kernel_peer_or_process_reader_mocked": false,
+    "model_parents": "ordinary Python fixtures, not Claude CLI processes",
+    "native_model_journals": "synthetic",
+    "authority_registration_loader": "mocked only in fixture registration",
+    "original_native_continuity_evaluator": "mocked in fixtures",
+    "codex_journal_unchanged_during_independent_work": true,
+    "live_codex_rpc_calls": 0,
+    "live_claude_model_calls": 0,
+    "new_model_sessions": 0,
+    "formal_business_increment": 0,
+    "independent_original_claude_live_adoption": "UNVERIFIED"
+  },
+  "review_fixes": [
+    {
+      "id": "R1",
+      "change": "Client validates real server kernel peer and descriptor before sending any request; verified foreign process receives zero bytes."
+    },
+    {
+      "id": "R2",
+      "change": "Request and ACK have one-second whole-frame deadline; slow partial sends cannot renew the deadline."
+    },
+    {
+      "id": "R3",
+      "change": "Every UNKNOWN blocks subsequent execute; read-result requires original complete native writer output; readonly responses retain original UNKNOWN pins and never clear/replay them."
+    },
+    {
+      "id": "R-PEER-REVIEW-ORDER",
+      "change": "PeerContext raises review lower bound to end of reviewer original complete read-submission native output; original reviewer lane required. Earlier review cannot be backfilled by later reading.",
+      "same_review_continuation": true,
+      "prior_rounds_reset": false
+    },
+    {
+      "id": "C2",
+      "change": "Bind original runtime and optional stage stop paths from pinned startup/adoption. Recheck before execute intent and through original context checks immediately before work/artifact/result publication; readonly remains available.",
+      "same_review_continuation": true,
+      "prior_rounds_reset": false
+    }
+  ],
+  "remaining_boundaries": [
+    "No live Claude model/production process adoption run; fixtures do not establish gateway evidence.",
+    "Original Codex emits exact permission before normal task_complete; inert registration must follow that terminal and precede subsequent work/failure.",
+    "Original owner retained process explicitly hosts endpoint; controller process failure has no automatic restart/rebind.",
+    "Resource guard snapshots do not implement production nonce/lease observation; output is an isolated immutable file, not a shared resource takeover.",
+    "Whole-task child and review budgets are preserved; external processes outside controller are not monitored."
+  ],
+  "prior_peer_review_file_pins": [
+    {
+      "source": "scripts/upgrade_task_claude_continuity_route.py",
+      "path": "upgrade_task_claude_continuity_route.py.before",
+      "bytes": 23555,
+      "sha256": "4d9eedbf9760982db199986d7cbec82cba602bde5deb043acdb21b992663a1dc"
+    },
+    {
+      "source": "scripts/test_upgrade_task_claude_continuity_route.py",
+      "path": "test_upgrade_task_claude_continuity_route.py.before",
+      "bytes": 17536,
+      "sha256": "a9f54b1b9390eb39e60600160aa533feb933e4bd6e963a8cb9d4e72019ebb2ab"
+    },
+    {
+      "source": "docs/task-continuity-capability.md",
+      "path": "task-continuity-capability.md.before",
+      "bytes": 10425,
+      "sha256": "f226a52055f5aa45a97ebe21bd9aa4a4378ce1be27aa56a3250722f09ddeaeb6"
+    },
+    {
+      "source": "docs/task-continuity-validation.json",
+      "path": "task-continuity-validation.json.before",
+      "bytes": 6349,
+      "sha256": "236a760655301706206727a290493b4d14c10b2a8362a7f52a3f3157fd248675"
+    }
+  ]
+}

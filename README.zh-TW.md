@@ -4,9 +4,9 @@
 
 [English](README.md) · [Agent 快速入門](docs/agent-quickstart.md) · [通用 Agent 指引](AGENTS.md)
 
-這是一套供終端 Agent 使用的協作規則與實驗性相依任務規劃器。目標是結合 **cmux 的跨終端、跨工作區協調**與 **Herdr 的單一終端內部協作**，保留既有會話、可追溯交接和清楚的寫入責任。
+這是一套供終端 Agent 使用的協作規則、離線相依任務規劃器與實驗性 TASK 執行碼。目標是結合 **cmux 的跨終端、跨工作區協調**與 **Herdr 的單一終端內部協作**，保留既有會話、可追溯交接和清楚的寫入責任。
 
-**先從離線規劃器開始。** 目前預設分支包含歷史規劃器及繼承的 Claude Code／Codex 傳輸契約。下方巢狀架構是目標工作流程，不代表此分支已實現全部能力。正式實驗驗收仍為 **業務 0/33、配對比較 0/15**；尚未證明原生多 Agent 協作的實際提速。
+**先從離線規劃器開始。** 本程式樹整合歷史規劃器與實驗性的 Codex／Claude 啟動、有限範圍 TASK 詢問及接續路徑。下方巢狀架構是目標工作流程，不代表此分支已實現全部能力。正式實驗驗收仍為 **業務 0/33、配對比較 0/15**；尚未證明原生多 Agent 協作的實際提速。
 
 ## 執行離線範例
 
@@ -20,7 +20,7 @@ python3 -B scripts/orchestration_planner.py schedule --plan tests/fixtures/orche
 python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orchestration-plan.json
 ```
 
-2026-11-10 已實際執行這三條命令，使用未修改的預設分支規劃器，全部正常結束：
+2026-11-10 已在歷史規劃器實際執行這三條命令，全部正常結束；整合候選保留此範例：
 
 | 命令 | 實際輸出 | 能證明的範圍 |
 |---|---|---|
@@ -39,7 +39,7 @@ python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orch
 | 層次 | 責任 | 本倉庫現況 |
 |---|---|---|
 | 終端內的 Herdr | 章內角色、局部交接、進度、審查與恢復 | 目標流程；此處未認證 Herdr 原生轉接器。 |
-| 終端／工作區之間的 cmux | 找到正確主管、保留會話身分、傳遞跨團隊交接 | 目標外層；本分支繼承的實際傳輸契約較窄，要求同一工作區。 |
+| 終端／工作區之間的 cmux | 找到正確主管、保留會話身分、傳遞跨團隊交接 | 目標外層；實際派發仍受所選固定控制器及原工作區契約限制。 |
 | 共用協作規則 | 任務範圍、每個範圍單一寫者、收件、成果消費與有界審查 | 可閱讀並手動採用；自動強制執行取決於實際轉接器。 |
 | 科研工作流程 | 來源忠實度、科學限制、章節驗收與全稿整合 | 由既有論文精煉助手掌管，不由終端執行環境取代。 |
 
@@ -79,18 +79,18 @@ cmux 與 Herdr 提供執行環境與操作能力，協作規則決定團隊如�
 
 ## 已交付與尚待驗證
 
-狀態日期：**2026-11-10**。文件更新不代表實驗執行碼已獲晉升。
+狀態日期：**2026-11-11**。此整合包含實驗性原始碼，不代表真實協作已驗收，也不授予安裝權限。
 
 | 範圍 | 證據與界線 |
 |---|---|
-| 預設分支執行碼基線 | 歷史規劃器 [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a)；上述三條離線命令已通過。 |
-| 獨立實驗候選 | [`fix/official-native-topology-20261105`，固定 `a264ce0`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/a264ce06e17b2facd4590e1d16d95cefbb745cbf)；[Ubuntu／macOS × Python 3.10／3.14 四組 CI 通過](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42622913098)。結果僅屬該候選。 |
+| 離線規劃器 | 歷史規劃器 [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a)；上述三條離線命令已通過。 |
+| 已納入的實驗性執行碼 | `a264ce0` 的啟動及原 TASK owner，加上 [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298) 的[詢問與接續能力](docs/task-capability-extension.md)。[該執行碼四組 CI 已通過](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42973333600)；本整合仍有獨立驗證界線。 |
 | 正式實驗驗收 | **業務 0/33；配對比較 0/15。** 準備、CI 與獨立診斷不能填入這些樣本。 |
 | 原生協作效率 | **尚未驗收。** 範例的 24.051% 不是實際提速；配對實驗也不是 Herdr 與 cmux 的優劣比較。 |
 | 巢狀章節團隊與恢復 | 跨工作區主管協調、真實 callback／正文消費、三種可用性狀態及完整章節團隊整合，仍須端到端證據。 |
 
 歷史規劃器細節見[排程文件](docs/ORCHESTRATION.md)、[離線驗證](verification/ORCHESTRATION-VALIDATION.md)及[繼承的原生 SKILL 契約](SKILL.md)。其中 `multi-agent-collaboration` 名稱與舊平台描述保留作歷史材料，不是覆蓋已安裝 skill 的指令。實際科研任務應使用當前已授權的領域 skill。
 
-公開範例應採用可攜路徑與合成資料；憑證、私有逐字稿及帳號設定不應進入公開提交，詳見 [SECURITY.md](SECURITY.md)。[隱私清理範圍](docs/publication-privacy.md)記錄本次測試資料清理：舊提交與其他分支頂端仍保留歷史私人內容，整個 Git 歷史的脫敏尚未完成。
+公開範例應採用可攜路徑與合成資料；憑證、私有逐字稿及帳號設定不應進入公開提交，詳見 [SECURITY.md](SECURITY.md)。[隱私清理範圍](docs/publication-privacy.md)記錄兩份合成測試資料的替換。匯入的歷史證據文件與舊提交仍保留私人路徑或內容；此整合不宣稱整個程式樹或 Git 歷史已完成脫敏。
 
 MIT。cmux、Herdr、Codex、Claude Code、Gemini CLI 與 OpenCode 均為獨立專案；本倉庫不代表其背書，也不保證所有版本均相容。

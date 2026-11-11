@@ -38,7 +38,7 @@ Actual check on 2026-11-10, using Python 3.14 and the unchanged `4bedae2` runtim
 }
 ```
 
-These values come from assigned fixture durations. The output's `meets_fifteen_percent_target: true` applies only to that estimate, not the live acceptance gate. The commands do not contact models, submit prompts, install hooks or start agents. After the fixture cleanup, the full offline suite passed all 1,290 tests on Python 3.14. `scripts/test_all.py --help` is **not** a help command: the script unconditionally starts its test suite.
+These values come from assigned fixture durations. The output's `meets_fifteen_percent_target: true` applies only to that estimate, not the live acceptance gate. The commands do not contact models, submit prompts, install hooks or start agents. At the historical documentation/fixture checkpoint, the full offline suite passed all 1,290 tests on Python 3.14; that count is not the integrated runtime suite. `scripts/test_all.py --help` is **not** a help command: the script unconditionally starts its test suite.
 
 繁體中文：三條動作命令已實際通過。7 個節點排成 5 批，其中 2 批並行；790 秒與 600 秒均來自測試資料預設時長，24.051% 不能寫成實際 Agent 提速。範例不需要原生會話或供應商帳號。
 
@@ -71,7 +71,7 @@ During an active authorized collaboration episode, publish progress at least eve
 
 ## Runtime and publication boundaries
 
-Main inherits a historical same-workspace macOS cmux contract in [SKILL.md](../SKILL.md). It does not establish the broader target architecture. Candidate [`a264ce0`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/a264ce06e17b2facd4590e1d16d95cefbb745cbf) has separate code, CI and evidence; do not import its status into main or silently switch controllers. Formal acceptance is still **0/33 business runs and 0/15 pairs** at the 2026-11-10 checkpoint.
+This source tree includes experimental startup, retained TASK owners and [inquiry/continuity capabilities](task-capability-extension.md) through [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298), alongside the historical contract in [SKILL.md](../SKILL.md). Source integration does not establish the broader target architecture or authorize switching controllers. Formal acceptance is still **0/33 business runs and 0/15 pairs** at the 2026-11-11 checkpoint.
 
 The installed MAC and thesis-refiner skills remain separately maintained. Do not run `manage_install.py install --apply` as part of this quickstart, change global hooks, restart sessions or relabel failed attempts. Consult the authorized current skill/controller before live operations. Older documents are provenance, not a fresh authorization or universal compatibility promise.
 

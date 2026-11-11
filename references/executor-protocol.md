@@ -18,7 +18,18 @@ cmux_bridge.submit_completion_callback("/absolute/path/to/task-pack.json")
 This sends the exact pack callback and writes the exclusive, report-hash-bound
 completion receipt. Do not merely print the callback on the executor surface,
 and do not use raw `cmux send`, `cmux-agent ask`, or `submit_text` for terminal
-completion. The Stop hook rejects a finalized executor task without the receipt.
+completion. In new v3 experiments, automatic workflow hooks are advisory: a
+missing receipt does not block ordinary tools or an honest turn-end. It still
+means completion is unconfirmed; it does not accept the business output or
+release the task. Legacy checks remain explicit diagnostics under the original
+controller, not automatic v3 conversation gates.
+
+New v3 task scopes provide the complete pinned callback CLI. After checking and
+freezing the report and outputs, use that exact command once; do not search for
+another controller or callback entrypoint. Collect the original process if it
+yields. A pane-in-progress refusal or uncertain result is evidence to retain for
+the supervisor, not permission to send again. Same-pane callback contention is
+a separate delivery issue; explicit command text alone does not resolve it.
 
 ## On Receipt
 

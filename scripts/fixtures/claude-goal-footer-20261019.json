@@ -1,0 +1,18 @@
+[
+  {
+    "fixture": "claude_a-goal-footer-20261019.txt",
+    "sha256": "a5793c58f1a1f494a27444d85c62874b1dd90900a7e414142858b91ed4e9f580",
+    "source": "/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r26-goal-audit/current-screen-20261019T054540490570Z/claude_a-stdout.txt",
+    "source_sha256": "fe965458285c8a5d8a5bad1a6e90389bcb3bffea1d1df10f05caa766c7be4212",
+    "excerpt_first_line": 95,
+    "semantics": "Later current-screen observation; original failed handshake screen unavailable"
+  },
+  {
+    "fixture": "claude_b-goal-footer-20261019.txt",
+    "sha256": "ce7c6b3d672a4ffdd1ba0a56c7512eba9a6c306a88aead3f6dedfe9dc6b02e73",
+    "source": "/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r26-goal-audit/current-screen-20261019T054540490570Z/claude_b-stdout.txt",
+    "source_sha256": "e8e7a56752a413dcb6d88ac841f23f6c0eabeafb30521a762afa8eda2a71a5f8",
+    "excerpt_first_line": 120,
+    "semantics": "Later current-screen observation; original failed handshake screen unavailable"
+  }
+]

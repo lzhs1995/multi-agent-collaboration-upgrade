@@ -1,9 +1,11 @@
-"""Tests for the measured replay gate."""
+"""Historical v1 parsing tests; these fixtures cannot prove measured gains."""
 
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -102,9 +104,23 @@ def make_evidence() -> dict:
 
 
 class ReplayEvidenceTests(unittest.TestCase):
-    def test_complete_cli_replay_passes_target(self):
+    def test_cli_returns_three_for_readable_self_reported_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "history.json"
+            evidence.write_text(json.dumps(make_evidence()), encoding="utf-8")
+            result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/validate_replay_evidence.py"),
+                "--plan", str(ROOT / "tests/fixtures/orchestration-plan.json"), "--evidence", str(evidence)],
+                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(json.loads(result.stdout)["status"], "HISTORICAL_ONLY")
+        self.assertFalse(json.loads(result.stdout)["promotion_eligible"])
+
+    def test_self_reported_cli_replay_is_historical_only(self):
         result = validate_replay_evidence(PLAN, make_evidence())
-        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["status"], "HISTORICAL_ONLY")
+        self.assertFalse(result["promotion_eligible"])
+        self.assertFalse(result["meets_target"])
+        self.assertTrue(result["claimed_meets_target"])
         self.assertGreaterEqual(result["wall_time_reduction_percent"], 15.0)
         self.assertEqual(result["correctness_checks"], 7)
 
@@ -142,7 +158,7 @@ class ReplayEvidenceTests(unittest.TestCase):
             datetime(2026, 10, 10, 1, tzinfo=timezone.utc) + timedelta(seconds=75)
         )
         result = validate_replay_evidence(PLAN, evidence)
-        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["status"], "HISTORICAL_ONLY")
         self.assertFalse(result["meets_target"])
 
 

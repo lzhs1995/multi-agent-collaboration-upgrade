@@ -719,6 +719,19 @@ def _claude_bordered_compose(screen):
     footer = [row.strip() for row in rows[end + 1:] if row.strip()]
     if not footer:
         return None
+    # Measured in both isolated Claude clients on 2026-10-18: without a
+    # custom statusline, the complete footer is just this permissions row.
+    # Accept only that whole row after matching borders; never filter body
+    # text or allow an unknown/truncated suffix to authorize input.
+    if len(footer) == 1 and (footer[0] in (
+            "⏵⏵ bypass permissions on (shift+tab to cycle)",
+            "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents")
+            or re.fullmatch(
+                r"⏵⏵ bypass permissions on \(shift\+tab to cycle\) · esc to interrupt"
+                rf" +◎ /goal active \({_CLAUDE_DURATION}\)", footer[0])):
+        first = re.sub(r"^\s*❯[ \u00a0]?", "", rows[start], count=1)
+        return {"body": "\n".join([first, *rows[start + 1:end]]),
+                "footer": footer, "before": rows[:start - 1], "start": start, "end": end}
     # 当前实屏的 model/cwd/time/goal 同行；cwd 可以没有 git 信息。
     model_row = re.sub(rf"\s+◎\s+/goal active\s+\({_CLAUDE_DURATION}\)$", "", footer[0])
     fields = [part.strip() for part in model_row.split("│")]
@@ -1397,7 +1410,17 @@ def _queued_or_active_input(screen):
         if any(_CLAUDE_ACTIVE_TOOL_RE.fullmatch(row) for row in claude["footer"]):
             return True
         # 活动只读当前边框前的状态，防止历史 spinner 或输入正文冒充活动。
-        screen = next((row for row in reversed(claude["before"]) if row.strip()), "")
+        # The designated maintenance workflow observed complete Tip rows below
+        # live spinners. Inspect past those hints, never past arbitrary prose
+        # and never inside the composer. Keep exact goal chrome separate too.
+        before = list(claude["before"])
+        while before and (not before[-1].strip()
+                          or re.fullmatch(r"\s*⎿\s+Tip:[ \t]+[^\r\n]+", before[-1])
+                          or re.fullmatch(rf"\s*◎\s+/goal active\s+\({_CLAUDE_DURATION}\)\s*", before[-1])):
+            before.pop()
+        screen = before[-1] if before else ""
+        if re.fullmatch(r"\s*[·✻✢✳✶✽◐◑◒◓]\s+(?:[A-Za-z][A-Za-z-]*|Compacting (?:conversation|context))(?:…|\.\.\.)\s*", screen):
+            return True
         if re.fullmatch(r"\s*[✻✢✳✶✽◐◑◒◓]\s+[^\n]+(?:…|\.\.\.)\s*\([^\n]+\)\s*", screen):
             return True
     if re.search(r"^[ \t]*•\s+(?:Working|Thinking|Running|Compacting context)\s+\([^\n)]*\besc to interrupt\b", screen, re.I | re.M):
