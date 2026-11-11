@@ -1,0 +1,330 @@
+"""Read-only private-harness inspection before/after client adoption.
+
+This entrypoint never imports a sender or publishes adoption. It authenticates
+the original startup PID/birth/TTY and reads metadata from its native journal.
+The external controller, outside all three client sandboxes, owns publication.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import time
+import uuid
+
+from orchestration_common import (ContractError, digest, file_ref, json_ref, parse_time, read_regular,
+                                  require, strict_json, utc_now)
+from upgrade_client_isolation import LANES, require_kernel_boundary
+from upgrade_native_roots import process_root
+from upgrade_startup_contract import (GOAL_SCHEMA, TASK_SCHEMA, pressure_startup_prompt,
+                                     readiness_command, readiness_prompt, startup_continuity_enabled)
+from upgrade_socket_boundary import binding_boundary, verify_kernel
+
+
+from upgrade_cmux_inventory import ReadOnlyCmux
+
+
+def launch_workspace(stdout, bridge):
+    """Resolve the complete original create response against one live tree."""
+    require(isinstance(stdout, str), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+    response = stdout.strip()
+    selectors = {}
+    if response.startswith("{"):
+        value = strict_json(response, "workspace creation response")
+        require(isinstance(value, dict) and value
+                and set(value) <= {"workspace_id", "workspace_ref", "id", "ref"},
+                "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        for key, item in value.items():
+            kind = "ref" if key.endswith("ref") else "id"
+            require(kind not in selectors, "LAUNCH_WORKSPACE_RESPONSE_AMBIGUOUS")
+            selectors[kind] = item
+    else:
+        match = re.fullmatch(r"(?:OK )?(workspace:[0-9]+|[0-9a-fA-F-]{36})", response)
+        require(match is not None, "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        item = match[1]
+        selectors["ref" if item.startswith("workspace:") else "id"] = item
+    for kind, item in selectors.items():
+        require(isinstance(item, str), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        if kind == "ref":
+            require(re.fullmatch(r"workspace:[0-9]+", item), "LAUNCH_WORKSPACE_RESPONSE_INVALID")
+        else:
+            selectors[kind] = str(uuid.UUID(item))
+    tree = strict_json(bridge._run("tree", "--all", "--json", "--id-format", "both"), "live cmux tree")
+    workspaces = [ws for window in tree["windows"] for ws in window["workspaces"]]
+    matched = []
+    # Resolve every selector independently: a duplicate ref cannot be excused
+    # by a unique UUID, nor can a ref/UUID mismatch select a different workspace.
+    for kind, item in selectors.items():
+        rows = [ws for ws in workspaces
+                if (str(uuid.UUID(ws["id"])) if kind == "id" else ws.get("ref")) == item]
+        require(len(rows) == 1, "LAUNCH_WORKSPACE_NOT_UNIQUE")
+        matched.append(str(uuid.UUID(rows[0]["id"])))
+    require(len(set(matched)) == 1, "LAUNCH_WORKSPACE_CHANGED")
+    workspace = matched[0]
+    require(sum(str(uuid.UUID(ws["id"])) == workspace for ws in workspaces) == 1,
+            "LAUNCH_WORKSPACE_NOT_UNIQUE")
+    return workspace
+
+
+from upgrade_readiness_evidence import (command_in_tool, completed_probe, hook_matches,
+    native_records, nested_readiness_command, readiness_evidence)
+
+
+def recovered_candidates(bridge, native, identity, spec, stage, startup_ref):
+    """Each original session's restored client in the stage workspace, by native identity only.
+
+    Titles, focus and remembered refs are never selectors: a surface counts only
+    when its live process is the lane's provider, native root and original session.
+    """
+    from upgrade_stage_fence import LANES as STAGE_LANES, RECOVERED_LAUNCH_SCHEMA
+    workspace = stage["recovery"]["workspace_uuid"]
+    tree = strict_json(bridge._run("tree", "--all", "--json", "--id-format", "both"), "live cmux tree")
+    rows = [ws for window in tree["windows"] for ws in window["workspaces"] if str(uuid.UUID(ws["id"])) == workspace]
+    require(len(rows) == 1, "STAGE_RECOVERY_WORKSPACE_NOT_UNIQUE")
+    found = {lane: [] for lane in STAGE_LANES}
+    for pane in rows[0].get("panes", []):
+        for surface in pane.get("surfaces", []):
+            target = str(uuid.UUID(surface["id"]))
+            if surface.get("type") != "terminal" or target in spec["protected_surface_uuids"]:
+                continue
+            try:
+                row = native._tree_row(bridge, target)
+                client = native._target_process(row)
+                provider = native._provider(client)
+                root = str(process_root(provider, client))
+                sid = native._live_session(client, provider)
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError):
+                continue
+            for lane in STAGE_LANES:
+                if (provider == ("codex" if lane == "codex" else "claude") and root == spec["clients"][lane]["native_root"]
+                        and sid == stage["recovery"]["sessions"][lane]):
+                    found[lane].append(dict(schema=RECOVERED_LAUNCH_SCHEMA, lane=lane, provider=provider,
+                        native_root=root, session_id=sid, pid=client["pid"], birth=client["birth"],
+                        surface_uuid=target, pane_uuid=str(uuid.UUID(row["target_pane_uuid"])),
+                        workspace_uuid=workspace, tty=row["tty"], startup=startup_ref))
+    require(all(len(rows_) == 1 for rows_ in found.values()), "STAGE_RECOVERED_CLIENT_NOT_UNIQUE:" + ",".join(
+        f"{lane}={len(rows_)}" for lane, rows_ in found.items()))
+    return {lane: rows_[0] for lane, rows_ in found.items()}
+
+
+def confirmed_launch(intent, result, spec, startup_ref):
+    """A returned original allocation, with honest pane/tab counts for its pinned mode."""
+    if (intent.get('startup') != startup_ref or result.get('startup') != startup_ref
+            or intent.get('spawn') is not True or intent.get('spawn_authorized') is not True
+            or type(result.get('returncode')) is not int or result['returncode'] != 0):
+        return False
+    if spec.get('existing_workspace_uuid') is None:
+        return result.get('workspace_creation_attempts') == 1
+    if (result.get('workspace_creation_attempts') != 0
+            or result.get('existing_workspace_uuid') != intent.get('existing_workspace_uuid')
+            or result.get('existing_workspace_uuid') != spec['existing_workspace_uuid']):
+        return False
+    if 'existing_tab_targets' in spec:
+        return result.get('pane_creation_attempts') == 0 and result.get('surface_creation_attempts') == len(LANES)
+    return result.get('pane_creation_attempts') == len(LANES)
+
+
+def inspect(startup_ref, spec, binding, *, stage=None):
+    """stage: a validated fence; readiness then admits only that stage's window.
+
+    The original launches, PIDs, workspace and history are unchanged inputs.
+    """
+    import cmux_daemon_identity as identity
+    import cmux_native_delivery as native
+    from cmux_codex_rpc import DaemonRPC
+    task_mode = spec.get("schema") == TASK_SCHEMA
+    require(not task_mode or stage is None, "TASK_INSPECTION_LEGACY_STAGE_REFUSED")
+    control = Path(binding["state_root"]) / "startup"
+    intent_ref, result_ref = file_ref(control / "intent.json"), file_ref(control / "result.json")
+    intent, result = json_ref(intent_ref), json_ref(result_ref)
+    # R511 existing-workspace mode: one pane per lane in the pinned workspace, no workspace creation.
+    existing = spec.get("existing_workspace_uuid") is not None
+    require(confirmed_launch(intent, result, spec, startup_ref),
+            "ORIGINAL_LAUNCH_UNCONFIRMED")
+    bridge = ReadOnlyCmux(spec["pins"]["cmux"]["path"])
+    launches, launch_refs = {}, {}
+    for lane in (*LANES, "codex-server"):
+        launch_refs[lane] = file_ref(control / (lane + ".json"))
+        launches[lane] = json_ref(launch_refs[lane])
+        require(launches[lane]["startup"] == startup_ref, "LAUNCH_STARTUP_CHANGED")
+    recovery_ref, stage_ref = None, None
+    if stage is not None and stage.get("schema") == "upgrade-stage-fence-v2":
+        from upgrade_stage_fence import recovered_launches, recovery_path
+        stage_ref = file_ref(Path(stage["control"]) / "stage.json")
+        if not os.path.lexists(recovery_path(stage)):
+            # Before publication: report the authenticated restored clients only.
+            try:
+                candidates, failure = recovered_candidates(bridge, native, identity, spec, stage, startup_ref), None
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+                candidates, failure = None, str(exc)
+            return dict(schema="upgrade-live-inspection-v2", startup=startup_ref, observed_at=utc_now(),
+                        observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),
+                        stage=stage_ref, recovery_candidates=candidates,
+                        errors=dict(recovery="STAGE_RECOVERY_NOT_PUBLISHED" if failure is None else failure),
+                        ready=False, stopped=os.path.lexists(spec["stop_path"])
+                        or os.path.lexists(Path(stage["control"]) / "stop.json"), input_operations=0)
+        recovery_ref, recovered = recovered_launches(stage, stage_ref, startup_ref)
+        # Only the three restored clients; the original daemon keeps its original launch.
+        launches.update(recovered)
+        launch_refs.update({lane: recovery_ref for lane in recovered})
+    sessions, evidence, kernels, errors = {}, {}, {}, {}
+    startup_failures = {}
+    for lane in LANES:
+        try:
+            launch = launches[lane]
+            target = str(uuid.UUID(launch["surface_uuid"]))
+            require(target not in spec["protected_surface_uuids"], "PRODUCTION_SURFACE_REFUSED")
+            row = native._tree_row(bridge, target)
+            client = native._target_process(row)
+            require(client["pid"] == launch["pid"] and client["birth"] == launch["birth"],
+                    "ORIGINAL_CLIENT_PID_OR_BIRTH_CHANGED")
+            workspace = str(uuid.UUID(row["workspace_uuid"]))
+            # A restored client lives in the stage's frozen workspace, not the original create response.
+            require(workspace == str(uuid.UUID(launch["workspace_uuid"]))
+                    == (stage["recovery"]["workspace_uuid"] if recovery_ref is not None
+                        else str(uuid.UUID(spec["existing_workspace_uuid"])) if existing
+                        else launch_workspace(result["stdout"], bridge)), "LAUNCH_WORKSPACE_CHANGED")
+            provider = "codex" if lane == "codex" else "claude"
+            require(native._provider(client) == provider
+                    and str(process_root(provider, client)) == spec["clients"][lane]["native_root"],
+                    "CLIENT_PROVIDER_OR_NATIVE_ROOT_CHANGED")
+            if task_mode and lane == "codex":
+                from upgrade_task_readiness import task_startup_result
+                from upgrade_task_thread import validate_tui_target
+                _, task_result, task_anchor = task_startup_result(spec)
+                sid = task_result["thread_id"]
+                validate_tui_target(client,process_root(provider,client),spec,task_anchor)
+            else:
+                sid = native._live_session(client, provider)
+            if provider == "claude":
+                require(sid == spec["clients"][lane]["session_id"], "ORIGINAL_CLAUDE_SESSION_CHANGED")
+            if recovery_ref is not None:
+                require(sid == launch["session_id"] == stage["recovery"]["sessions"][lane],
+                        "RECOVERED_SESSION_CHANGED")
+            path = (Path(task_anchor["journal"]["path"]) if task_mode and lane == "codex"
+                    else native._transcript_path(provider, sid, client))
+            session = dict(provider=provider, session_id=sid, workspace_uuid=workspace,
+                surface_uuid=target, pane_uuid=str(uuid.UUID(row["target_pane_uuid"])), tty=row["tty"],
+                process=native._public_process(client), native_config_root=str(process_root(provider, client)),
+                transcript=native._pin_file(path, provider, sid))
+            kernels[lane] = require_kernel_boundary(client["pid"],
+                denied=binding["isolation"]["denied_probes"], writable=binding["isolation"]["write_probes"])
+            boundary = binding_boundary(binding, binary_pin=spec["pins"]["codex"], live=True)
+            if boundary is not None:
+                kernels[lane]["socket_boundary"] = verify_kernel(client["pid"], boundary, writer=lane == "codex")
+            sessions[lane] = session
+            if task_mode and lane == "codex":
+                from upgrade_task_readiness import task_readiness
+                evidence[lane] = task_readiness(native, session, spec, startup_ref, binding, launches)
+            else:
+                evidence[lane] = readiness_evidence(native, session, lane, spec, startup_ref, binding, launches,
+                                                    stage=stage)
+            session.update(model=evidence[lane]["model"], model_record=evidence[lane]["model_record"],
+                           freeze_fence=session["transcript"])
+        except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+            errors[lane] = str(exc)
+            if (stage is None and lane in ("claude_a", "claude_b") and lane in sessions
+                    and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"):
+                from upgrade_startup_continuity import claude_startup_failure_evidence
+                try:
+                    context = json_ref(binding["context"])
+                    startup_failures[lane] = claude_startup_failure_evidence(native, sessions[lane], lane,
+                        spec, startup_ref, task_id=context["experiment_id"], now=time.time())
+                except (ValueError, OSError, KeyError, native.NativeDeliveryError) as failure_error:
+                    errors[lane] = "STARTUP_FAILURE_UNVERIFIED:" + str(failure_error)
+            if (stage is None and lane == "codex" and str(exc) == "READINESS_TOOL_NOT_UNIQUE_OR_NOT_OBSERVED"
+                    and lane in sessions and startup_continuity_enabled(binding)):
+                from upgrade_startup_continuity import startup_failure_evidence
+                try:
+                    context = json_ref(binding["context"])
+                    failure = startup_failure_evidence(native, sessions[lane], lane, spec, startup_ref,
+                        task_id=context["experiment_id"], now=time.time())
+                    startup_failures[lane] = failure
+                    sessions[lane].update(model=failure["model"], model_record=failure["model_record"],
+                                          freeze_fence=sessions[lane]["transcript"])
+                except (ValueError, OSError, KeyError, native.NativeDeliveryError) as failure_error:
+                    errors[lane] = "STARTUP_FAILURE_UNVERIFIED:" + str(failure_error)
+    capability = None
+    if "codex" in sessions:
+        try:
+            server = identity.process(launches["codex-server"]["pid"])
+            require(server["birth"] == launches["codex-server"]["birth"]
+                    and server["executable"] == spec["pins"]["codex"]["path"]
+                    and server["argv"] == spec["rpc"]["argv"], "ORIGINAL_CODEX_SERVER_CHANGED")
+            kernels["codex-server"] = require_kernel_boundary(server["pid"],
+                denied=binding["isolation"]["denied_probes"], writable=binding["isolation"]["write_probes"])
+            boundary = binding_boundary(binding, binary_pin=spec["pins"]["codex"], live=True)
+            if boundary is not None:
+                kernels["codex-server"]["socket_boundary"] = verify_kernel(
+                    server["pid"], boundary, writer=True, physical_unlink_denied=task_mode)
+            if task_mode:
+                from upgrade_task_rpc import task_rpc_type
+                from upgrade_task_thread import observe
+                from upgrade_rpc_peer import server_pin
+                client = task_rpc_type(DaemonRPC)(spec["rpc"]["path"], server_pin(server,uid=os.getuid()),
+                    identity.process,record=lambda *args: None,timeout=15)
+            else:
+                client = DaemonRPC(spec["rpc"]["path"], timeout=15)
+            try:
+                session = sessions["codex"]
+                metadata = client.request("thread/read", {"threadId": session["session_id"],
+                                                          "includeTurns": False})["thread"]
+                turns = client.request("thread/turns/list", {"threadId": session["session_id"],
+                    "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"})["data"]
+                require(metadata.get("id") == session["session_id"]
+                        and metadata.get("path") == session["transcript"]["path"]
+                        and metadata.get("canAcceptDirectInput") is True
+                        and isinstance(turns, list) and len(turns) <= 1, "CODEX_DIRECT_INPUT_CAPABILITY_UNVERIFIED")
+                capability = dict(thread_id=session["session_id"], path=metadata["path"],
+                    can_accept_direct_input=True, status=metadata.get("status"), socket=client.socket_identity,
+                    last_turn=[{k: t.get(k) for k in ("id", "status")} for t in turns],
+                    methods=["thread/read", "thread/turns/list"], input_operations=0)
+                if task_mode:
+                    capability["task_thread"] = observe(client,task_anchor,identity.process)
+            finally:
+                client.close()
+        except Exception as exc:
+            errors["codex-rpc"] = str(exc)
+    roles = None
+    if task_mode and len(sessions) == 3:
+        try:
+            from upgrade_task_roles import verify_roles
+            roles = verify_roles(startup_ref, spec, binding, sessions, process=identity.process)
+        except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+            errors["task-roles"] = str(exc)
+    if len(sessions) == 3:
+        require(len({s["workspace_uuid"] for s in sessions.values()}) == 1
+                and all(len({s[k] for s in sessions.values()}) == 3
+                        for k in ("surface_uuid", "pane_uuid", "session_id")), "CLIENT_ENDPOINTS_NOT_DISTINCT")
+    result = dict(schema="upgrade-live-inspection-task-v1" if task_mode else "upgrade-live-inspection-v2",
+                startup=startup_ref, observed_at=utc_now(),
+                observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),
+                launch_intent=intent_ref, launch_result=result_ref, launches=launch_refs,
+                sessions=sessions, readiness=evidence, kernel=kernels, codex_capability=capability,
+                errors=errors, ready=not task_mode and not errors and len(evidence) == 3 and capability is not None,
+                **({"startup_ready": not errors and len(evidence) == 3 and capability is not None,
+                    "business_adoption_supported": False, "task_roles": roles} if task_mode else {}),
+                stopped=os.path.lexists(spec["stop_path"]) or (stage is not None and os.path.lexists(
+                    Path(stage["control"]) / "stop.json")), input_operations=0,
+                **({"startup_failures": startup_failures}
+                   if stage is None and (startup_failures or startup_continuity_enabled(binding)) else {}),
+                **({"stage": file_ref(Path(stage["control"]) / "stage.json")} if stage is not None else {}),
+                **({"recovery": recovery_ref} if recovery_ref is not None else {}))
+    if task_mode and not errors and result['startup_ready']:
+        from upgrade_task_fd_contract import enabled as descriptors_enabled
+        if descriptors_enabled(binding):
+            from upgrade_task_adoption_evidence import collect
+            try:
+                result['task_startup_evidence'] = collect(startup_ref, spec, binding, result, native=native)
+                from upgrade_task_runtime_policy import enabled as policy_enabled
+                if policy_enabled(binding):
+                    from upgrade_task_adoption import deployment
+                    deployment(binding, result)
+                    result['ready'] = result['business_adoption_supported'] = True
+            except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
+                errors['task-startup-evidence'] = str(exc)
+                result['startup_ready'] = False
+    return result

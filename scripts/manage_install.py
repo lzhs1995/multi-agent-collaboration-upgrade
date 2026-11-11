@@ -199,6 +199,13 @@ def manage(home, mode, apply=False):
     if sys.version_info < (3, 10):
         raise RuntimeError("Python 3.10+ required; do not wire macOS Python 3.9")
     home = Path(home).expanduser().resolve()
+    # Retained only for historical offline fixtures. Even doctor invokes hooks
+    # with side effects, so it is not a safe live-account inspection operation.
+    actual_home = Path.home().resolve()
+    if (apply or mode == "doctor") and (home == actual_home or home in actual_home.parents
+                                        or actual_home in home.parents):
+        raise RuntimeError("UPGRADE_PRODUCTION_INSTALL_REFUSED: use a private experiment; "
+                           "production MAC settings, hooks and links are separately owned")
     plans = []
     for client, filename in (("codex", "hooks.json"), ("claude", "settings.json")):
         config = home / ("." + client) / filename

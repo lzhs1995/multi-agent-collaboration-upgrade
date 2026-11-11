@@ -1,0 +1,64 @@
+{
+  "schema": "original-controller-test-source-v1",
+  "release": "0.4.84-387ccf207a86",
+  "original_source": "/opt/collaboration/0.4.84/source",
+  "purpose": "Exact original reader/parser bytes for offline tests only. Not an installable controller.",
+  "files": {
+    "scripts/cmux_confirmation.py": {
+      "bytes": 7165,
+      "sha256": "c140e65e8434c4d43f943d0ceace4726dc70253675bba394896beaf31b337077"
+    },
+    "scripts/native_user_record.py": {
+      "bytes": 536,
+      "sha256": "b35b8318b8f6b50243282ef0d49959fbd8ce3a2ca14541fc68f3fd7444490401"
+    },
+    "scripts/cmux_native_delivery.py": {
+      "bytes": 38129,
+      "sha256": "78356c244567f3519a43f716e367f5a125bb078b95205318a4c08a56a5262879"
+    },
+    "scripts/cmux_codex_input.py": {
+      "bytes": 15030,
+      "sha256": "795b848151a85389aa2483d13d67abe977d4d681e3329354f2bd4dda0cac7f77"
+    },
+    "scripts/cmux_bridge.py": {
+      "bytes": 117052,
+      "sha256": "20e7c6dd1f99bbde6c7d579e1a95da74d24f05030015184faff06b56b4e0300c"
+    },
+    "scripts/cmux_message_journal.py": {
+      "bytes": 20038,
+      "sha256": "1157b5797077be2acd70bfa09f8fe95f8390254199127e5ce580c492462514db"
+    },
+    "scripts/cmux_callback_journal.py": {
+      "bytes": 24877,
+      "sha256": "c5c0b7358c49183c634eefa38b7546e2db57d15935f02d459283925ca461428b"
+    },
+    "scripts/delivery_receipts.py": {
+      "bytes": 8043,
+      "sha256": "b4633dcc69dd689465e72b61a3f29a88f9cb8354286ee8fc0d7b30dd32ce3d27"
+    },
+    "scripts/callback_native_evidence.py": {
+      "bytes": 8697,
+      "sha256": "c545835f54b66c3259589fdbf2bdcf6071472926105d05a90db96e6770c1ab68"
+    },
+    "scripts/cmux_workspace_guard.py": {
+      "bytes": 16173,
+      "sha256": "43f652737f458cf8b007672d58b817e58782321baef1f0ab97605b77925fc46f"
+    },
+    "scripts/cmux_hook_scope.py": {
+      "bytes": 4602,
+      "sha256": "5bdb86521f730afcba17227e4d481bdf08264942d2481273451f8ed9a7ea456f"
+    },
+    "scripts/mac_harness.py": {
+      "bytes": 175932,
+      "sha256": "12180299442363ae6da684f8a17fc2f69a2d555b17338ac08998daf9499d7400"
+    },
+    "scripts/cmux_task_journal.py": {
+      "bytes": 14735,
+      "sha256": "55b2087e0c2a89447dd453527bf92c8b36614e073d42168832c998f0cdab934e"
+    },
+    "LICENSE": {
+      "bytes": 1082,
+      "sha256": "b0905a20660a4a5ca4de3bf1e57249ee34a4fcba3d73dcd1b7c96938750c366b"
+    }
+  }
+}

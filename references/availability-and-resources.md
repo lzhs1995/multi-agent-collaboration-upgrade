@@ -67,6 +67,17 @@ path in the finalized pack's `availability_state`, set `availability_required=tr
 and register the artifact root. Dispatch, callback, round, handshake and sentinel
 entrypoints must resolve that same state. Missing required state fails closed.
 
+The diagnostic classifier recognizes numeric HTTP 402 independently of the
+provider's message language. For an explicitly retryable 502/503/504/524,
+`payload.retry_after_seconds` can carry the delay from the preceding original
+response; the classifier waits for the greater of that delay and 60 seconds
+after `last_attempt_at`. An explicit delay requires that original attempt time;
+invalid, negative or nonfinite delays are refused.
+This CLI calculation does not authenticate a supplied delay, issue a retry,
+or replace the original native observer's evidence requirements. An exhausted
+classifier count alone still does not establish the 300-second operating
+policy above or grant takeover without the required original artifacts.
+
 V1 is not silently interpreted as v2. `migrate --input` needs a hashed legacy
 reference plus current identity/policy fields. It preserves the old bytes and
 enters `EXECUTOR_DEGRADED` with dispatch disabled. Supply actual freeze/takeover

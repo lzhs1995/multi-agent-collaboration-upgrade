@@ -4,9 +4,9 @@
 
 [繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md)
 
-Reusable collaboration rules and an experimental dependency planner for terminal-based agents. The goal is to combine **cmux for coordination across terminals and workspaces** with **Herdr for teamwork inside a terminal**, while keeping existing sessions, traceable handoffs and clear ownership.
+Reusable collaboration rules, an offline dependency planner and experimental TASK runtime code for terminal-based agents. The goal is to combine **cmux for coordination across terminals and workspaces** with **Herdr for teamwork inside a terminal**, while keeping existing sessions, traceable handoffs and clear ownership.
 
-**Start with the offline planner.** This default branch contains the historical planner and inherited Claude Code/Codex transport contract. The nested architecture below is a target workflow, not a claim that this branch already implements it. Formal experimental acceptance remains **0/33 business runs and 0/15 paired comparisons**; native collaboration speedup has not been demonstrated.
+**Start with the offline planner.** This source tree combines the historical planner with experimental Codex/Claude startup, scoped TASK inquiries and continuity routes. The nested architecture below is a target workflow, not a claim that this branch already implements it. Formal experimental acceptance remains **0/33 business runs and 0/15 paired comparisons**; native collaboration speedup has not been demonstrated.
 
 ## Try the offline planner
 
@@ -20,7 +20,7 @@ python3 -B scripts/orchestration_planner.py schedule --plan tests/fixtures/orche
 python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orchestration-plan.json
 ```
 
-These three commands were run successfully on the unchanged default-branch planner on 2026-11-10:
+These three commands were run successfully on the historical planner on 2026-11-10; the integration candidate retains that example:
 
 | Command | Actual output | Meaning |
 |---|---|---|
@@ -39,7 +39,7 @@ For a dissertation with four core chapters, each chapter has a cmux workspace co
 | Layer | Responsibility | Status in this repository |
 |---|---|---|
 | Herdr inside a terminal | Chapter-team roles, local handoffs, progress, review and recovery | Target workflow; no Herdr native adapter is certified here. |
-| cmux across terminals/workspaces | Address the right supervisor, preserve identity and route cross-team handoffs | Target outer layer; this branch's inherited live contract is narrower and requires the same workspace. |
+| cmux across terminals/workspaces | Address the right supervisor, preserve identity and route cross-team handoffs | Target outer layer; actual dispatch is limited by the selected pinned controller and its original workspace contract. |
 | Shared collaboration rules | Scope, one writer per scope, receipts, result consumption and bounded review | Readable and manually reusable; automatic enforcement depends on the actual adapter. |
 | Research workflow | Source fidelity, scientific limits, chapter acceptance and manuscript integration | Owned by the existing thesis-refiner skill, not by a terminal runtime. |
 
@@ -79,18 +79,18 @@ Automatic instruction discovery is client/version dependent and has not been tes
 
 ## What has and has not been delivered
 
-Status snapshot: **2026-11-10**. Documentation changes do not promote experimental runtime code.
+Status snapshot: **2026-11-11**. This integration includes experimental source code; it does not establish live acceptance or authorize installation.
 
 | Scope | Evidence and boundary |
 |---|---|
-| Default-branch runtime baseline | Historical planner at [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a); the three offline commands above passed. |
-| Separate experimental candidate | [`fix/official-native-topology-20261105`, pinned `a264ce0`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/a264ce06e17b2facd4590e1d16d95cefbb745cbf); [four Ubuntu/macOS × Python 3.10/3.14 CI jobs passed](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42622913098). Those results belong to that candidate. |
+| Offline planner | Historical example from [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a); the three offline commands above passed. |
+| Included experimental runtime | Startup and retained TASK owners from `a264ce0`, plus [inquiry and continuity capabilities](docs/task-capability-extension.md) from [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298). [Four CI jobs passed on that runtime head](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42973333600); this integration has its own validation boundary. |
 | Formal experimental acceptance | **0/33 business runs; 0/15 paired comparisons.** Preparation, CI and standalone diagnostics do not fill those slots. |
 | Native collaboration efficiency | **Not accepted.** The fixture's 24.051% estimate is not a live speedup; the paired experimental track is not a Herdr-versus-cmux comparison. |
 | Nested chapter teams and recovery | Cross-workspace supervisor coordination, real callbacks/body consumption, three availability states and full chapter-team integration still need end-to-end evidence. |
 
 For the historical planner, see [orchestration](docs/ORCHESTRATION.md), [offline validation](verification/ORCHESTRATION-VALIDATION.md) and the [inherited native SKILL contract](SKILL.md). Its `multi-agent-collaboration` name and legacy platform references are retained historical material, not instructions to overwrite installed skills. Use the current, authorized domain skill for actual research work.
 
-Public examples should contain portable paths and synthetic data. Keep credentials, private transcripts and account-specific configuration outside public commits; see [SECURITY.md](SECURITY.md). The [privacy scope](docs/publication-privacy.md) records the current fixture cleanup: older commits and other branch tips still retain historical private content. Whole-history sanitization remains open.
+Public examples should contain portable paths and synthetic data. Keep credentials, private transcripts and account-specific configuration outside public commits; see [SECURITY.md](SECURITY.md). The [privacy scope](docs/publication-privacy.md) records the current-tree removal of identified machine paths and an endpoint, four additional synthetic terminal fixtures, and test-only dependency selectors. Earlier commits remain reachable; whole-history sanitization is still pending. These bounded changes do not establish a comprehensive privacy audit. Whole-history sanitization remains open.
 
 MIT. cmux, Herdr, Codex, Claude Code, Gemini CLI and OpenCode are separate projects. This repository does not imply their endorsement or universal compatibility.
