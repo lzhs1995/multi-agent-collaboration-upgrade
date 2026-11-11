@@ -82,7 +82,7 @@ SCREEN_IDLE = "\n".join([
     "• Ran ls",
     "  └ README.md",
     "› Ask Codex to do anything",
-    "  GPT-6-Astra xhigh · ~/Documents/cnm · Context 5% used · 258K window · Fast on",
+    "  GPT-6-Astra xhigh · ~/example-project · Context 5% used · 258K window · Fast on",
     "  ? for shortcuts",
 ])
 

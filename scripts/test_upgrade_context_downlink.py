@@ -1337,7 +1337,7 @@ class CausalContextClassTests(unittest.TestCase):
 
 
 # owner40's exact v222 reply, the one a new binding pins; its source publication is the complete 0.4.81 tree.
-R13 = Path.home() / "Documents/cnm/tasks/02_Word_review/handoff/claude29-wip-20261018/u2078/r13"
+R13 = Path(os.environ.get("MAC_TEST_CAUSAL_REPLY_DIR", "/opt/collaboration/test-fixtures/causal-replies"))
 CAUSAL_REPLY = R13 / "SURFACE40-REPLY-causal-fence-A1-20261030-v1.json"
 CAUSAL_REPLY_SHA256 = "c50e598dd803bda6af6038146e87389ace529da5ad66cb8de4c1518517df2751"
 # owner40's earlier v215 reply (0.4.80, review A1), kept only as the contrast observer.
