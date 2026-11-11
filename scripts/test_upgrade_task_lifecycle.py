@@ -5,6 +5,7 @@ production task launches. Campaign handoff uses the existing runtime fixture.
 """
 import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -229,12 +230,37 @@ class LifecycleTests(unittest.TestCase):
         owner = self.completed_ready()
         with patch('upgrade_live_control.control', return_value={'status': 'ADOPTED'}):
             owner.adopt()
-        with patch('upgrade_live_control.campaign_task_service',
-                   side_effect=ContractError('original adoption refusal')) as gate:
-            with self.assertRaisesRegex(ContractError, 'original adoption refusal'):
-                owner.attach_campaign({'fixture': True})
+        import upgrade_task_observer as observer_service
+        terminal_written = threading.Event()
+        release_thread = threading.Event()
+        original_write = observer_service.write_json
+        def hold_terminal(path, *args, **kwargs):
+            result = original_write(path, *args, **kwargs)
+            if Path(path).name == 'terminal.json':
+                terminal_written.set()
+                release_thread.wait(10)
+            return result
+        try:
+            with patch.object(observer_service, 'write_json', side_effect=hold_terminal), \
+                    patch('upgrade_live_control.campaign_task_service',
+                          side_effect=ContractError('original adoption refusal')) as gate:
+                with self.assertRaisesRegex(ContractError, 'original adoption refusal'):
+                    owner.attach_campaign({'fixture': True})
+                self.assertTrue(terminal_written.wait(2))
+                # Bounded stop reports a pending thread; it is not a hard join.
+                self.assertTrue(owner.closed)
+                self.assertTrue(self.o.service.stop_event.is_set())
+                receipt = json_ref(file_ref(owner.root/'closed.json'))
+                self.assertEqual(receipt['observer'], dict(
+                    closed=False, thread_alive=True, input_operations=0))
+                self.assertEqual(receipt['model_inputs_sent'], 0)
+        finally:
+            release_thread.set()
+            self.o.service.thread.join(timeout=5)
         self.assertEqual(gate.call_count, 1)
-        self.assertTrue(owner.closed); self.assertFalse(self.o.service.thread.is_alive())
+        self.assertFalse(self.o.service.thread.is_alive())
+        # Eventual exit does not rewrite the first close receipt as synchronous.
+        self.assertEqual(json_ref(file_ref(owner.root/'closed.json')), receipt)
         self.assertEqual(self.closes, ['closed'])
         self.assertFalse((owner.root/'campaign-result.json').exists())
 
