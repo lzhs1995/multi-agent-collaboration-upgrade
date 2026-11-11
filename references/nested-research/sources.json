@@ -1,0 +1,85 @@
+{
+  "schema": "nested-collaboration-public-sources-v1",
+  "status": "PUBLIC_CANDIDATE_ONLY",
+  "document_version": "2026.11.11-public.1",
+  "binding_note": "Documentation/source provenance only. Actual tasks retain their registered controller, source, attempts and review budget. No installation or live adoption is asserted.",
+  "local_predecessor": {
+    "document_version": "2026.11.08.1",
+    "member_tree_sha256": "44f5f8e9479213701ecaf7d314f539c49cc4229b2c9ff12e6d3388c8a67a98ad",
+    "members": {
+      "references/capabilities-and-gaps.md": {
+        "sha256": "6e7b0e19fafd9649005d86ed2af86549851e79e0dd4ca950e9f45d70ed774b9d",
+        "bytes": 3925
+      },
+      "references/common-contract.md": {
+        "sha256": "039833103cd93d5ccc1f0bcbfde42d27e1de6e38edcf6d6a5a9b3e4687e0b467",
+        "bytes": 11282
+      },
+      "references/sources.json": {
+        "sha256": "4e963029e026b1849312c0181870076c0da24fdf8722968c694c702043f72281",
+        "bytes": 9184
+      },
+      "skills/cmux-outer-coordination/SKILL.md": {
+        "sha256": "7ccdaa96acba4b7c348b36d3f2ad1a913334703c06cac2e00ff5eabd4e109a95",
+        "bytes": 3897
+      },
+      "skills/herdr-inner-collaboration/SKILL.md": {
+        "sha256": "3780853d6120d47ddbca2de90a668f5fc049845ccab380c390dbd70357b02faa",
+        "bytes": 3739
+      },
+      "templates/four-chapters.json": {
+        "sha256": "1e5c5b3e0bcd76cd2cf9d3920fd63d93d1cc626e035d083281071af175fad90f",
+        "bytes": 25711
+      }
+    },
+    "provenance_limit": "Privately maintained six-member workflow bundle; its parent repository is not asserted as this bundle publishing origin. Private machine paths and installation receipts are deliberately excluded."
+  },
+  "public_references": {
+    "mac": {
+      "repository": "https://github.com/lzhs1995/multi-agent-collaboration",
+      "commit": "d6524901844a104b478c22089a57e683fb880ed3",
+      "herdr_profile": "https://github.com/lzhs1995/multi-agent-collaboration/blob/d6524901844a104b478c22089a57e683fb880ed3/skills/herdr-collaboration/SKILL.md",
+      "cmux_profile": "https://github.com/lzhs1995/multi-agent-collaboration/blob/d6524901844a104b478c22089a57e683fb880ed3/skills/cmux-collaboration/SKILL.md",
+      "nested_coordination": "https://github.com/lzhs1995/multi-agent-collaboration/blob/d6524901844a104b478c22089a57e683fb880ed3/references/nested-research-coordination.md"
+    },
+    "thesis_refiner": {
+      "repository": "https://github.com/lzhs1995/thesis-refiner",
+      "commit": "653fd8c57afd3eaa643a68e4c304b34e7b973b3e",
+      "skill": "https://github.com/lzhs1995/thesis-refiner/blob/653fd8c57afd3eaa643a68e4c304b34e7b973b3e/SKILL.md"
+    },
+    "herdr_official": {
+      "repository": "https://github.com/herdrdev/herdr",
+      "runtime_guidance": [
+        "herdr --skill",
+        "herdr --help"
+      ],
+      "observed_version": "0.9.5",
+      "boundary": "Follow the installed official caller restriction; the observed guidance requires HERDR_ENV=1. Do not forge this variable or infer external control from a selector."
+    },
+    "cmux_herdr_third_party": {
+      "repository": "https://github.com/RaviTharuma/cmux-herdr",
+      "observed_commit": "33a26a0bcd8358806134fab28358839765439db2",
+      "official_herdr": false,
+      "scope": "Optional UI/topology bridge, not identity or acceptance proof."
+    }
+  },
+  "inspirations": [
+    {
+      "url": "https://github.com/sligter/qunica",
+      "adopted": "Four graph names and finite task budgets; no scheduler/runtime copied."
+    },
+    {
+      "url": "https://github.com/zhsongqing/claude-codex-workflow",
+      "adopted": "Pinned review baseline and finding disposition; user limit stays three total rounds, without fixed model-brand roles."
+    },
+    {
+      "url": "https://qunica.cc/#comparison",
+      "scope": "Background comparison, not measured performance for this candidate."
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=idwE4BVml2g",
+      "scope": "User-supplied background; no video-content claims used."
+    }
+  ],
+  "validation_limit": "Source preparation, JSON/relative links, skill frontmatter and offline template usage. No live registration, dispatch, plugin capsule acceptance or scientific business completion."
+}

@@ -44,6 +44,10 @@ These values come from assigned fixture durations. The output's `meets_fifteen_p
 
 ## Prepare an honest handoff
 
+For chapter research, first choose the correct layer in the [nested research skill guide](nested-research-skills.md). The [inner skill](../skills/herdr-inner-collaboration/SKILL.md) manages one chapter; the [outer skill](../skills/cmux-outer-coordination/SKILL.md) connects chapter supervisors with senior. Both read one [shared workflow contract](../references/nested-research/common-contract.md). Their [neutral four-chapter template](../templates/nested-research/four-chapters.json) is an editable form, not planner input or a live team registration. MAC continues to own the task's transport; thesis-refiner owns the applicable research acceptance. Read these source files from the complete checkout without installing or switching existing skills.
+
+繁體中文：先依[層次導航](nested-research-skills.md)選擇章內或跨章入口，共用同一契約。四章模板可在私有輸出目錄按原分派調整；不為補齊範例新建會話。此候選不宣稱安裝、載入、膠囊顯示或正式科研驗收完成。
+
 Record the objective, source revision/hash, dependencies, named owner, write scope, expected result, acceptance check and next action. A live handoff additionally needs actual session and controller evidence. Synthetic fixture IDs must stay synthetic.
 
 Keep a single writer for each shared output. Parallelize independent deliverables; do not assign two agents to overwrite one file. The current example supports `claude`/`codex` executor labels and their matching native transport labels only. Another agent can inspect or invoke the planner, but it must not masquerade as a native executor.

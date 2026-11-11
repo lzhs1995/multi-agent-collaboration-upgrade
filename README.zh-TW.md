@@ -2,7 +2,7 @@
 
 # Multi-Agent Collaboration Upgrade
 
-[English](README.md) · [Agent 快速入門](docs/agent-quickstart.md) · [通用 Agent 指引](AGENTS.md)
+[English](README.md) · [Agent 快速入門](docs/agent-quickstart.md) · [通用 Agent 指引](AGENTS.md) · [巢狀科研技能](docs/nested-research-skills.md)
 
 這是一套供終端 Agent 使用的協作規則、離線相依任務規劃器與實驗性 TASK 執行碼。目標是結合 **cmux 的跨終端、跨工作區協調**與 **Herdr 的單一終端內部協作**，保留既有會話、可追溯交接和清楚的寫入責任。
 
@@ -44,6 +44,12 @@ python3 -B scripts/orchestration_planner.py benchmark --plan tests/fixtures/orch
 | 科研工作流程 | 來源忠實度、科學限制、章節驗收與全稿整合 | 由既有論文精煉助手掌管，不由終端執行環境取代。 |
 
 cmux 與 Herdr 提供執行環境與操作能力，協作規則決定團隊如何使用它們。應保留**純 cmux 協作**、既有 [`multi-agent-collaboration`](https://github.com/lzhs1995/multi-agent-collaboration) 及**论文精炼助手／thesis-refiner** 兩套 skill。面向 Herdr 的內部規則模組可共用協作契約，遇到跨工作區交接時使用外層模組；不需要刪除或偷偷替換原 skill。
+
+## 巢狀科研技能原始碼
+
+本候選納入面向章內團隊的 [herdr-inner-collaboration](skills/herdr-inner-collaboration/SKILL.md)，以及面向章主管與總主管的 [cmux-outer-coordination](skills/cmux-outer-coordination/SKILL.md)。兩者共用一份[工作流程契約](references/nested-research/common-contract.md)與中性的[四章接口模板](templates/nested-research/four-chapters.json)。
+
+[層次導航](docs/nested-research-skills.md)區分官方 Herdr 命令、可選的 Ravi 第三方介面橋接、既有 MAC 通訊 profiles、本次科研協作流程，以及 thesis-refiner 的科學／論文規則。保留 checkout 的相對目錄即可閱讀；這是原始碼交付，不代表安裝、角色登記、任務遷移或真實驗收。純 cmux 與原有兩套 skill 繼續保留。
 
 ## 四種合作模式
 

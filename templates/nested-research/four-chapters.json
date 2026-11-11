@@ -1,0 +1,971 @@
+{
+  "schema": "nested-research-collaboration-v1",
+  "status": "TEMPLATE_NOT_ENROLLED",
+  "template_only": true,
+  "example_notes": [
+    "Illustrative four-chapter layout only; use the actual chapter count and assigned participants without creating sessions, workspaces or reviewer roles to match this example.",
+    "The executor/reviewer labels below are examples, not required roles; preserve assignments from the task.",
+    "Resolve only identities and fields needed by the next action; unrelated missing fields or UNKNOWN attempts do not freeze independent bound actions.",
+    "Use inner_herdr=null for every non-Herdr native endpoint; the senior example below is an independent cmux native endpoint.",
+    "Documentation baselines describe source references and do not bind a live task controller; resolve controller_pin from the original task evidence.",
+    "This public candidate is a workflow form, not orchestration_planner input or a scheduler configuration. Keep its relative resource layout when reading it."
+  ],
+  "task_id": null,
+  "user_authorization": {
+    "source_path": null,
+    "sha256": null,
+    "scope": null
+  },
+  "task_owner_actor_id": "senior",
+  "candidate_package_sha256": null,
+  "controller_pins": {
+    "task_controller_pins": {},
+    "domain_skill": null
+  },
+  "documentation_baselines": {
+    "sources": "../../references/nested-research/sources.json",
+    "mac_commit": "d6524901844a104b478c22089a57e683fb880ed3",
+    "thesis_refiner_commit": "653fd8c57afd3eaa643a68e4c304b34e7b973b3e",
+    "not_task_bindings": true
+  },
+  "objective": null,
+  "acceptance_criteria": [],
+  "started_at": null,
+  "deadline": null,
+  "chapters": [
+    {
+      "chapter_id": "chapter_1",
+      "actual_chapter_title": null,
+      "exclusive_cmux_workspace_uuid": null,
+      "herdr_session_name": null,
+      "supervisor_actor_id": "chapter_1_supervisor",
+      "participant_actor_ids": [
+        "chapter_1_supervisor",
+        "chapter_1_executor",
+        "chapter_1_reviewer"
+      ],
+      "inner_topology": {
+        "mode": "hierarchical",
+        "edges": [
+          [
+            "chapter_1_supervisor",
+            "chapter_1_executor"
+          ],
+          [
+            "chapter_1_executor",
+            "chapter_1_supervisor"
+          ],
+          [
+            "chapter_1_supervisor",
+            "chapter_1_reviewer"
+          ],
+          [
+            "chapter_1_reviewer",
+            "chapter_1_supervisor"
+          ]
+        ],
+        "speaking_order": []
+      },
+      "artifact_root": null,
+      "accepted_delta_path": null,
+      "accepted_delta_interface": {
+        "task_id": null,
+        "owner_actor_id": "chapter_1_supervisor",
+        "artifact_pins": [],
+        "source_evidence_pins": [],
+        "terminology_and_method_dependencies": [],
+        "checks_performed": [],
+        "scientific_limits": [],
+        "unresolved_items": [],
+        "review": {
+          "baseline_pin": null,
+          "rounds_used": null,
+          "findings_and_dispositions": [],
+          "acceptance_status": "UNVERIFIED"
+        },
+        "resource_state": [],
+        "next_action": null
+      }
+    },
+    {
+      "chapter_id": "chapter_2",
+      "actual_chapter_title": null,
+      "exclusive_cmux_workspace_uuid": null,
+      "herdr_session_name": null,
+      "supervisor_actor_id": "chapter_2_supervisor",
+      "participant_actor_ids": [
+        "chapter_2_supervisor",
+        "chapter_2_executor",
+        "chapter_2_reviewer"
+      ],
+      "inner_topology": {
+        "mode": "hierarchical",
+        "edges": [
+          [
+            "chapter_2_supervisor",
+            "chapter_2_executor"
+          ],
+          [
+            "chapter_2_executor",
+            "chapter_2_supervisor"
+          ],
+          [
+            "chapter_2_supervisor",
+            "chapter_2_reviewer"
+          ],
+          [
+            "chapter_2_reviewer",
+            "chapter_2_supervisor"
+          ]
+        ],
+        "speaking_order": []
+      },
+      "artifact_root": null,
+      "accepted_delta_path": null,
+      "accepted_delta_interface": {
+        "task_id": null,
+        "owner_actor_id": "chapter_2_supervisor",
+        "artifact_pins": [],
+        "source_evidence_pins": [],
+        "terminology_and_method_dependencies": [],
+        "checks_performed": [],
+        "scientific_limits": [],
+        "unresolved_items": [],
+        "review": {
+          "baseline_pin": null,
+          "rounds_used": null,
+          "findings_and_dispositions": [],
+          "acceptance_status": "UNVERIFIED"
+        },
+        "resource_state": [],
+        "next_action": null
+      }
+    },
+    {
+      "chapter_id": "chapter_3",
+      "actual_chapter_title": null,
+      "exclusive_cmux_workspace_uuid": null,
+      "herdr_session_name": null,
+      "supervisor_actor_id": "chapter_3_supervisor",
+      "participant_actor_ids": [
+        "chapter_3_supervisor",
+        "chapter_3_executor",
+        "chapter_3_reviewer"
+      ],
+      "inner_topology": {
+        "mode": "hierarchical",
+        "edges": [
+          [
+            "chapter_3_supervisor",
+            "chapter_3_executor"
+          ],
+          [
+            "chapter_3_executor",
+            "chapter_3_supervisor"
+          ],
+          [
+            "chapter_3_supervisor",
+            "chapter_3_reviewer"
+          ],
+          [
+            "chapter_3_reviewer",
+            "chapter_3_supervisor"
+          ]
+        ],
+        "speaking_order": []
+      },
+      "artifact_root": null,
+      "accepted_delta_path": null,
+      "accepted_delta_interface": {
+        "task_id": null,
+        "owner_actor_id": "chapter_3_supervisor",
+        "artifact_pins": [],
+        "source_evidence_pins": [],
+        "terminology_and_method_dependencies": [],
+        "checks_performed": [],
+        "scientific_limits": [],
+        "unresolved_items": [],
+        "review": {
+          "baseline_pin": null,
+          "rounds_used": null,
+          "findings_and_dispositions": [],
+          "acceptance_status": "UNVERIFIED"
+        },
+        "resource_state": [],
+        "next_action": null
+      }
+    },
+    {
+      "chapter_id": "chapter_4",
+      "actual_chapter_title": null,
+      "exclusive_cmux_workspace_uuid": null,
+      "herdr_session_name": null,
+      "supervisor_actor_id": "chapter_4_supervisor",
+      "participant_actor_ids": [
+        "chapter_4_supervisor",
+        "chapter_4_executor",
+        "chapter_4_reviewer"
+      ],
+      "inner_topology": {
+        "mode": "hierarchical",
+        "edges": [
+          [
+            "chapter_4_supervisor",
+            "chapter_4_executor"
+          ],
+          [
+            "chapter_4_executor",
+            "chapter_4_supervisor"
+          ],
+          [
+            "chapter_4_supervisor",
+            "chapter_4_reviewer"
+          ],
+          [
+            "chapter_4_reviewer",
+            "chapter_4_supervisor"
+          ]
+        ],
+        "speaking_order": []
+      },
+      "artifact_root": null,
+      "accepted_delta_path": null,
+      "accepted_delta_interface": {
+        "task_id": null,
+        "owner_actor_id": "chapter_4_supervisor",
+        "artifact_pins": [],
+        "source_evidence_pins": [],
+        "terminology_and_method_dependencies": [],
+        "checks_performed": [],
+        "scientific_limits": [],
+        "unresolved_items": [],
+        "review": {
+          "baseline_pin": null,
+          "rounds_used": null,
+          "findings_and_dispositions": [],
+          "acceptance_status": "UNVERIFIED"
+        },
+        "resource_state": [],
+        "next_action": null
+      }
+    }
+  ],
+  "actors": {
+    "chapter_1_supervisor": {
+      "role": "chapter_supervisor",
+      "chapter_id": "chapter_1",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_1_executor": {
+      "role": "executor",
+      "chapter_id": "chapter_1",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_1_reviewer": {
+      "role": "reviewer",
+      "chapter_id": "chapter_1",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_2_supervisor": {
+      "role": "chapter_supervisor",
+      "chapter_id": "chapter_2",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_2_executor": {
+      "role": "executor",
+      "chapter_id": "chapter_2",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_2_reviewer": {
+      "role": "reviewer",
+      "chapter_id": "chapter_2",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_3_supervisor": {
+      "role": "chapter_supervisor",
+      "chapter_id": "chapter_3",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_3_executor": {
+      "role": "executor",
+      "chapter_id": "chapter_3",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_3_reviewer": {
+      "role": "reviewer",
+      "chapter_id": "chapter_3",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_4_supervisor": {
+      "role": "chapter_supervisor",
+      "chapter_id": "chapter_4",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_4_executor": {
+      "role": "executor",
+      "chapter_id": "chapter_4",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "chapter_4_reviewer": {
+      "role": "reviewer",
+      "chapter_id": "chapter_4",
+      "reuse_existing_context": true,
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": {
+          "session_name": null,
+          "server_selector_argv": [],
+          "socket_path": null,
+          "server_pid": null,
+          "server_birth": null,
+          "server_executable": null,
+          "workspace_id": null,
+          "tab_id": null,
+          "pane_id": null,
+          "terminal_id": null
+        },
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    },
+    "senior": {
+      "role": "senior_supervisor",
+      "chapter_id": null,
+      "reuse_existing_context": true,
+      "placement_note": "Resolve an authorized existing endpoint; do not infer a fifth workspace or new session.",
+      "controller_pin": null,
+      "endpoint": {
+        "machine_id": null,
+        "outer_cmux": {
+          "workspace_uuid": null,
+          "pane_uuid": null,
+          "surface_uuid": null
+        },
+        "inner_herdr": null,
+        "native": {
+          "agent_kind": null,
+          "session_id": null,
+          "pid": null,
+          "birth": null,
+          "process_group": null,
+          "tty": null,
+          "executable": null,
+          "transcript": {
+            "path": null,
+            "device": null,
+            "inode": null,
+            "boundary_bytes": null,
+            "boundary_sha256": null
+          }
+        },
+        "observed_at": null,
+        "evidence_paths": [],
+        "fingerprint_sha256": null
+      },
+      "allowed_write_paths": [],
+      "progress_path": null,
+      "final_output": null
+    }
+  },
+  "outer_topology": {
+    "mode": "star",
+    "hub_actor_id": "senior",
+    "edges": [
+      [
+        "senior",
+        "chapter_1_supervisor"
+      ],
+      [
+        "chapter_1_supervisor",
+        "senior"
+      ],
+      [
+        "senior",
+        "chapter_2_supervisor"
+      ],
+      [
+        "chapter_2_supervisor",
+        "senior"
+      ],
+      [
+        "senior",
+        "chapter_3_supervisor"
+      ],
+      [
+        "chapter_3_supervisor",
+        "senior"
+      ],
+      [
+        "senior",
+        "chapter_4_supervisor"
+      ],
+      [
+        "chapter_4_supervisor",
+        "senior"
+      ]
+    ],
+    "speaking_order": [],
+    "alternative_modes": [
+      "mesh",
+      "hierarchical",
+      "ring"
+    ],
+    "selected_routes": []
+  },
+  "budgets": {
+    "max_dispatch_steps": 16,
+    "max_hops_per_event": 3,
+    "max_consecutive_failures": 2,
+    "max_total_failures": 4,
+    "max_tokens": null,
+    "deadline_required": true,
+    "notes": "Example finite policy values; set them for the actual task under existing authorization. Failure budgets never authorize resend."
+  },
+  "progress": {
+    "cadence_seconds": 60,
+    "mechanism": "active_agent_responsibility",
+    "independent_scheduler_installed": false,
+    "global_old_task_adoption": false,
+    "stale_policy": "Record actual gap as STALE/UNKNOWN; do not infer death or completion.",
+    "stop_dedup_key": [
+      "task_id",
+      "actor_id",
+      "episode_id",
+      "transition_seq",
+      "event_type",
+      "recipient_id"
+    ]
+  },
+  "review": {
+    "applies_when": "The task actually requires review; starting coordination or delivering a specification does not create a reviewer role.",
+    "full_baseline_reviews": 1,
+    "rounds_max_total": 3,
+    "targeted_recheck_rounds_max": 2,
+    "baseline_paths_and_hashes": [],
+    "findings_path": null,
+    "round_ledger_path": null,
+    "unresolved_after_round_3": "Escalate to this level supervisor; user only for genuine user decision."
+  },
+  "single_writer_resources": [],
+  "resource_leases": [],
+  "message_ledger_root": null,
+  "unknown_attempts": [],
+  "handoff": {
+    "predecessor_task_id": null,
+    "fingerprint_algorithm": "sha256(canonical UTF-8 JSON: sort_keys=true,separators=(comma,colon),ensure_ascii=false)",
+    "completed": [],
+    "remaining": [],
+    "last_safe_checkpoint": null,
+    "next_executable_action": null,
+    "accepted_artifact_pins": []
+  },
+  "activation_checks": [
+    "For the next action, resolve the actual sender/receiver identity and required fields from live evidence; never use example values as a real binding.",
+    "Use the actual chapter count and assigned roles; unused example chapters or reviewers are not activation requirements.",
+    "Non-Herdr native endpoints use inner_herdr=null; this is valid, not an unresolved Herdr identity.",
+    "Each existing task retains its original controller from task evidence; documentation baselines do not change that binding.",
+    "Check supported routes and authorization for involved edges; no paste to an outer Herdr TUI.",
+    "Before input, check involved native SID/PID/birth/TTY, transcript fence and actual input state; persist intent and use its input lock.",
+    "UNKNOWN attempts retain original evidence and are never replayed; independent bound actions may proceed without settling unrelated attempts.",
+    "Writing artifacts additionally requires the corresponding writer authority and resource lease; filling this example creates no agents, hooks, scheduler, groups or sessions."
+  ]
+}

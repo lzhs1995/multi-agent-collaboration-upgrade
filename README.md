@@ -2,7 +2,7 @@
 
 # Multi-Agent Collaboration Upgrade
 
-[繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md)
+[繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md) · [Nested research skills](docs/nested-research-skills.md)
 
 Reusable collaboration rules, an offline dependency planner and experimental TASK runtime code for terminal-based agents. The goal is to combine **cmux for coordination across terminals and workspaces** with **Herdr for teamwork inside a terminal**, while keeping existing sessions, traceable handoffs and clear ownership.
 
@@ -44,6 +44,12 @@ For a dissertation with four core chapters, each chapter has a cmux workspace co
 | Research workflow | Source fidelity, scientific limits, chapter acceptance and manuscript integration | Owned by the existing thesis-refiner skill, not by a terminal runtime. |
 
 cmux and Herdr provide runtime capabilities; the rules determine how a team uses them. Keep **pure-cmux collaboration** and the existing [`multi-agent-collaboration`](https://github.com/lzhs1995/multi-agent-collaboration) and **论文精炼助手 / thesis-refiner** skills. An inward Herdr rules module can reuse the shared contract and delegate cross-workspace coordination to the outer module. It does not require deleting or silently replacing either skill.
+
+## Nested research skill sources
+
+This candidate now includes [herdr-inner-collaboration](skills/herdr-inner-collaboration/SKILL.md) for chapter teams and [cmux-outer-coordination](skills/cmux-outer-coordination/SKILL.md) for chapter supervisors and the senior supervisor. They share one [workflow contract](references/nested-research/common-contract.md) and a neutral [four-chapter interface template](templates/nested-research/four-chapters.json).
+
+The [layer guide](docs/nested-research-skills.md) separates official Herdr commands, the optional third-party Ravi UI bridge, existing MAC transport profiles, these research workflows, and thesis-refiner's scientific/manuscript rules. Keep the relative checkout layout to read the two skills. This is source delivery only: no installer, role registration, task migration or live acceptance is implied. Pure-cmux use and both existing skills remain valid.
 
 ## Four cooperation modes
 

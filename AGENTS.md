@@ -9,5 +9,6 @@ This repository provides readable collaboration rules and a deterministic offlin
 5. For explicitly authorized live work, read the pinned controller's actual contract. [SKILL.md](SKILL.md) is inherited historical MAC material; do not automatically install it over existing MAC/thesis-refiner skills or borrow another session's identity.
 6. Preserve sessions, original attempts, write ownership and review budgets. Distinguish notification, full-body reading, result acceptance and resource release. Unknown side effects require readback, not replay.
 7. Make public examples portable. Keep credentials, private transcripts and machine/account-specific state outside public commits. Do not claim a secret scan or full-history sanitization that was not performed.
+8. For chapter research teamwork, read the [nested skill layer guide](docs/nested-research-skills.md) and the applicable inner/outer skill. These candidate workflow sources reuse MAC transport and thesis-refiner domain rules; they do not install skills or activate a team.
 
 Claude/Gemini wrappers point here. OpenCode and other clients can read this file explicitly; automatic loading varies by client/version. No wrapper establishes runtime compatibility.
