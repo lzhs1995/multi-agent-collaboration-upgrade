@@ -1,8 +1,11 @@
 # r25：首轮超时，原次已停止
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19 13:22:47（Asia/Taipei）终态更新：原 driver 和独立 watchdog
 均返回 HALTED；watchdog 发布 all_stopped=true，含义是停止后续调度，
-不是销毁客户端或取消远端请求。原报告为 `/Users/lzhs/up/driver/final-report.json`，
+不是销毁客户端或取消远端请求。原报告为 `/private/evidence/item-18a657e9f11e.json`，
 SHA256 `4cf3e7354643b04c529111347799a259c364d022232faa86f27c2a4378c78017`。
 最终为 **1 TIMEOUT、32 MISSING；pilot 0/3、业务 0/33、可比较配对 0/15**。
 
@@ -25,7 +28,7 @@ renderer 加载，保留控制器隔离校验；36 项定向回归通过，负�
 - 配置与计时起点：2026-10-19T04:47:39.605462Z。
 - 整体固定截止：2026-10-19T06:47:39.605462Z，即台北 **14:47:39**。
 - 原生配置：Codex `gpt-6-astra/xhigh`，Claude `fable/xhigh`，当前原生返回模型 `claude-opus-5-5`。
-- 实验根 `/Users/lzhs/up`；原 wrapper、driver 和独立 watchdog 持续运行。
+- 实验根 `/Users/demo/b1`；原 wrapper、driver 和独立 watchdog 持续运行。
 - 冻结实现提交 `4de3df97d8af58a72de5e1559fe52d81cb357dd6`，323 文件。
 - 7 组、33 轮、15 对（12 warm、3 cold）、192 条独立普通通信。先连续通过 3 轮 pilot，再执行配对；缺失、拒绝、排队和失败不补样。
 - 两小时是本次执行上限，不是保证通过的时间。单轮 1800 秒；失败保留原会话、原输入和全部分母，不重放、不重置时钟。
@@ -70,7 +73,7 @@ r24 启动前发现 Codex 提供方和凭据变化，Claude 相关配置未变�
 218.182 秒，且未扣 7 组启动开销；首轮实际已明显超过该均摊时间，因此不能
 承诺本次截止前全部完成，也不能重置或延长原时钟。
 
-surface40 管理共享 MAC 和论文精炼助手。r25 启动事实已发布到其既有文件
+shared-maintainer 管理共享 MAC 和论文精炼助手。r25 启动事实已发布到其既有文件
 收件箱，约定回复尚未出现；文件读回不代表 owner 已读。
 
 已读取其共享 0.4.51 发布说明：自动 reply advisory 曾误导执行者等待 idle
@@ -78,7 +81,7 @@ preflight，新说明要求正常工作或 Goal 中及时通信。该发现针�
 输出文案，不能直接推论所有旧发送入口都阻止 active 接收者。upgrade 已要求
 不为通信暂停 Goal；本次保持冻结控制器，后续按真实运行证据核验具体入口。
 
-另已发布新的具体 Goal 格式咨询到 surface40 既有文件收件箱；截至本检查点
+另已发布新的具体 Goal 格式咨询到 shared-maintainer 既有文件收件箱；截至本检查点
 尚无 owner 已读确认。只读二进制分析确定 Claude 2.1.170 的
 `attachment.goal_status` 和独立的 `active_goal` transport 格式。
 候选新增 `scripts/upgrade_goal_observer.py`，仅认证原生日志、记录离散 Goal
@@ -88,15 +91,15 @@ preflight，新说明要求正常工作或 Goal 中及时通信。该发现针�
 
 ## 原始证据
 
-证据根：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+证据根：`/private/evidence/item-151557e33ca7`。
 
 - `preparation/r25-candidate/REVIEW-AND-NEXT.md`：范围、门槛和 14 条 socket/lock 路径。
 - `authorization/r25-20261019/configuration-result.json`：唯一配置及固定截止。
 - `execution/r25-original-driver/intent.json`、`watchdog-ready.json`：原启动与独立 watchdog。
 - `execution/r25-original-driver/stdout.jsonl`：原 driver 观察；运行中持续追加。
-- `/Users/lzhs/up/g/0/evidence/B/live-control/adoption.json`：三客户端 adoption。
-- `/Users/lzhs/up/g/0/campaigns/B/pilot-three-rounds/runs/pilot-01/run.json`：原首轮开始。
-- `maintenance/r25-native-recovery-01/surface40-launch-publication.json`：文件发布读回。
+- `/private/evidence/item-d1a4cd2a8030.json`：三客户端 adoption。
+- `/private/evidence/item-e77c3f8618ab.json`：原首轮开始。
+- `maintenance/r25-native-recovery-01/shared-maintainer-launch-publication.json`：文件发布读回。
 - `maintenance/r25-independent-audit/REPORT.md`：独立范围与覆盖审计。
 - `maintenance/r25-goal-native-format-01/binary-format-evidence.json`：静态二进制格式依据。
 - `maintenance/r25-goal-native-format-01/publication.json`：新的 Goal 经验咨询文件发布，非已读回执。

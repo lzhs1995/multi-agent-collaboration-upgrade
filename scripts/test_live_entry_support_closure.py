@@ -6,15 +6,14 @@ import of a private module to be renamed and to resolve inside the private contr
 """
 import ast
 import unittest
+import os
 from pathlib import Path
 
 import upgrade_live_materialize as materialize
 from upgrade_live_patch import PRIVATE_MODULES
 
 HERE = Path(materialize.__file__).resolve().parent
-BASE = Path("/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/collaboration-maintenance-context-5994-20261011-v1/"
-            "successor28-from6105-20261012-v1/continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/"
-            "surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source/scripts")
+BASE = (Path(os.environ.get("MAC_TEST_MAC084_SOURCE") or "/opt/collaboration/test-fixtures/mac084/source") / "scripts")
 # Lazy imports reached only by the external publisher side of startup continuity (startup_continuity=False
 # in S2); they are not private modules and stay unrenamed by design.
 EXTERNAL_ONLY = {("mac_upgrade_startup_continuity", "upgrade_live_runtime"),

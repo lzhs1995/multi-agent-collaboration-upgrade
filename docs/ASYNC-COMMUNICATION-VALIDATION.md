@@ -1,7 +1,10 @@
 # 运行中双向通信：规则、实证与剩余验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-18，独立 upgrade 候选。共享 multi-agent-collaboration 与论文精炼助手
-由用户指定的 surface40 统一检验、优化和合并，本仓不修改它们的安装或发布。
+由用户指定的 shared-maintainer 统一检验、优化和合并，本仓不修改它们的安装或发布。
 以下规则澄清已写入本仓；新增运行中双向压力矩阵尚未完成。
 
 **r22 更新（2026-10-19 01:56）：** 已加入固定正文读取器及严格原生 call/result
@@ -90,7 +93,7 @@ native → 回执约 **237.361 秒**。后者是观察/核收延迟，不全算�
 拒绝主要在清理输入框、写/清 token 探针及历史补键路径。Claude 正式新消息
 入口没有一律 busy 禁发。应修正错误调用和规则泛化，不删除这些动作各自的保护。
 
-原证据根 E：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+原证据根 E：`/private/evidence/item-151557e33ca7`。
 
 - `maintenance/r20-delivery/terminal-readout.json`：原 runner、配置、33 槽、15 对及七组 stop 的复核。
 - `maintenance/r20-dispatch-audit/inventory-callback-native-proof.json` 与 `inventory-formal-receipt-proof.json`：原 intent、EOF fence、完整 payload、原生记录及正式回执。
@@ -134,7 +137,7 @@ native → 回执约 **237.361 秒**。后者是观察/核收延迟，不全算�
    分解 p50/p95/最大等待、总工期、成功吞吐、公平性、重复动作和返工。
    报告模型调用、token 及成本，缺失记 UNKNOWN；成功样本延迟与全分母成功率
    并列。正确性通过后 warm 配对中位改善至少 15%，各 workload 中位退化
-   不超过 5%，成本增长超过 10% 必须披露。以证据向 surface40 反馈，共享
+   不超过 5%，成本增长超过 10% 必须披露。以证据向 shared-maintainer 反馈，共享
    MAC/论文精炼助手的合并由该维护者统一处理；upgrade 候选由本方按实证优化。
 
 定量矩阵建议已由独立审查列出：8 类负例各 1000 次，另做稳定 TTY、短命
@@ -146,13 +149,13 @@ native → 回执约 **237.361 秒**。后者是观察/核收延迟，不全算�
 其余未对应到实际原证据的建议不能宣称已完成。必须先检验与
 实际业务耗时及固定两小时预算的相容性，不能擅自增加会话或延长在途时钟。
 
-## surface40 交流状态
+## shared-maintainer 交流状态
 
 r22 正文读取/持续 goal 实测设计已独立发布到既有 maintenance inbox：
 `upgrade42-r22-body-exposure-goal-design-20261019.json`。17 项原绑定/pins 核对
 一致，未发送原生输入。发布回执在证据根
-`maintenance/r22-development/surface40-exchange-01/published.json`，正文同目录
-`MESSAGE.md`；约定 `SURFACE40-REPLY.md` 尚未出现，读取状态 NOT_OBSERVED。
+`maintenance/r22-development/shared-maintainer-exchange-01/published.json`，正文同目录
+`MESSAGE.md`；约定 `shared-maintainer-REPLY.md` 尚未出现，读取状态 NOT_OBSERVED。
 以下保留历史交流，不把文件发布表述成对方已读或确认。
 
 r19历史回件已核验，不能表述成从未回复。新的只读握手发现已发布到其既有

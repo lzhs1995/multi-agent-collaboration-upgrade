@@ -1,5 +1,8 @@
 # r21 终态与 UUID 握手修复
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 本报告记录 2026-10-19 台北时间的阶段交付。**真实协作效率尚未证明；PR 保持 Draft。**
 1 Codex＋2 Claude 已真实启动并全部完成 ADOPTED，首轮在握手身份检查中失败。
 本机修复与压力验证完成不改变原实验结果，不代表全量双 Claude 业务验收。
@@ -70,7 +73,7 @@ live 观察、原生 binding 和日志内容为 fixture；模型客户端启动�
 
 ## 经验同步与未完成工作
 
-surface40 继续统一管理共享 MAC 和论文精炼助手；本仓仅修改 upgrade。
+shared-maintainer 继续统一管理共享 MAC 和论文精炼助手；本仓仅修改 upgrade。
 其 r19 历史回件与 request/release/install 三组 pins 已核验并吸收。
 本次 UUID 实证与终态经既有文件 inbox 补充；文件发布、对方读取和反馈分别记录，
 不得把发布称为已读或充分双向交流。原 NO_INPUT 原生联络不重发。
@@ -84,16 +87,16 @@ surface40 继续统一管理共享 MAC 和论文精炼助手；本仓仅修改 u
    Jev/TypeSafe 仍为 advisory/mock，当前 live 使用 rules，不能声称测得 Jev 优势。
 3. 执行已定义的 192 条四方向消息矩阵，补足绑定原生记录的 BODY_READ 采集，
    独立观察持续 `/goal`、同时回调、队列消费、延迟和公平性。拒绝、缺失不补样。
-4. 核验 surface40 对新增实证的回件；共享技能的检验合并由其负责。
+4. 核验 shared-maintainer 对新增实证的回件；共享技能的检验合并由其负责。
 
 ## 原始证据索引
 
-证据根 E：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+证据根 E：`/private/evidence/item-151557e33ca7`。
 下列外部证据保留在本机，不随代码提交；原始会话和凭据不进入仓库。
 
 | 路径 | SHA256 |
 | --- | --- |
-| `/Users/lzhs/ul/driver/final-report.json` | `5dea46987759adb3381502517a7c03ca0204da753490e9c77159d6ffc51ccb97` |
+| `/private/evidence/item-5b4a3e7a497e.json` | `5dea46987759adb3381502517a7c03ca0204da753490e9c77159d6ffc51ccb97` |
 | `E/execution/r21-original-driver/result.json` | `ecfff2abb499535d0740687b462a680097473c4864d348a60af1aba79645c250` |
 | `E/validation/r21-uuid-selector-regression-01/result.json` | `cb87612c7366fb8f3801eb1cf8aaf6695662952726591f3562261f694a09cec3` |
 | `E/validation/r21-uuid-selector-pressure-01/result.json` | `647b279c850257a5d7eaa2114a3356ef65f8cf9565071f540b3da18436c860bd` |
@@ -104,4 +107,4 @@ surface40 继续统一管理共享 MAC 和论文精炼助手；本仓仅修改 u
 `E/maintenance/r21-delivery/READONLY-HANDSHAKE-ROOT-CAUSE-01.md`、
 `E/maintenance/r21-provider-observations/20261018T172434.123423Z.json`、
 `E/validation/r21-uuid-selector-pressure-01/result.json`。
-surface40 发布回执与最终交付复核另存于 `E/maintenance/r21-delivery/`。
+shared-maintainer 发布回执与最终交付复核另存于 `E/maintenance/r21-delivery/`。

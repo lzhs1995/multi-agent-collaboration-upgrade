@@ -1,5 +1,8 @@
 # Upgrade and JEV: current evidence — updated 2026-11-03
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 Status: ACTIVE / NOT_ACCEPTED. Current implementation work is CODEX_SOLO;
 review is `solo_self_review`. The original objective is usable Codex + two
 Claude collaboration across the three availability states, with separate
@@ -36,8 +39,8 @@ remain attached to `52efd3c908125c938914e64f540b8f5cff6f7cde`. See
 The required station launch commands are:
 
 ```text
-mg cx agentrouter-a
-mg cc linxi -k linxi-s1
+mg cx example-codex-route
+mg cc example-provider -k example-key
 ```
 
 The original j5 CAS, one-shot prearm, permit ordinal 1 and release each ran
@@ -52,9 +55,9 @@ argv and station selectors were verified; the observed failures do not support
 a wrong-command finding for this attempt.
 
 At 2026-11-02T00:37:33Z, two separately recorded 45-second diagnostic requests
-used the original `linxi-s1` key/model/betas. Each returned HTTP 200 headers
+used the original `example-key` key/model/betas. Each returned HTTP 200 headers
 and 24 bytes of keepalive comments, with no text, EOF or `message_stop` before
-the local timeout. Gateway route records identify `linxi-paid-sub2`; the
+the local timeout. Gateway route records identify `provider-pool-b`; the
 recorded 499 is the diagnostic's cancellation, not an upstream 499 response.
 Those diagnostic callers were classified `other`, so they do not certify
 native Claude readiness. Original j5 native route records also show actual
@@ -66,7 +69,7 @@ R655 then tested two new requests with a synthetic
 keeping the original station key, model and betas. Both again returned only
 keepalive comments, 108 bytes each, with no text, EOF or `message_stop`.
 Exact gateway records 1793440761659 and 1793440761660 classified these probes
-as `claude`; each selected `linxi-paid-sub2`, received an upstream 502 and
+as `claude`; each selected `provider-pool-b`, received an upstream 502 and
 then recorded 499 when the local deadline canceled its subsequent attempt.
 The observer made two client requests with no client retry; the gateway made
 four upstream attempts. These remain synthetic transport diagnostics and
@@ -74,7 +77,7 @@ failed observations, with no native-client readiness or formal paired sample.
 
 At 2026-11-02T01:43:17Z, two new fixed-route synthetic requests returned actual
 HTTP429 JSON errors with `Retry-After` 40 and 28 seconds. The local station
-reported the selected `linxi-paid` route's 10 requests/minute limit. This is a
+reported the selected `provider-pool-a` route's 10 requests/minute limit. This is a
 rate-limit observation, not a completed response or a permanent account-failure
 finding. A subsequent bounded observation starts only after both advertised
 cooldown deadlines and remains separate from native/formal samples.
@@ -86,10 +89,10 @@ context-bearing sessions remain the preferred continuation boundaries.
 
 ## Successor observation — 2026-11-03
 
-The user authorized session `01a1a1e3-349c-7f32-bd3a-5328502f6f4b` to continue
-the original `01a159cf-6685-76b0-b779-b4572afab31b` task. Its current native
-surface is `86272C3F-AB2B-42FB-BAEF-65A072A29F27`, in the original workspace
-`6FB20312-9E66-43DB-AF09-92C3B18E1296`. Historical numeric surface references
+The user authorized session `8b224cd1-3d19-5493-a944-293f335c079a` to continue
+the original `0e8428fa-f245-503b-8763-e6f120405fa3` task. Its current native
+surface is `b8ce76ce-44f5-5d0e-80b5-491c3f364b41`, in the original workspace
+`384d35b8-76b9-5185-805e-aa952de98039`. Historical numeric surface references
 were renumbered. Original endpoint UUIDs, controllers and attempts remain bound;
 this continuation does not enroll the task in Herdr or reset j5.
 
@@ -117,7 +120,7 @@ The original controller subsequently reconciled the same attempt to
 `NATIVE_RECEIVED` with zero new input. No repeat paste or recovery key was used.
 Full body consumption and a substantive reply remain unverified; the original
 session displayed remote compaction 502 errors and `Goal stalled`.
-Owner43's original surface currently has no Claude process;
+archive-reviewer's original surface currently has no Claude process;
 historical freeze evidence is not a current live handshake.
 
 The proposed j6 preparation remains unexecuted. The original R663 preparation
@@ -186,7 +189,7 @@ dependency; do not keep launching unchanged comparisons into failed capacity.
 ## Local original evidence
 
 ROOT evidence root:
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1`.
+`/private/evidence/item-c8e3756e2d85`.
 
 - `R646-ROOT-EXISTING-PANES-LIVE-ENTRY-v1`: frozen source and full local/CI logs.
 - `R647-ROOT-J5-EXACT-S40-CAS-v1`: original exact CAS and complete receipt, independently checked.
@@ -194,8 +197,8 @@ ROOT evidence root:
 - `R649-ROOT-J5-TERMINAL-AND-JEV-CONTINUATION-v1`: native failures and original stop.
 - `R651-ROOT-JEV-PRODUCTION-TRANSPORT-AND-CONSUMER-v1`: real JEV transport/ledger/native exposure/disposition.
 - `R653-ROOT-BOUNDED-CAPACITY-CONTINUATION-v1`: unchanged bounded observer and both new response records.
-- `R654-ROOT-LINXI-ROUTING-AND-CAPACITY-FINDING-v1`: original route record offsets/hashes and current configuration observations.
-- `R655-ROOT-FIXED-LINXI-CLIENT-SIGNATURE-CAPACITY-v1`: both 150-second synthetic probes and exact gateway records.
+- `R654-ROOT-PROVIDER-ROUTING-AND-CAPACITY-FINDING-v1`: original route record offsets/hashes and current configuration observations.
+- `R655-ROOT-FIXED-PROVIDER-CLIENT-SIGNATURE-CAPACITY-v1`: both 150-second synthetic probes and exact gateway records.
 - `R656-ROOT-J5-RECEIPT-AND-CURRENT-DELIVERY-v1`: verified existing receipt/log/consumer references and the current ROOT disposition.
 - `R660-ROOT-STARTUP-CANDIDATE-FULL-v1`: original 3,120-test local/CI results, 485-member source archive and final candidate record.
 - `R663-ROOT-PREREQUISITE-READBACK-AND-PREP-PREVIEW-v1`: gated j6 preparation script, still unexecuted.

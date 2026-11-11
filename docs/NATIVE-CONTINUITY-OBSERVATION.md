@@ -1,5 +1,8 @@
 # Source-authenticated native continuity observation
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-21. `scripts/upgrade_continuity_native.py` is an external read-only
 adapter to the complete original MAC `collaboration_continuity.py` evaluator.
 It does not replace that evaluator, send input, call a provider, retry a turn,
@@ -216,7 +219,7 @@ native outage, replay, adoption, or task-continuity acceptance.
 
 ## Original startup402 diagnostic, 2026-10-21
 
-The separate `/Users/lzhs/uz` continuity exercise launched its original
+The separate `/Users/demo/b7` continuity exercise launched its original
 1Codex+2Claude clients once under frozen16f1 and the complete fixed MAC0.4.58
 private controller. The Codex first turn ended with a structured402 budget-pool
 error before executing its startup probe. Both original Claude probes and their

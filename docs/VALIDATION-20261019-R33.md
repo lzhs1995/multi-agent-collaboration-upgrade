@@ -1,5 +1,8 @@
 # R33：缩短派发与核收等待，修复只读操作误判
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-20 终态更新。运行源码固定为 `b94b5bd48a49a8511c75468070cc6a81016c3c5d`。本机完整回归和四组 CI 已通过。原生 R33 已因实验 Codex 配额 HTTP 401 终止；完整轮次和有效配对均为 0，不能宣称完整压力测试通过或达到 15% 提效。
 
 ## 已落实的修复
@@ -23,9 +26,9 @@ R32 旧控制器、metrics、终态及原生输入保持原样。两份已撤回
 
 聚焦用例包含于完整套件，不相加为独立测试数量。完整回归已经完成，不因随后更新文档而重新运行。
 
-- [验证汇总](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-effects-and-scheduling/VALIDATION.json)，SHA256 `b14ef0324b994d0ddf942c04f1224a0db41d836ab2e4db83711e96f1d3528d0b`。
-- [冻结导出](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/source-exports/resume-20261019-live-v28/export.json)，SHA256 `dee1e4422977ef6fba0260a6ac24e875025bbcc86421e6a78334715fe755d44f`。
-- 精确源码提交的 [CI run 39280150950](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39280150950) 已完成，四格 success。macOS Python 3.10/3.14 各运行 2280 项、跳过 108；Ubuntu Python 3.10/3.14 各运行 2280 项、跳过 118。跳过项不算实际执行通过。最终元数据、四份原始日志及 SHA 已保存到 [CI 汇总](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/ci/summary.json)；首次 queued 快照作为历史保留，未重复触发。
+- [验证汇总](/private/evidence/item-7a1e4ade9910.json)，SHA256 `b14ef0324b994d0ddf942c04f1224a0db41d836ab2e4db83711e96f1d3528d0b`。
+- [冻结导出](/private/evidence/item-9e4b8149f81f.json)，SHA256 `dee1e4422977ef6fba0260a6ac24e875025bbcc86421e6a78334715fe755d44f`。
+- 精确源码提交的 [CI run 39280150950](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39280150950) 已完成，四格 success。macOS Python 3.10/3.14 各运行 2280 项、跳过 108；Ubuntu Python 3.10/3.14 各运行 2280 项、跳过 118。跳过项不算实际执行通过。最终元数据、四份原始日志及 SHA 已保存到 [CI 汇总](/private/evidence/item-f1678a717a5b.json)；首次 queued 快照作为历史保留，未重复触发。
 
 ## 原生 R33 终态
 
@@ -42,9 +45,9 @@ R32 旧控制器、metrics、终态及原生输入保持原样。两份已撤回
 - 本轮是 startup-v2；原生 `/goal` 持续续跑和独立 `/loop` 未计作通过。
 - driver 原截止为 19:42:42.486100 UTC；wrapper 至多额外 60 秒；整体收口上限 19:45 UTC（台北 10 月 20 日 03:45）。在途时钟不延长，失败不替换或重放。
 
-[原驱动证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r33-original-driver/)保留原输出和进程身份。运行根为 `/Users/lzhs/ux`，日志观察不修改实验状态。
+[原驱动证据](/private/evidence/item-059c9496b86e/)保留原输出和进程身份。运行根为 `/Users/demo/b6`，日志观察不修改实验状态。
 
-[终态核验](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/terminal-evidence.json) SHA256 `f54565dadb078c6d8d5aa369e09aee0dc4f70068356f53ff6589bb50aab2b88a`，核对原生 ACK、callback、失败记录及七份 STOP。后续修复在独立 [callback 候选](CALLBACK-DRAIN-VALIDATION.md) 进行，不重新解释 R33。
+[终态核验](/private/evidence/item-1dbc3b376b9a.json) SHA256 `f54565dadb078c6d8d5aa369e09aee0dc4f70068356f53ff6589bb50aab2b88a`，核对原生 ACK、callback、失败记录及七份 STOP。后续修复在独立 [callback 候选](CALLBACK-DRAIN-VALIDATION.md) 进行，不重新解释 R33。
 
 ## D 计时证据的采用
 
@@ -54,7 +57,7 @@ A 交叉索引所询问的 248.0557 秒是 R31 一次 advance 内部总耗时；
 
 解释时间字段时，原解析器的 `task_ready_at` 实际取 PREPARING，`report_frozen_at` 实际取 EVIDENCE_READY；native accept 调用不等于 ACCEPT 成功。DONE 前缀检索只作计时线索，送达和核收仍核完整正文及原始围栏。本轮进一步用这些分段比较准备、同步工具等待和核收延迟，不把整个空档归因于模型、锁或哈希。
 
-独立补审已完成：[报告](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-effects-and-scheduling/d-timing-review/REPORT.md)、[完整性核验](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-effects-and-scheduling/d-timing-review/VALIDATION.json)。D 与 parser 的预期 SHA、12 条引用及两 callback 的 46 项合同检查全部通过；根已另核四份最终产物的字节数与 SHA。分析标记为 `supplementary/post-registration`，不修改 R32/R33、不补造事件、不代替配对结果。
+独立补审已完成：[报告](/private/evidence/item-fd542c369212.md)、[完整性核验](/private/evidence/item-763c38ef6bfe.json)。D 与 parser 的预期 SHA、12 条引用及两 callback 的 46 项合同检查全部通过；根已另核四份最终产物的字节数与 SHA。分析标记为 `supplementary/post-registration`，不修改 R32/R33、不补造事件、不代替配对结果。
 
 | R32 区间（秒） | 全段 | 前台工具窗口 | 工具外仍有未结束会话观测 | 工具外退出时刻未知 | 无活动进程证据的主管间隙 |
 |---|---:|---:|---:|---:|---:|
@@ -68,4 +71,4 @@ A 交叉索引所询问的 248.0557 秒是 R31 一次 advance 内部总耗时；
 
 保留 cmux/MAC 作为原生协作层；upgrade 负责本地依赖调度、提前组包和持久 callback。JEV/TypeSafe 仍为 rules/offline_mock，不新增模型服务依赖。
 
-[41 类问题台账](COLLABORATION-ISSUE-LEDGER.md)和[15 条社区矩阵](COMMUNITY-ADOPTION-20261019.md)已经形成，两份 surface40 本人经验回件已核读。41 类映射不等于全部修复；923 件补集未全文审读，视频/Reddit 正文及第三方运行仍有未证边界。共享 MAC 和 thesis-refiner 由 surface40 统一维护。当前 [PR #1](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/1) 保持草稿，完整原生压测和提效结论待收口。
+[41 类问题台账](COLLABORATION-ISSUE-LEDGER.md)和[15 条社区矩阵](COMMUNITY-ADOPTION-20261019.md)已经形成，两份 shared-maintainer 本人经验回件已核读。41 类映射不等于全部修复；923 件补集未全文审读，视频/Reddit 正文及第三方运行仍有未证边界。共享 MAC 和 thesis-refiner 由 shared-maintainer 统一维护。当前 [PR #1](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/1) 保持草稿，完整原生压测和提效结论待收口。

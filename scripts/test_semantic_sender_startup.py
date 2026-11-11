@@ -1,4 +1,5 @@
 """R545 P1 on real generated startup artifacts: the semantic sender clause is pinned only when opted in."""
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,10 +46,7 @@ class SemanticSenderArtifactTests(unittest.TestCase):
         self.assertNotIn("S2 semantic input", self.policy(False, "CLAUDE.md"))
 
 
-MAC084 = Path("/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/"
-    "collaboration-maintenance-context-5994-20261011-v1/successor28-from6105-20261012-v1/"
-    "continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/"
-    "surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source")
+MAC084 = Path(os.environ.get("MAC_TEST_MAC084_SOURCE") or "/opt/collaboration/test-fixtures/mac084/source")
 
 
 @unittest.skipUnless(MAC084.exists() and WRAPPERS.exists(), "pinned MAC .84 source or cmux wrappers missing")

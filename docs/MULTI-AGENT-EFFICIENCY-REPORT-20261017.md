@@ -1,5 +1,8 @@
 # 多 agent 协作提效报告
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 执行进度已由 [2026-10-18 压力与真实协作验证](VALIDATION-20261018.md) 更新。
 下文 r4 状态保留为历史记录；当前 r8 三端 adoption 已通过，但原生 400 导致
 pilot 0/3、pairs 0/15，尚未证明提效。平台架构分析与其原始证据日期不变。
@@ -25,7 +28,7 @@ pilot 0/3、pairs 0/15，尚未证明提效。平台架构分析与其原始证�
 
 历史握手问题是 ref/UUID 表示混比：原 Claude 收到通知并回复 ACK，主管仍拒绝核收。私有控制器已加入 canonical recipient 兼容修复；原共享会话及失败 receipt 仍保留，不能把新私有代码当作旧会话已完成核收。
 
-r3 的 `/bin/ps` 与物理 socket 故障已修复，r4 已跨过 socket 创建边界。r4 暴露出两处后续问题：wrapper 与 startup 重复添加 trust 参数；inspector 把 `OK workspace:1000020047` 误当必须包含 UUID 的响应。修复只改变新私有候选，不修改原会话或冻结控制器。当前代码审查与测试是 SOLO；双 Claude 原生 readiness 和自动 hooks 有证据，但业务验证仍未完成。
+r3 的 `/bin/ps` 与物理 socket 故障已修复，r4 已跨过 socket 创建边界。r4 暴露出两处后续问题：wrapper 与 startup 重复添加 trust 参数；inspector 把 `OK workspace:3` 误当必须包含 UUID 的响应。修复只改变新私有候选，不修改原会话或冻结控制器。当前代码审查与测试是 SOLO；双 Claude 原生 readiness 和自动 hooks 有证据，但业务验证仍未完成。
 
 ## 2. 两份原分析哪些成立，哪些不成立
 
@@ -157,11 +160,11 @@ cmux 承载这些原会话；CCC 观察并管理运行状态；thesis-refiner �
 
 完整事实核查、固定源码链接及 Issue/PR 状态见：
 
-- [四平台完整源码审计报告](/Users/lzhs/Projects/multi-agent-collaboration-upgrade/docs/PLATFORM-ORCHESTRATION-REVIEW-20261016.md)
-- [gh 证据清单](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/platform-review-20261016-v1/evidence-manifest.json)
-- [原报告引用校验结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/platform-review-20261016-v1/report-validation.json)
-- [当前任务交接记录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade/HANDOFF.md)
-- [迟到 ACK 核收兼容问题维护请求，尚未送达](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance-surface11361/late-ack-ref-uuid-20261016-v1.request.md)
+- [四平台完整源码审计报告](/workspace/multi-agent-collaboration-upgrade/docs/PLATFORM-ORCHESTRATION-REVIEW-20261016.md)
+- [gh 证据清单](/private/evidence/item-de3c3a7d3983.json)
+- [原报告引用校验结果](/private/evidence/item-9fcac36275f6.json)
+- [当前任务交接记录](/private/evidence/item-c4cac1d27432.md)
+- [迟到 ACK 核收兼容问题维护请求，尚未送达](/private/evidence/item-f7b57d2159c0.md)
 
 关键技术结论可直接复核：
 
@@ -173,4 +176,4 @@ cmux 承载这些原会话；CCC 观察并管理运行状态；thesis-refiner �
 - [cmux 消息机制及 idle Codex 唤醒限制](https://github.com/manaflow-ai/cmux/blob/6c23792198ce042b7ba2c018ca4e0b9d797a4235/docs/agent-messages.md#L23-L79)
 - [Conductor 官方 releases 仓库](https://github.com/meltylabs/conductor-releases/tree/0095de9b888f2a37413a3a3666638344028d2f46)
 
-本报告的后续执行依据是 [隔离实验 runbook](/Users/lzhs/projects/multi-agent-collaboration-upgrade/docs/ISOLATED-UPGRADE-RUNBOOK.md)。[r4 失败证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/validation/resume-20261018-r4-startup-failure/manifest.json) 和 [双 Claude 原生 readiness／自动 hooks 诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/validation/resume-20261018-r4-startup-failure/native-readiness-03.json) 已保存。该诊断使用源码读取器，其私有 root 环境字段未采集，不冒充完整 adoption。最终候选的源码、测试日志、精确 socket 路径和新授权需求另行封存；不得修改或重放 r2/r3/r4。当前没有已测得的提速结论。
+本报告的后续执行依据是 [隔离实验 runbook](/workspace/multi-agent-collaboration-upgrade/docs/ISOLATED-UPGRADE-RUNBOOK.md)。[r4 失败证据](/private/evidence/item-9b0bb244c7d0.json) 和 [双 Claude 原生 readiness／自动 hooks 诊断](/private/evidence/item-60e2dd58c2b5.json) 已保存。该诊断使用源码读取器，其私有 root 环境字段未采集，不冒充完整 adoption。最终候选的源码、测试日志、精确 socket 路径和新授权需求另行封存；不得修改或重放 r2/r3/r4。当前没有已测得的提速结论。

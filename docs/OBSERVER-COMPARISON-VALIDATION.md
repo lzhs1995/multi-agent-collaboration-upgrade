@@ -1,5 +1,8 @@
 # Observer configuration and cleanup validation — 2026-10-19
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 This candidate adds a common observer configuration contract and repairs temporary-file ownership. Local correctness results do not establish live Codex/Claude collaboration or an efficiency improvement. The latest native campaign remains r27, HALTED/TIMEOUT, with pilot 0/3, business 0/33, comparable pairs 0/15 and 192 missing communication slots.
 
 ## Configuration and measurement contract
@@ -44,7 +47,7 @@ Earlier instrumented/uninstrumented ratios of 3.57–7.46× used the old observe
 
 ## Evidence and remaining live acceptance
 
-Evidence root: `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/`.
+Evidence root: `/private/evidence/item-df503bbd07c6/`.
 
 - `observer-symmetry-audit/DESIGN-AUDIT.md`: independent design review, recommendations distinguished from execution.
 - `observer-symmetry-final/`: this delivery's frozen regression, source pins and final publication evidence.
@@ -53,10 +56,10 @@ Evidence root: `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/
 
 R27 retains its original startup timeout and expired overall cap; this work does not replay it, extend its deadline, replace its clients or infer remote request termination from `terminate_clients=false` stop files. No model requests were issued by this local follow-up. See [r27](VALIDATION-20261019-R27.md) and [response observation](RESPONSE-OBSERVATION-VALIDATION.md).
 
-Live acceptance still requires actual probes and automatic hook adoption, three consecutive pilot rounds, all 33 business runs / 15 pairs / 192 communication slots, warm median improvement ≥15%, and no workload median regression >5%. Cost and efficiency remain UNKNOWN/null until measured. Shared MAC/thesis-refiner ownership remains with surface40; publishing a file-inbox notice does not prove it was read or merged.
+Live acceptance still requires actual probes and automatic hook adoption, three consecutive pilot rounds, all 33 business runs / 15 pairs / 192 communication slots, warm median improvement ≥15%, and no workload median regression >5%. Cost and efficiency remain UNKNOWN/null until measured. Shared MAC/thesis-refiner ownership remains with shared-maintainer; publishing a file-inbox notice does not prove it was read or merged.
 
 ## Final reconciliation
 
-Both pressure manifests were independently rehashed in this delivery: 2,163 + 2,158 = 4,321 files, zero mismatches. All 47 local links in the four changed skill/runbook/validation documents resolve. Two new reports in the surface40 inbox were reviewed and pinned in `shared-owner-experience-review.json`: missing native control sockets must not trigger composer fallback; queued_command, body exposure and native receipt stay separate; missing journals do not prove NO_INPUT. These are source-report observations, not independent live reproductions. The shared maintainer owns any shared patch merge.
+Both pressure manifests were independently rehashed in this delivery: 2,163 + 2,158 = 4,321 files, zero mismatches. All 47 local links in the four changed skill/runbook/validation documents resolve. Two new reports in the shared-maintainer inbox were reviewed and pinned in `shared-owner-experience-review.json`: missing native control sockets must not trigger composer fallback; queued_command, body exposure and native receipt stay separate; missing journals do not prove NO_INPUT. These are source-report observations, not independent live reproductions. The shared maintainer owns any shared patch merge.
 
 The overall `qualification_scope` label is conservative: it requires every registered row to pass the progression contract as well as its evidence checks. A genuine failed business row can therefore leave that overall label unverified even when its per-row configuration check passed. Inspect the explicit per-row checks to distinguish configuration evidence from business outcome.

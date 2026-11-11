@@ -672,7 +672,7 @@ os.execve({command[0]!r}, {command!r}, os.environ)
             marker.chmod(0o400)
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists()
-                         and Path("/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node").is_file(),
+                         and Path(os.environ.get("MAC_TEST_NODE") or "/opt/collaboration/test-fixtures/node").is_file(),
                          "requires macOS and local Node; no model client is launched")
     def test_native_node_self_query_inside_both_claude_profiles(self):
         # Match Claude's observed execFile query using a real native process.
@@ -681,7 +681,7 @@ os.execve({command[0]!r}, {command!r}, os.environ)
         outside = self.root / "ps-outside-sentinel"
         outside.write_text("unchanged")
         helper = self.spec["pins"]["claude_ps"]["path"]
-        node = "/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node"
+        node = str(Path(os.environ.get("MAC_TEST_NODE") or "/opt/collaboration/test-fixtures/node"))
         script = r'''
 const cp = require('child_process'), fs = require('fs');
 const args = ['-o', 'lstart=', '-p', String(process.pid)];

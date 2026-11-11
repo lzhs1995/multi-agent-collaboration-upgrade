@@ -1,5 +1,8 @@
 # Claude Code 2.1.303：安装、实际采用与验证边界
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19。本轮已按用户授权从 2.1.170 升级到官方 2.1.303；旧会话、旧二进制、配置及原实验结果保留。版本滞后与本任务有关，但尚不能认定为启动失败的唯一原因。
 
 ## 官方变更为什么相关
@@ -14,17 +17,17 @@
 | 2.1.290–2.1.299 | 多项 loop 的压缩、恢复、后台与取消修复；其中 290 的 cloud-container-restart 唤醒修复在 293 撤回，不能称 303 已包含全部修复。 |
 | 2.1.303 | 一般可靠性修订，未对本次故障提供专项修复承诺。 |
 
-来源：[官方 CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)。本轮保存的 Git blob 为 `1da79e602ca805ee8f367b51d99c0c54269a6f74`；[正文与来源快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/official-changelog.md)。发布说明不等于本机复现结果。
+来源：[官方 CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)。本轮保存的 Git blob 为 `1da79e602ca805ee8f367b51d99c0c54269a6f74`；[正文与来源快照](/private/evidence/item-31c110d693cf.md)。发布说明不等于本机复现结果。
 
 ## 已完成的升级
 
 当时 `brew` stable cask 是 2.1.292，`claude-code@latest` 是 2.1.303。为保留旧实验的二进制 pin，本次安装官方原生 303 二进制，未迁移 cask 元数据。
 
 - 官方下载：<https://downloads.claude.ai/claude-code-releases/2.1.303/darwin-arm64/claude>。
-- 固定二进制：`/Users/lzhs/.local/share/claude/versions/2.1.303`，267973136 bytes。
+- 固定二进制：`/Users/example/.local/share/claude/versions/2.1.303`，267973136 bytes。
 - SHA256：`d2da3b003dc08b88b7230469014fe3e1dc6fe94bc8f648e89b34175d30269370`；官方 manifest、版本输出和 strict codesign 均通过。
-- `/opt/homebrew/bin/claude`、`/Users/lzhs/.local/bin/claude`、`/Users/lzhs/.nvm/versions/node/v24.16.0/bin/claude` 均已更新，分别实测输出 2.1.303；CCC launcher package 保留。
-- [入口切换结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/entrypoints-result.json) 是当前状态，较早 `native-install.json` 的未切换字段属于历史记录。
+- `/opt/homebrew/bin/claude`、`/Users/example/.local/bin/claude`、`/Users/example/.nvm/versions/node/v24.16.0/bin/claude` 均已更新，分别实测输出 2.1.303；CCC launcher package 保留。
+- [入口切换结果](/private/evidence/item-95602dbe4dac.json) 是当前状态，较早 `native-install.json` 的未切换字段属于历史记录。
 
 ## R28 / R29 原生证据
 
@@ -34,10 +37,10 @@ R29 第一组于 09:40:21Z 创建。两名 Claude 的原生版本记录与实际
 
 | Lane | 原 session | PID | 版本 |
 |---|---|---|---|
-| Claude A | `0d4f6ec4-dc7d-4e71-afd9-3adf863680f2` | 45057 | 2.1.303 |
-| Claude B | `47912cd3-25b6-44af-9f36-42e3f83ed6c7` | 45097 | 2.1.303 |
+| Claude A | `745e7758-64fc-51df-a41d-c50c7792dd86` | 45057 | 2.1.303 |
+| Claude B | `3ce9ff87-906a-5f3a-aead-16407e529143` | 45097 | 2.1.303 |
 
-[原生启动快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-startup-checkpoint.json) 记录两路 Goal SET，以及 Goal 检查失败后的 1 分钟、5 分钟退避提示。两路主 journal 的 `api-request` 为 `querySource=repl_main_thread`、`params.model=claude-opus-5-5`，证明原生客户端所请求的型号；主任务没有可见 assistant 输出，实际后端完成型号仍未证明。后续审计另发现 B 有成功的后台摘要，不能把主任务空输出扩展为所有请求均无输出。私有配置使用 `fable` 映射到 Opus 5.5；不能改成指向 Opus 5 的 `opus` 别名。
+[原生启动快照](/private/evidence/item-24fdb7853a04.json) 记录两路 Goal SET，以及 Goal 检查失败后的 1 分钟、5 分钟退避提示。两路主 journal 的 `api-request` 为 `querySource=repl_main_thread`、`params.model=claude-opus-5-5`，证明原生客户端所请求的型号；主任务没有可见 assistant 输出，实际后端完成型号仍未证明。后续审计另发现 B 有成功的后台摘要，不能把主任务空输出扩展为所有请求均无输出。私有配置使用 `fable` 映射到 Opus 5.5；不能改成指向 Opus 5 的 `opus` 别名。
 
 该快照时 Codex probe/自动 hook 已观察，双 Claude 仍未 ready，pilot 0/3。303 的响应观察目录只有 `LOADED`，没有请求记录；原生日志却有请求，因此不能用观察文件缺失推断“未请求”，也不能照抄 R28 的 HTTP 200 结论。新版退避行为有原生证据，成功执行协作尚无证据。
 
@@ -57,7 +60,7 @@ R29 原次保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普�
 
 原次于 2026-10-19T09:55:46.520524Z 结束，driver/watchdog 均 exit 2：TIMEOUT / INSUFFICIENT_EVIDENCE。pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、可比较配对 0/15；192 个唯一普通通信 ID 的可验证闭环为 0/192，不表示 192 次均已发送。仅第一组启动，剩余六组为准备状态。原控制器为 b0ac022 的 v24，后续 9a09f32 打包修复未迁移到该原次。
 
-后续[原生诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/native-diagnosis/report.md)确认：两路主任务各有三次原生 `resultLen=0` 回合结束，并各有三条原生 continuation 提示，原文为 `[Your previous response had no visible output. Please continue and produce a user-visible response.]`。这证明主客户端可见输出为空，但不重建原始 HTTP 响应。B 的后台 `away_summary` 曾收到 assistant 并以 `output=43` 结束；后台摘要不算主任务或业务完成。
+后续[原生诊断](/private/evidence/item-4dce76a0e4c8.md)确认：两路主任务各有三次原生 `resultLen=0` 回合结束，并各有三条原生 continuation 提示，原文为 `[Your previous response had no visible output. Please continue and produce a user-visible response.]`。这证明主客户端可见输出为空，但不重建原始 HTTP 响应。B 的后台 `away_summary` 曾收到 assistant 并以 `output=43` 结束；后台摘要不算主任务或业务完成。
 
 | debug 请求入口类别 | A | B | 请求型号呈现 |
 |---|---:|---:|---|
@@ -69,13 +72,13 @@ R29 原次保持同一 v24 控制器、模型配置及 33 轮/15 对/192 条普�
 
 两路前两次 Goal 检查均报 `No assistant message found`。该错误来自独立的 `hook_prompt` schema 请求：无工具、thinking disabled、默认30000毫秒超时，并非仅在主 journal 中查找 assistant。B 于09:48:50.124Z、A于09:49:21.077Z由客户端自身在 Goal 检查超时后暂停。主管没有暂停或再次唤醒它们。7组停止输入标记全部核验，客户端保留；暂停不等于结束，远端取消和 Goal 结束仍未证明。总 wrapper 耗时929.762秒，launch至halt925.091秒；900秒是离散检查预算，超额时间无法全部精确归因。
 
-[终态原生快照](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-claude-version/r29-native-final.json)、[独立终态审查](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-delivery-review/terminal-review.md)及后续原生诊断分别保存各阶段证据。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。此前“不再重开”指 R29 原次收口，不是对已授权后续独立实验的永久禁令；本次文档补记接收任务时 R30 尚未启动。升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。
+[终态原生快照](/private/evidence/item-a529db8821e2.json)、[独立终态审查](/private/evidence/item-fa6a56404dc9.md)及后续原生诊断分别保存各阶段证据。完整交付见 [R29最终报告](VALIDATION-20261019-R29.md)。此前“不再重开”指 R29 原次收口，不是对已授权后续独立实验的永久禁令；本次文档补记接收任务时 R30 尚未启动。升级采用完成，稳定协作、独立loop长期验证和提效验收仍未完成。
 
 ## 后续观察器修复：本地通过，R30 实际覆盖见下
 
 冻结观察器只包裹 `globalThis.fetch`；实际303源码的 `p5n` 在当前global等于捕获值 `wn` 时可选择缓存的 `Bun.FetchSession.fetch`，绕过该包裹。源码及本地复现确认兼容缺陷，但 R29 未留分支遥测，不能追认每次历史请求必经该分支。LOADED只证明preload执行；原代码在transport前写REQUEST，因此“响应未读”本身不足以解释没有REQUEST。
 
-[候选修复与验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)保留原生session，为新构造实例覆盖fetch观察路径，并区分构造器已安装、实例安装和实际拦截。候选 SHA256 为 `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。**47/47 Node通过；实际303内嵌Bun 1.4.4完成global/session × reader/iterator四轮各256条并发loopback流**，合计1024流、1048576个delta、216189952字节。每轮使用新观察上下文，不是单个512请求寿命内观察1024请求。另以独立Bun验证global路径；该Bun无FetchSession。
+[候选修复与验证](/private/evidence/item-dce7ddd10d41.md)保留原生session，为新构造实例覆盖fetch观察路径，并区分构造器已安装、实例安装和实际拦截。候选 SHA256 为 `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。**47/47 Node通过；实际303内嵌Bun 1.4.4完成global/session × reader/iterator四轮各256条并发loopback流**，合计1024流、1048576个delta、216189952字节。每轮使用新观察上下文，不是单个512请求寿命内观察1024请求。另以独立Bun验证global路径；该Bun无FetchSession。
 
 这些均为本地验证，原生可执行文件只运行隔离的 `--version` 加loopback fixture；重建源码选择表达式，不执行原生业务 `p5n`。没有模型请求、业务样本或提效测量，旧2171项完整/CI也不含这次观察器验证。已存在的session/缓存构造器仍不覆盖，重复路径计数不是通用网络尝试计数；请求类别保持UNKNOWN，不从prompt猜测。未读、截断或预先消费的响应不能据text=false判空，观察开销未校准。新实验仍须独立证明实际加载及业务响应覆盖。
 
@@ -85,8 +88,8 @@ R30 使用 d8a1585 冻结 v25，于 11:10:26.545509 UTC 发出原启动请求；
 
 | Lane | 原 session | PID / 实际版本 | 主 journal assistant / probe |
 |---|---|---|---|
-| A | `88e07a68-2129-497e-b15b-618a8feb4b11` | 61220 / 2.1.303 | 0 / 0 |
-| B | `feead08c-49e1-428d-a278-d9064ba4cce0` | 61210 / 2.1.303 | 0 / 0 |
+| A | `2399bdf5-7de5-56c6-bcdd-91ed5144bac9` | 61220 / 2.1.303 | 0 / 0 |
+| B | `0ed09b1e-ae9b-5278-bd21-18a33d22fdc9` | 61210 / 2.1.303 | 0 / 0 |
 
 两路均真实加载 f698017e 观察器并拦截 `bun_fetch_session`，补齐新版本的实际观察路径证据。A 有 3 条 RESPONSE（HTTP200 3），B 有 13 条（HTTP200 11、429 2），另有一次 FETCH_REJECTED；非空白文本和 tool-use 块均未观察到。A 有 READ_ERROR；B 有 SSE rate_limit_error 和 HTTP429 rate_limit_exceeded。没有用不完整响应推断完整空正文，也没有据此认定 key 无效。
 

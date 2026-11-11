@@ -413,7 +413,7 @@ class StagePromptWireTests(unittest.TestCase):
     """The shared sender's inline limit: one line, at most 700 UTF-8 bytes."""
 
     def test_live_length_paths_fit_one_inline_line_for_every_lane(self):
-        controller = "/Users/lzhs/uz/controllers/B/releases/stage-a-sol-20261022-v2/source"
+        controller = "/opt/collaboration/controllers/stage-a-example000-20261022-v2/source"
         python = "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
         for lane, model in (("codex", "gpt-6.1-sol"), ("claude_a", "claude-opus-5-5"), ("claude_b", "claude-opus-5-5")):
             text = fence.stage_prompt("stage-a-sol-20261022-v2", model, controller, python, "/opt/homebrew/bin/rtk", lane)

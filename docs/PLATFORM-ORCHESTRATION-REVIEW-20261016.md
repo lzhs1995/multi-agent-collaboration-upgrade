@@ -1,3 +1,6 @@
+
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
 **Orca、cmux、Paseo、Conductor：面向 Codex 主管与多个 Claude 执行者的源码审计与实施计划**
 
 审计日期：2026-10-16。GitHub 资料全部通过 gh CLI 获取；结论对应归档时的源码、发行版及 Issue/PR 状态。本轮完成研究与本地报告，没有安装候选软件、迁移会话或执行跨平台性能实验。
@@ -96,7 +99,7 @@ GitHub 的 open_issues_count 包含 PR，不能直接写成“开放 Issue 数�
 | MAC 0.4.35 | 发布、部署及活跃客户端 adoption 未证明 | 分别核实，不能由仓库有代码推断在线客户端已采用 |
 | 自动闭环与效率 | 连续自动派发器未上线；九次 serial/omo/codeg 内部实跑尚未完成 | 先补闭环和真实阶段证据，再执行既定比较；内部方案实验不能证明跨平台优越性 |
 
-本报告继承的是 surface:11670、thread 01a13a5f-2412-7012-a872-501c8f75fda9 的业务记录与证据，不把历史端点身份视为当前调用者已经取得的发送权限。研究不依赖操作那些端点。
+本报告继承的是 surface:7、thread 7463223c-1688-58e2-b29c-fc24b0b6e0fa 的业务记录与证据，不把历史端点身份视为当前调用者已经取得的发送权限。研究不依赖操作那些端点。
 
 后续实施分六阶段推进；以下是详细计划，本轮未执行运行时改造。
 
@@ -143,10 +146,10 @@ GitHub 的 open_issues_count 包含 PR，不能直接写成“开放 Issue 数�
 
 可复核文件：
 
-- [完整证据清单](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/platform-review-20261016-v1/evidence-manifest.json)
-- [本报告引用映射](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/platform-review-20261016-v1/report-citations.json)
-- [报告验证结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/platform-review-20261016-v1/report-validation.json)
-- [原任务续跑记录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade/HANDOFF.md)
+- [完整证据清单](/private/evidence/item-de3c3a7d3983.json)
+- [本报告引用映射](/private/evidence/item-1fca34983f6c.json)
+- [报告验证结果](/private/evidence/item-9fcac36275f6.json)
+- [原任务续跑记录](/private/evidence/item-c4cac1d27432.md)
 
 <!-- evidence-references -->
 

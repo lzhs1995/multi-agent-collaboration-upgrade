@@ -1,5 +1,8 @@
 # 私有主动询问登记与原入口验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-21。本候选基于 `96a7b87`，只修改独立 upgrade worktree。没有安装共享 MAC／thesis-refiner，没有重启或修改既有客户端，没有迁移 R33 的 episode、nonce、租约或 STOP。所有来源均为完整固定 MAC `0.4.58-cf3f6175840b`。
 
 ## 接入合同
@@ -22,7 +25,7 @@ Stop 配置保留原 `cmux_executor_idle_guard` 的 75 秒预算；安装器仅 
 
 与原 MAC 0.4.58 兼容反例合计 28 项通过（17.878 秒）。两项独审 P3 也已修复：原 RPC import 与重命名后的私有 gate import 都使二次补丁拒绝；gate-pin 挖除必须确切为 `NameError.name == gate_pin`，不能被无关缺失变量满足。第一轮新二次补丁测试失败 4 次，中间修复只挡原模块名、重命名路径仍失败 2 次，最终两入口及语义注释对照均通过，失败不抹除。
 
-随后完整相关 focused 共 128 项通过、0 failures/errors/skips，172.547 测试秒／173.214431 wrapper 秒。涉及旧／现代完整 materialization、三个借用夹具、private CURRENT／consumer／Stop、采用检查与 benchmark 合同。319 个前后源及夹具 pin 一致；此轮是明确列出 dirty 修改的工作快照，不冒充已提交 HEAD。原结果 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/continuity-focused-v1/result.json`，SHA256 `0a33215452d510d51b9a7d98aa82449f64f0078338adf138841f3d7049648f57`；日志 24125B，SHA256 `c5d2871b1955b72a0e0b14411695bd592da07660f718aac830cefe022bcba63b`。后续文档写入另留最终 full 快照。
+随后完整相关 focused 共 128 项通过、0 failures/errors/skips，172.547 测试秒／173.214431 wrapper 秒。涉及旧／现代完整 materialization、三个借用夹具、private CURRENT／consumer／Stop、采用检查与 benchmark 合同。319 个前后源及夹具 pin 一致；此轮是明确列出 dirty 修改的工作快照，不冒充已提交 HEAD。原结果 `/private/evidence/item-299759580030.json`，SHA256 `0a33215452d510d51b9a7d98aa82449f64f0078338adf138841f3d7049648f57`；日志 24125B，SHA256 `c5d2871b1955b72a0e0b14411695bd592da07660f718aac830cefe022bcba63b`。后续文档写入另留最终 full 快照。
 
 ## 独审与仍未闭合的门槛
 
@@ -32,6 +35,6 @@ Stop 配置保留原 `cmux_executor_idle_guard` 的 75 秒预算；安装器仅 
 
 43 R3 回件 3876B、SHA256 `ee2550429d3adff8f2dd973122def78d8ba830866d80020babef25d92f34d2ec` 已整读核验；第1项两条旧 P3 CLOSED，冻结 d150 的兼容16及私有根12项独立实跑成功。第2项 PARTIAL 并指出 consumer 挖除裸 TypeError 的新 P3；本次仅收紧该反例消息与原入口出处，不宣称独审已批准。第3项仍 PARTIAL，未读断言体保持 NOT_EXAMINED。上述 d150 full/CI 不覆盖这次测试与文档改动。
 
-此测试收紧后，私有根12＋兼容16共28项实跑通过，19.612测试秒，0 failures/errors/skips；工作快照319个pin前后不变。结果 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/continuity-r3-fix-v1/result.json`，原日志5806B、SHA256 `933c7ad73e4356546c93e6454ce9c9cf0761078386bf8b46c9015aae6aa76819`。只有测试和本说明变更，没有生产适配改动；最后这段结果说明不冒充测试开始前已存在。
+此测试收紧后，私有根12＋兼容16共28项实跑通过，19.612测试秒，0 failures/errors/skips；工作快照319个pin前后不变。结果 `/private/evidence/item-0adb3f6fa2cc.json`，原日志5806B、SHA256 `933c7ad73e4356546c93e6454ce9c9cf0761078386bf8b46c9015aae6aa76819`。只有测试和本说明变更，没有生产适配改动；最后这段结果说明不冒充测试开始前已存在。
 
-现场三个客户端采用、两轮自动 60 秒原生求派闭环、证据约束的三态接续、跨父共享最多两子 agent 与真实父端消费、3 pilot／33 business／15 pairs／192 ordinary 槽及至少 15% 提效仍未完成。结果继续汇报原 surface40 集中维护，不把原 surface43 的参与及只读审查推定为 merge／共享写授权。
+现场三个客户端采用、两轮自动 60 秒原生求派闭环、证据约束的三态接续、跨父共享最多两子 agent 与真实父端消费、3 pilot／33 business／15 pairs／192 ordinary 槽及至少 15% 提效仍未完成。结果继续汇报原 shared-maintainer 集中维护，不把原 shared-maintainer 的参与及只读审查推定为 merge／共享写授权。

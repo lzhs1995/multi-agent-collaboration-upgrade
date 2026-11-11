@@ -1,12 +1,15 @@
 # 三种可用状态下的任务接续与 upgrade 接入
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-20。目标保持不变：减少 Codex 主管与双 Claude 的握手、派发和 callback 等待，在部分服务不可用时继续既定工作。cmux 承载原生会话；共享 MAC 负责通信与主动求派；upgrade 的本地图调度负责依赖、就绪工作、证据核收和提效度量。JEV/TypeSafe 仍为 rules/offline_mock，不增加第二套模型调用或进程管理器。
 
 ## 已核对的共享版本与维护范围
 
 - 已读 MAC 0.4.56 的 `SKILL.md`、`references/task-continuity.md` 和 `scripts/collaboration_continuity.py`。随后核对 0.4.57：task-continuity 正文与 0.4.56 相同，新增自动 hook 审计回执修复。
-- 当前此次核对的完整版本为 `/Users/lzhs/.local/share/multi-agent-collaboration/releases/0.4.57-e8685485a9c5/source`；SKILL SHA256 为 `d8c5cee987e9cdfc9dc182beb0c9449274b9121c36d931fea87d098cf0105bf2`。这是源码/安装观测，不能证明旧客户端已更新。
-- surface40 / `A93448E1-E329-493D-9B45-568D5FC0DAD0` 维护共享 MAC、thesis-refiner、hook 和发布。surface43 / `7063B683-2147-4850-BF71-AF48C937BD37` 是用户原话“正在做upgrade”的参与者及已接受的独立只读审者，communication_only；这不授予唯一整合、merge或共享写权限。原 DFB70F77 的 callback 候选已冻结；当前 successor `28407F78-6591-4FAB-9712-D1DACC325F22` 仅在自己的独立 worktree 实施后续修复，不继承旧nonce/租约、不改共享配置。
+- 当前此次核对的完整版本为 `/Users/example/.local/share/multi-agent-collaboration/releases/0.4.57-e8685485a9c5/source`；SKILL SHA256 为 `d8c5cee987e9cdfc9dc182beb0c9449274b9121c36d931fea87d098cf0105bf2`。这是源码/安装观测，不能证明旧客户端已更新。
+- shared-maintainer / `4f1ca49d-86d6-55eb-b5da-219dd40aa2b0` 维护共享 MAC、thesis-refiner、hook 和发布。shared-maintainer / `a14cfb20-62e3-597e-98dd-ade5a54b77bc` 是用户原话“正在做upgrade”的参与者及已接受的独立只读审者，communication_only；这不授予唯一整合、merge或共享写权限。原 DFB70F77 的 callback 候选已冻结；当前 successor `f15ba020-34da-5f22-9bf4-ee8ac44eac53` 仅在自己的独立 worktree 实施后续修复，不继承旧nonce/租约、不改共享配置。
 - 两份撤回的 DFB 直发提案不恢复。修正版候选按新marker协调原surface43只读审查，若需共享写入或正式整合须有原授权及原owner核验；A/B/C/D 新来件逐项回件已发布，重复 B 通知只消费一次。
 
 ## 接续矩阵
@@ -29,7 +32,7 @@
 3. **自动采用。** 分别留证安装、实际进程版本、用户配置与 `--settings` 启动配置、自动 hook 执行、原生收到、正文读取、业务接受。0.4.57 修复审计结果漏记；老进程固定的启动配置可能仍执行旧 hook。不能只看 CURRENT 或磁盘配置。
 4. **调度。** 前序运行中预组下一包；新 callback 优先核收；已有审查不饿死独立就绪通道。原业务失败后的短收取窗口只适用于注册实验，不是生产三态切换器。
 5. **Claude 同行工作。** 先冻结输入和度量定义，CLAIM 载明写域、输出和整合者；至少一个独立审查用合适的不同阅读视角。同一整体任务同时最多两个子 agent，记录父子 ID、范围、结果 marker 和父端读取消费，不能各自各开两个。现有 evaluator 的数字 2 不等于跨进程预算已受约束，须验证实际共享分配机制。
-6. **Git 与发布。** 每个写域一个作者；独立分支/候选目录，冻结被审提交与 SHA。整合后再执行相关测试。报告给 surface40 集中共享发布；upgrade候选与原surface43协调只读审查，正式整合另需明确写域／授权，不能由参与身份推定；不复制两套 runtime，不直接修改不可变版本。
+6. **Git 与发布。** 每个写域一个作者；独立分支/候选目录，冻结被审提交与 SHA。整合后再执行相关测试。报告给 shared-maintainer 集中共享发布；upgrade候选与原surface43协调只读审查，正式整合另需明确写域／授权，不能由参与身份推定；不复制两套 runtime，不直接修改不可变版本。
 7. **度量。** ACK→intent、native callback→continuation→EVIDENCE_READY→ACCEPT 分段；缺失保持 null。求派数、原生收到数、回复数、全文消费数分别计量；117:1 记录不能称送达率。保留版本、服务重试、介入、启动/冷暖和所有失败样本。
 
 ## 实施顺序与验收证据
@@ -52,8 +55,8 @@
 
 2026-10-21 后续私有子预算实现：新增默认关闭的[整任务原生子agent预算](NATIVE-CHILD-BUDGET.md)，两原Claude共同原子计数≤2，原Agent创建前预占，正文回件仍占槽，原父全文读且按SHA消费后只释放一次。外部分配器只核源和账本，不调用模型或管理任务进程；前置hook异常明确阻断，第一版仅非fork前台，缺证据不重启／重派／放槽。最新工作源29小测试通过，不继承624d full/CI，也不声称实机已采用。实际hook、双60s闭环、三态和原配对仍未完成。原surface40绑定进程在01:22Z已读核确认退出，R7原次只读reconcile零输入拒绝，未重发或接管别的进程；报告仍留集中协调目录，后续接收须有原历史恢复依据。磁盘低于10GB后暂缓新大体量full/实机阶段，小代码／文档／读取继续；未写其他项目备份队列或删除唯一原件。
 
-2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。c6全量原14errors留存，夹具修复96全量2327项及四矩阵CI通过，见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容／夹具缺口，尚未证明三态角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 surface40 集中；upgrade冻结候选交原surface43按communication_only独立只读审，不改旧 R33 或不可变共享版本，不推出唯一整合权。
+2026-10-21 接入进展：在独立 `upgrade/mac058-20261021` 分支完成当前完整 MAC 0.4.58 的版本化私有适配。227 个上游 Python 文件内存转换/编译通过；16 项实际完整生成控制器验证通过，另 15 项可移植行为/反例通过；与旧控制器及调度反例合计 94 项通过。c6全量原14errors留存，夹具修复96全量2327项及四矩阵CI通过，见 [MAC 0.4.58 验证](MAC058-PRIVATE-VALIDATION.md)。这只关闭当前版本的具体兼容／夹具缺口，尚未证明三态角色接管、原客户端自动 hook、两轮求派闭环、共享两子 agent 分配和完整配对。共享发布/三态方向仍归原 shared-maintainer 集中；upgrade冻结候选交原surface43按communication_only独立只读审，不改旧 R33 或不可变共享版本，不推出唯一整合权。
 
 首次对 0.4.57 全部 226 个顶层 Python 脚本执行了内存转换检查（不执行输出、不生成 runtime、不启客户端）：220 个转换成功，6 个拒绝。具体为 `cmux_bridge.py` 的旧 footer/activity 片段、`cmux_callback_journal.py` 的 deliver 签名、`cmux_daemon_identity.py` 的无 daemon 分支、`cmux_native_delivery.py` 的 ps 参数、`mac_harness.py` 的旧 preflight bridge-test 调用、`reconcile_handshake_ack.py` 的旧 bridge_clear 条件。部分旧补丁对应的行为已被上游改变，需核对语义后适配；不能删除 source-shape 检查或把转换成功当运行隔离成功。
 
-原观察：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/mac057-transform-observation.json`，SHA256 `316f20308c8ecc59c2e6daf3e9f729afa21ce2b4ea867b3c5b0d9242043fec9f`。它只证明单文件转换结果，不证明完整 materialization、跨模块导入、自动 hook 或运行语义。
+原观察：`/private/evidence/item-d741ee957bc1.json`，SHA256 `316f20308c8ecc59c2e6daf3e9f729afa21ce2b4ea867b3c5b0d9242043fec9f`。它只证明单文件转换结果，不证明完整 materialization、跨模块导入、自动 hook 或运行语义。

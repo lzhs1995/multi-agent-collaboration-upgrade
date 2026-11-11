@@ -1,5 +1,8 @@
 # r26：原生 Goal 全矩阵实测
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19 13:53（Asia/Taipei）终态：r26 driver 于 **05:43:39.490338Z**
 HALTED / FAILED，watchdog 于 **05:43:40.491174Z** HALTED；原工具 78801
 已退出（code 2）。业务 **0/33**、pilot **0/3**、可比较配对 **0/15**；
@@ -56,7 +59,7 @@ A 于 05:51:41.638Z、B 于 05:51:43.591Z 明确识别 stop 并以原生
 `2e2ba891f88b92f1ba12a547c4be4049e9fcde5a304a2aa7fb7ac89528bbdf56`）。
 这支持一次已授权的新独立观察，不能重放 r26 或证明持续容量。
 
-原终态证据：`/Users/lzhs/uq/driver/final-report.json`，SHA256
+原终态证据：`/private/evidence/item-bed680ba7c6f.json`，SHA256
 `a722b6c8748ca949c59793ff663bf8a2bc66efd69781bbed958d09f6fb83ec92`；
 `execution/r26-original-driver/result.json`，SHA256
 `e937d1fe8657d58a12ff82deac52afa2a737bb31cf2e87890a13ccb0eec90888`。
@@ -71,7 +74,7 @@ A 于 05:51:41.638Z、B 于 05:51:43.591Z 明确识别 stop 并以原生
 - 原实验范围：7 组、33 轮、15 对（12 warm／3 cold）、192 条独立普通通信。
 - 先连续通过 3 轮 pilot，再开始配对。A1 和 B 均允许双 Claude 并行。
 - 用户已全面授权重试；旧会话、旧 controller、旧输入及失败证据全部保留。
-- r26 根 `/Users/lzhs/uq`；05:31:35.737033Z 配置，05:31:52.294650Z 原 launch 返回。
+- r26 根 `/Users/demo/b2`；05:31:35.737033Z 配置，05:31:52.294650Z 原 launch 返回。
 - 原任务最晚截止为 06:47:39.605462Z；r26 实际不可变截止为
   **06:47:01.737033Z（台北 14:47:01）**，不增加两小时或重置计时。
 - watchdog PID 5206，driver PID 5568；原 wrapper 工具句柄 78801。
@@ -114,7 +117,7 @@ Goal 启动回归共解决 63 个 distinct cases：扩展原始批次 62 通过�
 | 192 条普通通信 | 全部 MISSING；notice 接收、正文读取和业务接受分别统计 |
 | 提效与成本 | INSUFFICIENT_EVIDENCE／UNKNOWN |
 
-surface40 继续统一管理共享技能。已向既有文件收件箱发布 r26 新进展，沿用
+shared-maintainer 继续统一管理共享技能。已向既有文件收件箱发布 r26 新进展，沿用
 原 Goal 经验回复约定；尚未收到回复，发布和读回文件不能证明 owner 已读。
 该沟通与实测并行，不另设停工门槛。
 
@@ -134,7 +137,7 @@ B 包含 84 records／235451 bytes，均完成该区间扫描；各 SET 1、UNME
 
 ## 原始证据
 
-证据根 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`：
+证据根 `/private/evidence/item-151557e33ca7`：
 
 - `preparation/r26-candidate/candidate.json`，SHA256
   `2275998d0339ea64e7fb0d8c4c92f89897b67d56df00ce6fd1fd1057a637a5ae`。
@@ -148,7 +151,7 @@ B 包含 84 records／235451 bytes，均完成该区间扫描；各 SET 1、UNME
   probe 和 A 的工具参数错误，未伪造 adoption。
 - `maintenance/r26-goal-audit/observation-20261019T053635541777Z/summary.json`：
   双 Claude 原生 Goal／probe／自动 hooks 独立核收。
-- `maintenance/r26-goal-run/publication.json`：surface40 文件发布，非已读回执。
+- `maintenance/r26-goal-run/publication.json`：shared-maintainer 文件发布，非已读回执。
 - `maintenance/r25-independent-audit/goal-startup-implementation-validation.json`。
 - `source-exports/resume-20261019-live-v22/export.json`、`observer-regression.json`。
 

@@ -1,7 +1,7 @@
 """Production on-arm transport for the JEV advisory worker: S1's own wire protocol.
 
 Reuses the frozen S1 design in
-/Users/lzhs/uz/state/B/recovery-20261024/jev-validation-20261025-r1/jev_adapter.py
+/opt/collaboration/adapter/jev_adapter.py
 (``JevClient.ask``, ``payload``, ``validate_response``): one persistent HTTPS
 connection reused for every request, ``POST /v1/systemone`` with a bearer
 credential, the S1 v2 question wording copied verbatim, and no automatic retry.

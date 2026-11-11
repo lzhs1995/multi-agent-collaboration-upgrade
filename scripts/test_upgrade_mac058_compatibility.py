@@ -208,9 +208,9 @@ class UpstreamTransformTests(unittest.TestCase):
             self.assertIsNone(parser["_claude_bordered_compose"](unknown))
 
     def test_busy_goal_hud_above_border_is_a_complete_empty_frame_only_in_its_exact_pair(self):
-        # Original u12 handshake screens (both lanes refused 2026-10-26, zero input).
-        pins = {"a": "9fa226394733797aad797e4d3afbe4a80c2d6f1693a0b7b1c5e8507a4cd2b2e7",
-                "b": "65d64cf376cbd4374a1c60c9c7ba2d5c2fd59c28cfa3459e98ce269f1221bd2c"}
+        # Synthetic public equivalents of the historical u12 busy/goal layouts.
+        pins = {"a": "470d9820d237ab1871d50a38780cc773d472de72aaadaa08d340f4c3b823daa5",
+                "b": "7fee5b75ccce3c943f4f1652e12ecd5fb3c896d8683a031a122ba7920052ab30"}
         base = parser_namespace(source("cmux_bridge.py"))
         parser = parser_namespace(claude_measured_chrome(source("cmux_bridge.py")))
         fixtures = Path(__file__).resolve().parent.parent / "verification/fixtures"

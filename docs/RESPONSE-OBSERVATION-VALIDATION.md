@@ -1,5 +1,8 @@
 # Private response observation after r27
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 r27 remains HALTED/TIMEOUT: pilot 0/3, business 0/33, comparable pairs 0/15,
 ordinary-message slots 0/192. The missing response terminal evidence prevents
 attributing its Claude stall to authentication, capacity, client consumption or
@@ -78,7 +81,7 @@ Observer SHA256:
 `cf857020d46fc1b980496d25a88c648f16517cb7c5ca7ce5a8b35a9a807d1671`
 (18,253 bytes). Evidence root:
 
-`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/response-observer-local/`
+`/private/evidence/item-d813c18062a9/`
 
 | Check | Measured result | Evidence under that root |
 | --- | --- | --- |
@@ -185,6 +188,6 @@ cannot yet be promoted as a proven collaboration efficiency improvement.
 
 No new Claude campaign, model request, historical replay or shared skill change
 belongs to this local validation. r27 remains timed out with no completed pilot
-or business rounds, and efficiency remains unproven. The designated surface40
+or business rounds, and efficiency remains unproven. The designated shared-maintainer
 owner continues to manage shared MAC and thesis-refiner integration; an inbox
 publication alone does not prove its owner has read or merged these findings.

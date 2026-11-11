@@ -1,4 +1,4 @@
-"""Both untouched r11 screens plus explicit derived negatives; all I/O is offline."""
+"""Synthetic public r11 layouts plus explicit derived negatives; all I/O is offline."""
 import hashlib
 import unittest
 from unittest.mock import patch
@@ -12,8 +12,8 @@ from test_claude_footer_parser_20261008 import FIXTURES, with_draft
 PERMISSIONS = "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
 TIP = "  ⎿ \u00a0Tip: Use /clear to start fresh when switching topics and free up context"
 PINS = {
-    "a": "e512b4961023f38ec5c8f2330699ba50dfbbd69cdb588d903fbc464ca366e983",
-    "b": "3231def4788525f486985c5d2ed4e612db59d27af69c3af5abcdcf6992f946c7",
+    "a": "8a9aafa5c50c8f81d729cd0d0b7b08d44e2b4e64712c341b6ca638095c35b22d",
+    "b": "d28573bae7fdd2b9cbe6219ee0bc48cb49b8d2f574d06505b3af4ff5259d47d6",
 }
 
 
@@ -41,7 +41,7 @@ class ClaudeDefaultFooterTests(unittest.TestCase):
         paste.assert_not_called()
         key.assert_not_called()
 
-    def test_original_captures_are_unchanged_and_both_idle(self):
+    def test_public_fixture_pins_match_and_both_idle(self):
         for lane, sha in PINS.items():
             with self.subTest(lane=lane):
                 raw = (FIXTURES / f"claude-default-{lane}-20261018.txt").read_bytes()

@@ -1,12 +1,15 @@
 # Ordered continuation from the November 2 checkpoint
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 Status: **NOT_ACCEPTED**. Implementation is `CODEX_SOLO`; review is
 `solo_self_review`. The original task and deadline continue. Code verification
 and partial historical callbacks do not close native acceptance.
 
 ## Established sequence and completed work
 
-1. The October 20 session `01a159cf-6685-76b0-b779-b4572afab31b` continued the
+1. The October 20 session `0e8428fa-f245-503b-8763-e6f120405fa3` continued the
    upgrade experiment. The objective requires one Codex and two Claude clients,
    normal and unavailable-client modes, real callbacks and independent
    upgrade-vs-MAC and JEV-off/on workflow comparisons.
@@ -45,13 +48,13 @@ and partial historical callbacks do not close native acceptance.
   `c05f449a2f86496b17c23997ffb31ef9269fc913044faedc677ed692148444ec`.
   Installing another profile does not migrate this task or its attempts.
 - Keep the clean tested source in
-  `/Users/lzhs/projects/multi-agent-collaboration-upgrade-root-tabs` at `adc70616`.
+  `/private/evidence/item-f09b230f9358` at `adc70616`.
   The successor documentation branch does not replace that frozen source pin.
 - Use original endpoint UUIDs and fresh process/session proof. A historical
   numeric surface reference, resume command or stale process pin is insufficient.
 - S40 retains shared MAC/thesis/CCC integration ownership. Successor authority
   covers ROOT continuation; it does not grant S40's shared-file write ownership.
-- Preserve Owner43's context and original session. An absent process or failed
+- Preserve archive-reviewer's context and original session. An absent process or failed
   provider call is not permission to invent a replacement executor.
 
 ## Remaining work, in dependency order
@@ -59,7 +62,7 @@ and partial historical callbacks do not close native acceptance.
 | Stage | Current state | Required action and completion evidence |
 | --- | --- | --- |
 | 1. Recover the original maintenance contact | Notice received; response pending | Original S40 and caller authentication, one protected submission and a fresh receiver marker are recorded. Preserve the original attempt; do not repaste. Verify full body consumption and obtain a substantive reply. The receiver currently shows provider 502 failures. |
-| 2. Restore fixed-route capacity | Blocked | Keep `mg cx agentrouter-a` and `mg cc linxi -k linxi-s1`. Diagnose the existing route. Record two new overlapping, completed responses with visible text, EOF and `message_stop`, including failures, latency and usage. Synthetic capacity checks do not certify native readiness. Do not repeat unchanged launches while capacity is failing. |
+| 2. Restore fixed-route capacity | Blocked | Keep `mg cx example-codex-route` and `mg cc example-provider -k example-key`. Diagnose the existing route. Record two new overlapping, completed responses with visible text, EOF and `message_stop`, including failures, latency and usage. Synthetic capacity checks do not certify native readiness. Do not repeat unchanged launches while capacity is failing. |
 | 3. Restore original disk admission | Blocked | Obtain at least two fresh conservative actual-capacity observations at or above 40 GiB and S40's original-format admission. If space reclamation is necessary, use authorized task-owned terminal files, the existing backup consumer, remote readback and SHA verification before eligible release. Do not lower the threshold or remove unique originals. |
 | 4. Prepare j6 | Not started; requires stages 1–3 | Revalidate the clean `adc70616` source and all original pins. Use the original R663 prerequisite schema and preparation script only after its evidence exists. Register j6 independently, materialize all groups, retain complete manifests, and verify held state. The script's `PREVIEW` filename does not make execution read-only. |
 | 5. Admit and run JEV S2 | Not started; requires stage 4 | Obtain a fresh exact CAS and one-shot prearm/permit, start the original watcher and release once. Reuse the specified experiment workspace/tabs. Run the three pilots first; record their native readiness, START, business work, independent ACCEPT and FINISH. Continue the registered twelve warm and three cold pairs only through the original gates. Both arms use the registered orchestration; only JEV advisory differs. |
@@ -85,13 +88,13 @@ must not override this explicitly authorized prospective amendment.
 
 Obtain S40's substantive reply and restore the original disk prerequisite. The
 November 3 successor evidence is in
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/SUCCESSOR-01a1a1e3-20261103-v1`.
+`/private/evidence/item-a849beafaef5`.
 The original j6 preparation is
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/R663-ROOT-PREREQUISITE-READBACK-AND-PREP-PREVIEW-v1/prepare_next_file_only_PREVIEW.py`.
+`/private/evidence/item-8addf37a8f7d.py`.
 Do not manufacture `ROOT-PREREQUISITES-VERIFIED-v1.json` from failed checks.
 
 For the authorized model55 comparison, use the prepared successor entry instead:
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/SUCCESSOR-01a1a1e3-20261104-MODEL55-v3/prepare_model55_file_only.py`.
+`/private/evidence/item-82014645df55.py`.
 Its default invocation validates without writing. `--apply` is reserved for
 verified original-format prerequisites and performs file preparation only.
 

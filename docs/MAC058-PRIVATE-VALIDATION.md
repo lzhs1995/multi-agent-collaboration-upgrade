@@ -1,8 +1,11 @@
 # MAC 0.4.58 私有控制器兼容验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-21。独立候选 `upgrade/mac058-20261021`，基于已推送 `10ccc1426f64b87231d203aa1f06bddece686136`。只为新授权实验生成私有控制器，不安装到共享 MAC、全局 hooks 或 thesis-refiner；旧客户端、输入原次、controller 与 R33 七个 STOP 不变。
 
-固定完整来源 `/Users/lzhs/.local/share/multi-agent-collaboration/releases/0.4.58-cf3f6175840b/source`，SKILL SHA256 `96f54599a3d95b7296fe4c979dffa309ba928a361cd0c01ac3e1fb6177bb9188`。`scripts/fixtures/mac-0.4.58/manifest.json` 固定十个原字节 MIT 上游源文件和许可，用于 CI 可移植反例；夹具不是完整 controller，不能初始化或执行原生实验。
+固定完整来源 `/Users/example/.local/share/multi-agent-collaboration/releases/0.4.58-cf3f6175840b/source`，SKILL SHA256 `96f54599a3d95b7296fe4c979dffa309ba928a361cd0c01ac3e1fb6177bb9188`。`scripts/fixtures/mac-0.4.58/manifest.json` 固定十个原字节 MIT 上游源文件和许可，用于 CI 可移植反例；夹具不是完整 controller，不能初始化或执行原生实验。
 
 ## 具体修复及保留语义
 
@@ -31,11 +34,11 @@
 
 以上生成控制器测试不调用模型、不发送实际业务输入。macOS 和完整本地源码依赖的测试在远端 CI 会明确跳过；十文件可移植测试仍运行，不能将 CI 跳过解释为现场验证。
 
-`c6a34dd` 原失败日志固定在 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/mac058-full-v1/test-all.log`，16979 字节，SHA256 `fcc93237bb11ec195a581bd1a7740e052cb26f783f37dfe1a8394253e5144dd5`；308 个前后源码 pin 相同。新完整回归须另开输出目录，不覆盖它。
+`c6a34dd` 原失败日志固定在 `/private/evidence/item-3dc0c4ce0738.log`，16979 字节，SHA256 `fcc93237bb11ec195a581bd1a7740e052cb26f783f37dfe1a8394253e5144dd5`；308 个前后源码 pin 相同。新完整回归须另开输出目录，不覆盖它。
 
 原 surface45 的 R2 独审回件全文已读并验 SHA256 `22b2fa50d5242fe317ac8caf0b7823eae508fa9326e94f6d5011cb89d631aa12`，5611 字节，结论仍 PARTIAL：callback 调度 1–4 项闭合，三项实跑反例通过；版本适配及夹具安全第 5 项 NOT_EXAMINED。R1 的证据优先级问题已修，v2 可达性及 failure guard 阻塞收取两项假设 REFUTED。需要下一轮覆盖当前适配、完整回归/CI和最终整合，不把范围外内容推断为独审通过。
 
-`96a7b87` 完整原结果 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/mac058-full-v2/result.json`，SHA256 `b647ba04138eec2c6c8c4b2e1dda211d6a78f24c46a1181121de1490c1eea063`；日志 SHA256 `c5e0864795aa833816a2d06a202c8f5ae737542e2e9a2c3ddf4cd5b010c1e745`。对应 [CI 39475536282](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39475536282) HEAD 为 `96a7b874f477d351e603980fa83b15de7e3a4d75`，新连续执行补丁不继承此绿色。
+`96a7b87` 完整原结果 `/private/evidence/item-84bdd9b39eb4.json`，SHA256 `b647ba04138eec2c6c8c4b2e1dda211d6a78f24c46a1181121de1490c1eea063`；日志 SHA256 `c5e0864795aa833816a2d06a202c8f5ae737542e2e9a2c3ddf4cd5b010c1e745`。对应 [CI 39475536282](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39475536282) HEAD 为 `96a7b874f477d351e603980fa83b15de7e3a4d75`，新连续执行补丁不继承此绿色。
 
 43 R1 独审回件 3539B／SHA256 `0ead7403d50d06c856617deffd311a8ef9b32b711b718aecf2205ee6f3e2dce3` 已全文读并核验。只闭合 c6→96 的夹具修复／计数；未跑测试、未独立读 CI，现代适配第1–3项仍 NOT_EXAMINED。D1 为上述类级失败／5项未运行的文档精度，D2 为另外两组借用者缺显式固定来源断言，D3 为历史“43整合”用语；后续独立 commit 补充，不修改被审快照。
 

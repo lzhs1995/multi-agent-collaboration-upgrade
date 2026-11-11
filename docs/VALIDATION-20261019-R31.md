@@ -1,10 +1,13 @@
 # R31 原生双 Claude 实验
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 R31 已于 **2026-10-19 13:04:49 UTC（台北21:04:49）超时停止**，原次终态独审截至13:09:05 UTC。双 Claude 均真实启动并执行工具；Claude A 已完成正式握手、任务收件、原次callback和独立ACCEPT，8/8检查通过。Claude B 已启动，但截至最后原生日志核查仍未收到正式握手。完整通过 **0/33**，可用配对 **0/15**，结论为 **INSUFFICIENT_EVIDENCE**。本轮暴露了本地控制开销和跨调用调度公平性问题；修复已推送，但没有新版本原生提效证据。
 
 ## 原次与固定边界
 
-- 原次：`resume-20261019-r31-native-retry`，根 `/Users/lzhs/uv`；原外层工具 `92138`。只观察/收取这一原次，不重新prepare、configure、launch或补发消息。
+- 原次：`resume-20261019-r31-native-retry`，根 `/Users/demo/b5`；原外层工具 `92138`。只观察/收取这一原次，不重新prepare、configure、launch或补发消息。
 - 冻结实现：`7fa8e4ee158d7fff82536ec153072c48183ab036`，`resume-20261019-live-v26/source`。私有MAC基底仍为 `0.4.34-d333557fb498`，不热加载共享发布。
 - 固定矩阵：7组、33轮（3轮pilot＋30轮比较）、15对、192个计划普通消息槽。只有连续3轮pilot成功才进入配对；失败和缺失保留在分母。计划消息槽不等于实际发出消息。
 - 实际不可延长截止：`2026-10-19T13:17:24.292814Z`（台北21:17:24）；另保留原外层授权截止 `13:18:14.190806Z`。独立watchdog与driver共同执行原停止边界；停止后续输入不等于远端取消或资源已释放。
@@ -29,13 +32,7 @@ R31 已于 **2026-10-19 13:04:49 UTC（台北21:04:49）超时停止**，原次�
 | 合格pilot/业务/配对 | 0/3、0/33、0/15 | 33个注册槽全部保留：1 TIMEOUT＋32 MISSING。A单节点接受不构成完整轮次通过。 |
 | 普通通信矩阵 | 0/192个计划槽取得合格闭环 | 未进入非pilot比较；计划槽不等于已发送消息，也不把启动、握手或callback算入这192槽。 |
 
-工作区UUID为 `1c78c085-b391-48c5-8724-ab5a9fe63d86`，固定客户端如下。
-
-| 客户端 | 原生session | surface UUID | PID |
-|---|---|---|---:|
-| Claude A | `788a789d-f5e9-4773-bfc9-b9ea74be01dd` | `424ce152-475b-44d6-8541-131c140f9157` | 1141 |
-| Claude B | `6293bb76-9e0b-492b-80b3-c64c188a7f14` | `dfe4e0dd-d730-4d49-b5f1-efc5a5c9673d` | 1146 |
-| Codex | `01a15421-f580-7f01-aa5f-aca50d7785dc` | `0bc3b043-661f-42b6-93ad-93e918fcf373` | 1159 |
+原工作区、会话、终端及进程身份逐项留存在私有归档；公开版本仅使用角色标签，不提供可用于当前操作的绑定。
 
 ## 首个握手与控制耗时
 
@@ -74,11 +71,11 @@ R31 已于 **2026-10-19 13:04:49 UTC（台北21:04:49）超时停止**，原次�
 | 最后原advance返回 | 13:05:54.069Z，内部129.182587秒，actions=[]；晚于停止标记，无新动作 |
 | 原Codex native final | 13:07:30.218Z，明确三轮pilot未完成 |
 
-该ACK匹配原任务 `corpus-v3-aa13dd5772c8aed3f18ec54e--pilot-01--inventory--a0001` 及原nonce `d7504996`。新增user全文SHA为 `0aec04fb12056cc3a3c6ebd2eeed2a3dd8c43dd47f7b7a2a02dbafb589a49ce5`，与原receipt一致；body SHA为 `bc4b5f0b77eceb22eeba276ff62971053a3dde8e98e944d4e489ea39546b6e2b`。
+该ACK匹配原任务 `archived-task--pilot-01--inventory--a0001` 及原nonce `[archived nonce]`。新增user全文SHA为 `0aec04fb12056cc3a3c6ebd2eeed2a3dd8c43dd47f7b7a2a02dbafb589a49ce5`，与原receipt一致；body SHA为 `bc4b5f0b77eceb22eeba276ff62971053a3dde8e98e944d4e489ea39546b6e2b`。
 
 首个114.780秒是只完成一次claim的 **advance内部总时间**，包含建议、身份和配置校验；还不能把它写成纯claim、锁等待或Claude耗时。原生收件到ACK为93.765秒，同样包含客户端工具与校验过程，不能全算作模型推理。`--max-seconds 45`只在同步动作之间检查，单次preparation允许600秒；其超出45秒不证明进程死锁。
 
-[控制开销独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-audit/REPORT.md)已确认：每次私有NativeReader初始化都会重新完整校验29个startup pins，合计1,066,091,209字节；每次Coordinator构造静态至少包含7次这样的校验。此数字为逻辑校验字节量，不是实测磁盘吞吐；两秒进程采样显示多个worker线程执行SHA256，不是主线程比例。原preflight 157.354秒之外，进入前校验及后续准备/证明另有89.471秒，尚无更细的独占耗时归因。
+[控制开销独审](/private/evidence/item-cf51c77ec011.md)已确认：每次私有NativeReader初始化都会重新完整校验29个startup pins，合计1,066,091,209字节；每次Coordinator构造静态至少包含7次这样的校验。此数字为逻辑校验字节量，不是实测磁盘吞吐；两秒进程采样显示多个worker线程执行SHA256，不是主线程比例。原preflight 157.354秒之外，进入前校验及后续准备/证明另有89.471秒，尚无更细的独占耗时归因。
 
 后续有界测量直接调用同一原完整pin函数，29个文件连续三次全部通过，墙钟分别0.518210、0.472688、0.516498秒，没有清空系统缓存。这是当前条件的组件结果，不是原R31控制链复现；不足以解释原129秒advance，更不能把全部延迟归于哈希。详见[控制开销验证](CONTROL-OVERHEAD-VALIDATION.md)。
 
@@ -108,19 +105,19 @@ A原业务命令返回的report.md为167字节，SHA256 `cf1831e44c6312f83cb8dc2
 
 继续保留cmux作为原生会话/终端载体，MAC负责绑定和可靠投递，upgrade负责依赖就绪、两路执行、下一任务草稿、持久回报、核收后接续和等待归因。Jev/TypeSafe仅为本地rules/offline mock，没有引入在线JEV依赖。能否提高效率由正确性成立后的配对结果判定；目前没有达到≥15%改善的原生证据，也不能断言其他平台一定更慢。
 
-[41类协作问题台账](COLLABORATION-ISSUE-LEDGER.md)和[15条社区经验核查](COMMUNITY-ADOPTION-20261019.md)沿用已完成研究。surface:1000020040仍统一维护共享MAC/论文精炼助手；已核owner回件和PR55，不重复修改共享层。后续 `maintenance/post-r30-pr55/owner-followup-reply.md` 在本检查点仍缺失。R31终态、晚到callback和控制开销已沿[既有维护inbox](/Users/lzhs/Documents/cnm/tasks/06_Mintransition/verification/ccc-successor-claude-20261010/maintenance-inbox/upgrade42-to-surface1000020040-r31-terminal-20261019T1315Z.json)回传；这是文件发布，不宣称owner原生收件、正文阅读或接受。
+[41类协作问题台账](COLLABORATION-ISSUE-LEDGER.md)和[15条社区经验核查](COMMUNITY-ADOPTION-20261019.md)沿用已完成研究。surface:1000020040仍统一维护共享MAC/论文精炼助手；已核owner回件和PR55，不重复修改共享层。后续 `maintenance/post-r30-pr55/owner-followup-reply.md` 在本检查点仍缺失。R31终态、晚到callback和控制开销已沿[既有维护inbox](/private/evidence/item-544baee214d1.json)回传；这是文件发布，不宣称owner原生收件、正文阅读或接受。
 
 ## 原始证据
 
-- [三端采用独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T123341Z-REPORT.md)：SHA256 `dbfd8d0e9ae0b037974742f0bf26afd8b5a9dc738ec128b4045fe3dbbdd84924`。
-- [A握手增量独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T124147Z-pilot-01-increment.md)。
-- [A正式任务收件独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T124518Z-pilot-01-five-minute.md)。
-- [A迟到原生回调独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T125152Z-callback-late-native.md)及[原次只读核收增量](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T125352Z-native-increment.json)。
-- [原adoption](/Users/lzhs/uv/g/0/evidence/B/live-control/adoption.json)：SHA256 `b794bdead73052dc7a29f418fa2463b8aec302464ee070c3d87ce1e96c4020d8`。
-- [原run](/Users/lzhs/uv/g/0/campaigns/B/pilot-three-rounds/runs/pilot-01/run.json)、[A原握手receipt](/Users/lzhs/uv/g/0/campaigns/B/pilot-three-rounds/runs/pilot-01/nodes/inventory/preflight/handshake-receipt.json)。
-- [外层原次日志](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r31-original-driver/stdout.jsonl)。
-- [原终态报告](/Users/lzhs/uv/driver/final-report.json)：25253字节，SHA256 `7db80dc08044004b5d4de0fe8ecf0a8c3cc0ba6604e457381c58015cdb4066b5`。
-- [外层原次结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r31-original-driver/result.json)：SHA256 `8f77839a420dc817b9bb89c43c22f0ecea7a99a2ed9447ee76a64221cc396765`。
-- [终态独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T130905Z-terminal-audit.md)及[完整33槽、停止标记与原生证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-native-adoption-audit/20261019T130905Z-terminal-audit.json)：JSON SHA256 `8cdd207845e4f9ef139e290141a577251731f9e30e96362c608d86e3627f8695`。
+- [三端采用独审](/private/evidence/item-12d917c59b6a.md)：SHA256 `dbfd8d0e9ae0b037974742f0bf26afd8b5a9dc738ec128b4045fe3dbbdd84924`。
+- [A握手增量独审](/private/evidence/item-279ed5cdefae.md)。
+- [A正式任务收件独审](/private/evidence/item-f687178eb103.md)。
+- [A迟到原生回调独审](/private/evidence/item-e53361efe804.md)及[原次只读核收增量](/private/evidence/item-d5ade289edc1.json)。
+- [原adoption](/private/evidence/item-eceda2d73912.json)：SHA256 `b794bdead73052dc7a29f418fa2463b8aec302464ee070c3d87ce1e96c4020d8`。
+- [原run](/private/evidence/item-00a7e04a7196.json)、[A原握手receipt](/private/evidence/item-167bd8c49eb1.json)。
+- [外层原次日志](/private/evidence/item-4fd8e9ca753e.jsonl)。
+- [原终态报告](/private/evidence/item-cb06277d2bc6.json)：25253字节，SHA256 `7db80dc08044004b5d4de0fe8ecf0a8c3cc0ba6604e457381c58015cdb4066b5`。
+- [外层原次结果](/private/evidence/item-d779c737593a.json)：SHA256 `8f77839a420dc817b9bb89c43c22f0ecea7a99a2ed9447ee76a64221cc396765`。
+- [终态独审](/private/evidence/item-6717b0c3e91e.md)及[完整33槽、停止标记与原生证据](/private/evidence/item-e8d31529615e.json)：JSON SHA256 `8cdd207845e4f9ef139e290141a577251731f9e30e96362c608d86e3627f8695`。
 
 本轮结果为失败或证据不足；实现修复和CI结果单独交付，不宣称完成全量原生压力验证或达到提效目标。

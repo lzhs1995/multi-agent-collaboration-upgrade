@@ -1,5 +1,8 @@
 # 控制开销与跨调用公平调度验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19。R31 双 Claude 已真实启动，但本地控制操作耗时过长，第二执行通道的正式握手被延后。此次修改减少同一次观察的重复校验，并让单步调度保持通道公平性。它尚未在原生配对实验中验证提效；冻结 R31 原次不加载这些修改。
 
 ## 原次发现
@@ -12,7 +15,7 @@
 
 13:22:27–13:22:29 UTC 直接调用原私有适配器的 `upgrade_live_integrity.verify_artifacts`，输入为原 startup-v2 全部29个 pins。连续三次均完整核对1,066,091,209逻辑字节，29/29通过，无错误：墙钟0.518210、0.472688、0.516498秒；进程CPU0.769678、0.667451、0.683424秒。原函数每次重新读取完整内容，没有跨次digest缓存；没有清空操作系统文件缓存。
 
-这是当前本机负载/缓存条件下的组件测量，不能移算为原R31、完整Coordinator或新版本配对时间。**半秒量级的本次结果不足以解释此前129秒的控制延迟**；仍缺整条调用链实际次数、事件区间和资源争用证据，不能只凭逻辑字节量或SHA256栈采样归因。120秒总预算内完成，未发模型输入、重放实验或修改原状态。完整脚本、输入pins、原stdout和结果见[有界测量](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-final-publication/bounded-pin-measurement/REPORT.md)。
+这是当前本机负载/缓存条件下的组件测量，不能移算为原R31、完整Coordinator或新版本配对时间。**半秒量级的本次结果不足以解释此前129秒的控制延迟**；仍缺整条调用链实际次数、事件区间和资源争用证据，不能只凭逻辑字节量或SHA256栈采样归因。120秒总预算内完成，未发模型输入、重放实验或修改原状态。完整脚本、输入pins、原stdout和结果见[有界测量](/private/evidence/item-99593a1196aa.md)。
 
 ## 修改
 
@@ -51,7 +54,7 @@ fixture 仪器化实测新 status 调用 state 一次；单步 local claim 创�
 | macOS / Python 3.10 | 2089 | 104 | 0 | 1 | 462.993 秒 |
 | macOS / Python 3.14 | 2090 | 104 | 0 | 0 | 461.354 秒 |
 
-两格 Python 3.10 都在新增测试 `test_lease_change_between_status_and_advice_is_refused` 的第120行报同一 `ValueError`：该版本的 `datetime.fromisoformat` 不接受原时间末尾的 `Z`。后续提交 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 仅先将它转换为 `+00:00`，保留加一秒的变更和原拒绝断言。定向8项在 Python 3.14 下通过，测试耗时9.094秒；完整stdout、测试前后相同源码SHA和执行记录保存在[兼容性修复证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r31-final-publication/python310-fixture-repair)。这不是本机Python 3.10验证。
+两格 Python 3.10 都在新增测试 `test_lease_change_between_status_and_advice_is_refused` 的第120行报同一 `ValueError`：该版本的 `datetime.fromisoformat` 不接受原时间末尾的 `Z`。后续提交 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 仅先将它转换为 `+00:00`，保留加一秒的变更和原拒绝断言。定向8项在 Python 3.14 下通过，测试耗时9.094秒；完整stdout、测试前后相同源码SHA和执行记录保存在[兼容性修复证据](/private/evidence/item-6634a7d1fda6)。这不是本机Python 3.10验证。
 
 `9e5adfdde29cbf7b8da9aadb2ad92f92695ab722` 的[新四格 CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39259307066)于13:20:24–13:20:27 UTC只触发一次，run.headSha精确匹配；13:30:23 UTC已是completed/SUCCESS。四格原日志均已收取，最后一份于13:31:09 UTC落盘。
 
@@ -62,14 +65,14 @@ fixture 仪器化实测新 status 调用 state 一次；单步 local claim 创�
 | macOS / Python 3.10 | 2194 | 2090 | 104 | 0 | 0 | 539.829 秒 |
 | macOS / Python 3.14 | 2194 | 2090 | 104 | 0 | 0 | 471.439 秒 |
 
-每格原日志均未独立输出discovered；通过数为Ran减跳过、失败和错误，2194不是全部通过数。完整run元数据、分格计数和四份带SHA的原日志保存在[修复CI证据](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/ci-9e5adfd/results.json)。两格Python 3.10兼容性问题已在完整套件中关闭；此前 `7fa8e4e` 的通过结果与 `ae2c3c6` 的失败结果均保留、不移算。后续提交只更新文档，没有重新运行全套；该CI不是原生双Claude实验或提效验证。
+每格原日志均未独立输出discovered；通过数为Ran减跳过、失败和错误，2194不是全部通过数。完整run元数据、分格计数和四份带SHA的原日志保存在[修复CI证据](/private/evidence/item-3fb7465f681c.json)。两格Python 3.10兼容性问题已在完整套件中关闭；此前 `7fa8e4e` 的通过结果与 `ae2c3c6` 的失败结果均保留、不移算。后续提交只更新文档，没有重新运行全套；该CI不是原生双Claude实验或提效验证。
 
-最初的 `dispatch-intent.json` 写错上游仓库，未执行；原文件保留。`dispatch-intent-corrected.json` 与 `dispatch-result.json` 记录更正后的 upgrade 仓库以及唯一实际触发。该更正不是第二次 CI 执行，原始状态、日志和计数保存在 [CI 证据目录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/ci-ae2c3c6)。
+最初的 `dispatch-intent.json` 写错上游仓库，未执行；原文件保留。`dispatch-intent-corrected.json` 与 `dispatch-result.json` 记录更正后的 upgrade 仓库以及唯一实际触发。该更正不是第二次 CI 执行，原始状态、日志和计数保存在 [CI 证据目录](/private/evidence/item-1eec8cc95432)。
 
 ## 原始证据
 
-- [控制开销审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-audit/REPORT.md)
-- [测试执行报告](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/REPORT.md)
-- [结构化执行记录及源码 SHA](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/results.json)
-- [执行后归档的完整 JSON 比较脚本](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r31-candidate/control-overhead-fix/baseline-comparison.executed.py)
+- [控制开销审计](/private/evidence/item-cf51c77ec011.md)
+- [测试执行报告](/private/evidence/item-af5e8860854f.md)
+- [结构化执行记录及源码 SHA](/private/evidence/item-a1622fa660bb.json)
+- [执行后归档的完整 JSON 比较脚本](/private/evidence/item-b09c0de5d3b4.py)
 - [R31 原生进度与结果](VALIDATION-20261019-R31.md)

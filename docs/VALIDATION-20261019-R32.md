@@ -1,12 +1,15 @@
 # R32：修复控制链后继续真实双 Claude 验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19。冻结代码为 `f6a3bb50fc0028d103be1b5ba22597577f7de730`。R32 于14:51:28 UTC停止：双Claude完成原生握手和callback，但旧校验器误判callback后的只读操作，首轮未通过；没有全量业务或提效结论。
 
 ## 最终结果与本次修复输入
 
-- [原终态报告](/Users/lzhs/uw/driver/final-report.json)，SHA256 `65e23e5ca5171f5d413da50e3145ece4d3008bb7d367e041d189d7edfb13fd32`：0/33业务轮、0/15配对、pilot0/3；首轮FAILED，reason=EXPERIMENT_STOP_REQUESTED，其余未执行。driver/watchdog均HALTED，原runner exit2，七组停止后续输入。`input_operations=0`是报告器自身没有发送操作，不代表实验三端从未收发。
+- [原终态报告](/private/evidence/item-1ae0ee36f71c.json)，SHA256 `65e23e5ca5171f5d413da50e3145ece4d3008bb7d367e041d189d7edfb13fd32`：0/33业务轮、0/15配对、pilot0/3；首轮FAILED，reason=EXPERIMENT_STOP_REQUESTED，其余未执行。driver/watchdog均HALTED，原runner exit2，七组停止后续输入。`input_operations=0`是报告器自身没有发送操作，不代表实验三端从未收发。
 - 两端正式握手及native ACK通过；inventory于14:37:13Z、source_index于14:39:33Z派发。两项业务产物及callback均已出现，整轮验收仍失败。
-- [精确只读审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r32-control-repair/callback-action-audit/audit.json)，SHA256 `a641c47689de9c208f664c0c3ffee0629256856817552c01d40763b1cc9f1577`：inventory callback后完成的两段`ls -la`被计为最后业务写入，相差48.338秒；report/result当前哈希与原两次快照一致。Read及reconcile不是本次触发项。另发现真实workload的output_root后紧接`;`而漏统计。
+- [精确只读审计](/private/evidence/item-ed286c82849a.json)，SHA256 `a641c47689de9c208f664c0c3ffee0629256856817552c01d40763b1cc9f1577`：inventory callback后完成的两段`ls -la`被计为最后业务写入，相差48.338秒；report/result当前哈希与原两次快照一致。Read及reconcile不是本次触发项。另发现真实workload的output_root后紧接`;`而漏统计。
 - 后续修复分离业务活动与潜在写入，以新注册metrics v4验证callback及终态后只读；45/45聚焦测试通过，84.831秒，零跳过，源码pins未变。保留旧metrics和原R32失败。新的lane优先级与handoff提前返回已通过42项聚焦测试，未用于该冻结实验。两条误发提案已被用户撤回，相关直发改造已取消，不改变R32或当前收件合同。
 
 下方保留原时间点的准备、启动和观察记录。
@@ -30,17 +33,17 @@
 | 冻结导出 | 364文件与本机实测源码逐字一致，只读 | 源码提交f6a3bb5；不代表活跃客户端自动采用。 |
 | 精确f6a3bb5的四格CI | Ubuntu／macOS × Python3.10／3.14全部SUCCESS，0 failure/error | 每格Ran2237；Ubuntu各skip118，macOS各skip108。平台相关跳过与本机零跳过分列。 |
 
-- [合并验证与原始报告索引](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r32-control-repair/VALIDATION.json)，SHA256 `e7e7790857bf2ef907ce612b64322e53e5fb0b05b0db7ba4e745d723077fb003`。
-- [冻结导出](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/source-exports/resume-20261019-live-v27/export.json)，SHA256 `471d8b7491dc5df213d6ffcb1fbbd9a28f6fc163c2c7e61a6c2c9a9b7893db47`。
-- 精确提交的[四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39268319348)已只触发一次，于14:30:37 UTC全部完成。Ubuntu3.10／3.14各通过2119、跳过118；macOS3.10／3.14各通过2129、跳过108。通过数由原始Ran减skipped计算，发现数未另行输出。原[run.json](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r32-control-repair/ci-f6a3bb5/run.json) SHA256 `0028bdfb1887bd8e310dbbd25849596dcd5e415d17c53a1731c2d85ff776ce84`；[完整日志](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r32-control-repair/ci-f6a3bb5/jobs.log) SHA256 `eaa7e84363e4ee810004fd7dce43d19d65cac7cd7d10a5ed39d2fe98706798c0`。旧9e5adfd的CI不移算。
+- [合并验证与原始报告索引](/private/evidence/item-94b5d5c193e6.json)，SHA256 `e7e7790857bf2ef907ce612b64322e53e5fb0b05b0db7ba4e745d723077fb003`。
+- [冻结导出](/private/evidence/item-cc1b7a1e24e1.json)，SHA256 `471d8b7491dc5df213d6ffcb1fbbd9a28f6fc163c2c7e61a6c2c9a9b7893db47`。
+- 精确提交的[四格CI](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/39268319348)已只触发一次，于14:30:37 UTC全部完成。Ubuntu3.10／3.14各通过2119、跳过118；macOS3.10／3.14各通过2129、跳过108。通过数由原始Ran减skipped计算，发现数未另行输出。原[run.json](/private/evidence/item-90630e9895c3.json) SHA256 `0028bdfb1887bd8e310dbbd25849596dcd5e415d17c53a1731c2d85ff776ce84`；[完整日志](/private/evidence/item-e655186270d6.log) SHA256 `eaa7e84363e4ee810004fd7dce43d19d65cac7cd7d10a5ed39d2fe98706798c0`。旧9e5adfd的CI不移算。
 
 ## 原准备流程恢复
 
 原prepare已完成七组物化，最后因 `paths == predicted_paths` 将列表顺序不同误判为范围改变而退出。恢复脚本核对原prepare intent、原四脚本pins、七组完整配置、未启动状态、逐组路径归属、十四唯一路径未占用、当前provider配置和原绝对截止。只补齐未生成的元数据，未重新物化或重放输入。
 
-- [原次恢复证明](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r32-candidate/preparation-recovery.json)，SHA256 `705e6082a1ecdc88dc7ae3396115a2f343211692d4b718fa5916867c4739c2cc`。
-- [候选](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r32-candidate/candidate.json)，SHA256 `c07667484f5f7261d9455d23e109ce2134f4d3f612d08376f0063113ebbc7639`。
-- [原驱动配置](/Users/lzhs/uw/driver/config.json)，SHA256 `5ed4bccbe4986cb6c80537fdfd591f382ae25b93a7dc652e4b9f85d3ebec56ff`。
+- [原次恢复证明](/private/evidence/item-035e2592aff6.json)，SHA256 `705e6082a1ecdc88dc7ae3396115a2f343211692d4b718fa5916867c4739c2cc`。
+- [候选](/private/evidence/item-d3d4d8b7f7d4.json)，SHA256 `c07667484f5f7261d9455d23e109ce2134f4d3f612d08376f0063113ebbc7639`。
+- [原驱动配置](/private/evidence/item-d81cc2c866f1.json)，SHA256 `5ed4bccbe4986cb6c80537fdfd591f382ae25b93a7dc652e4b9f85d3ebec56ff`。
 
 ## 原生验证历史过程（R32已于14:51:28 UTC终态）
 
@@ -52,4 +55,4 @@
 
 14:31:15 UTC，inventory原始握手核收完成并转为PREPARED，完整native ACK、原握手通知回执及任务包pins均已进入原事件；source_index于14:32:09开始原次preflight。尚无完整业务、callback或整轮通过。观察到当前advance要求先prepare所有独立lane再dispatch，可能让已准备好的lane空等；正在独立审查更早派发的候选优先级，当前R32不变更实现或注册口径。
 
-[原驱动证据目录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r32-original-driver)保存完整输出与进程身份。R32原终态为0/33业务、0/15配对，未证明普通通信压力或提效；后续结果必须使用新批次独立报告。R31的0/33、0/15保持原样。
+[原驱动证据目录](/private/evidence/item-aa669910697e)保存完整输出与进程身份。R32原终态为0/33业务、0/15配对，未证明普通通信压力或提效；后续结果必须使用新批次独立报告。R31的0/33、0/15保持原样。

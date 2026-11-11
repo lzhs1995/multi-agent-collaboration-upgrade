@@ -1,5 +1,8 @@
 # Isolated native-client upgrade experiment
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 ## Pressure and experience acceptance
 
 Before freezing a repaired controller, run real multi-process filesystem
@@ -117,7 +120,7 @@ Artificial sleeps to create an advantage are prohibited.
    The longest private `tmp/ARM/c.sock` path must fit in 103 bytes. Claude 2.1.170
    also requires the resolved `tmp/ARM/a/claude-UID` and `tmp/ARM/b/claude-UID`
    paths to fit in **44 UTF-8 bytes**; longer paths silently fall back to `/tmp`.
-   For this account a dedicated root such as `/Users/lzhs/u3` fits. It must be new,
+   For this account a dedicated root such as `/Users/demo/a1` fits. It must be new,
    real and privately owned. The compact registrar checks these limits before
    creating its root; materialization checks before creating any arm artifacts.
    It creates real owned `0700` directories and sets both `TMPDIR` and
@@ -126,7 +129,7 @@ Artificial sleeps to create an advantage are prohibited.
 
    Seven binary pins are required: `codex`, `claude`, `codex_wrapper`,
    `claude_wrapper`, `cmux`, `rtk`, **`node`** (CLI flag `--node`). The reviewed
-   local Node is `/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node`; the private
+   local Node is `/Users/example/.nvm/versions/node/v24.16.0/bin/node`; the private
    cmux wrapper uses its absolute pinned path for the original settings merge.
    Keep model/provider settings consistent across groups. Copy only supported
    provider settings and required credentials into private roots. Keep real HOME
@@ -267,7 +270,7 @@ or count a subsequent experiment as a successful r2 run.
 
 r3 is also HALTED/FAILED: both original Claude sessions completed real readiness,
 but Codex failed before adoption. Pilot remains 0/3. Its authorization applies to
-that original attempt; preserve `/Users/lzhs/u3`, the frozen v3 export and every
+that original attempt; preserve `/Users/demo/a1`, the frozen v3 export and every
 original session. Never rerun its preparation or driver to apply a repair.
 
 The startup repairs use bounded libproc process inventory instead of `/bin/ps`.
@@ -324,10 +327,10 @@ diagnostic did not publish adoption or prove every live isolation/input gate.
 The original Codex CLI exited before establishing a session because both the
 startup argv and cmux hook emitter supplied the non-repeatable
 `--dangerously-bypass-hook-trust` flag. The inspector also rejected the actual
-creation response `OK workspace:1000020047` by requiring a UUID substring.
+creation response `OK workspace:3` by requiring a UUID substring.
 
 r4 is HALTED/FAILED: one permit, zero of 33 closures, pilot zero of three, no
-business dispatch and no adoption. Preserve `/Users/lzhs/u4`, its sessions,
+business dispatch and no adoption. Preserve `/Users/demo/a2`, its sessions,
 socket/lock, original driver result and frozen v4 source. Its authorization is
 already received; it does not authorize replacement or replay after failure.
 
@@ -362,7 +365,7 @@ Darwin's system `/bin/ps` is setuid. The unchanged native reader correctly
 refused `NATIVE_REGISTRATION_PROCESS_MISMATCH` before adoption.
 
 r5 is HALTED/FAILED: one permit, zero of 33 closures, pilot zero of three,
-no adoption and no business dispatch. Preserve `/Users/lzhs/u5`, all original
+no adoption and no business dispatch. Preserve `/Users/demo/a3`, all original
 clients, controllers, native registries, socket/lock and driver evidence. Do not
 fill in `procStart`, relax the reader, edit frozen PATH or restart the run.
 
@@ -401,7 +404,7 @@ bad credentials without evidence.
 
 The original frozen v7 controller closed r8 as HALTED/FAILED using the pinned
 terminal record. It retained one permit, zero business dispatches, zero of 33
-closures, pilot 0/3 and pairs 0/15. `/Users/lzhs/u8/driver/final-report.json`
+closures, pilot 0/3 and pairs 0/15. `/private/evidence/item-9611279c62f6.json`
 reports INSUFFICIENT_EVIDENCE. Keep its clients, original schedule, configuration,
 native journals and frozen controller. Do not restart prepare/configure/driver
 or revise the original result with a later detector.

@@ -1,5 +1,8 @@
 # 2026-10-18 压力测试与真实协作验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 ## 当前终态：r21 已失败收尾，UUID 修复已完成本机验证
 
 **r21 于台北 2026-10-19 01:21:46 形成最终报告：1 FAILED＋32 MISSING，
@@ -24,7 +27,7 @@
 配置固定整体截止为台北03:03:55.274432；最迟03:15报告结果，失败提前收尾，不补样、
 不重放或自动下一campaign。完整业务当前0/33，通信0/192，效率未证明、成本UNKNOWN。
 
-配置 `/Users/lzhs/ul/driver/config.json` SHA `8cb437193e80128268b841f6909481fc3b57cd3608b18d54d2f8f7cdfa00dc46`。
+配置 `/private/evidence/item-490092a574c5.json` SHA `8cb437193e80128268b841f6909481fc3b57cd3608b18d54d2f8f7cdfa00dc46`。
 冻结export `source-exports/resume-20261019-live-v19/export.json`（相对于E）SHA
 `6e1df630db6dd3a3186fd3a39acca1d7a6fe18c3606c0748421fc03e8d61405a`。
 启动/截止原证据在 `execution/r21-original-driver/`；后续仅观察原次。
@@ -60,8 +63,8 @@ SHA `9c88e70b9d3f87abb37749288c855edcff0d4df6176cfb991bbb6583cba6f3e9`。
 sysctl 见 `maintenance/r20-delivery/SYSCTL-PRODUCT-PRESSURE-7000.md`；
 B0024 见 `maintenance/r20-busy-attachment-audit/B0024-ORIGINAL-CHAIN-AUDIT.md`。
 
-新发现已投递 surface40 既有文件收件箱；发布不代表已读或回件。r19 的历史回件
-已核验，新的只读握手请求尚未收到约定回复。共享技能仍仅由 surface40 合并。
+新发现已投递 shared-maintainer 既有文件收件箱；发布不代表已读或回件。r19 的历史回件
+已核验，新的只读握手请求尚未收到约定回复。共享技能仍仅由 shared-maintainer 合并。
 v19已冻结并用于唯一r21；不重放r20。通信回归证据为 `validation/r21-communication-integration-01/result.json`，SHA `a2ffd360ab3e57e27a1a7d7c366a6d2af613c03ab12a9234fbf800b191b00377`。
 当时只读交付审查确认312个v19源码文件与manifest匹配，13个变更Python文件与
 冻结树匹配。99/9600证据相对当时源码有3个后续修改脚本及2个新增通信模块；
@@ -80,7 +83,7 @@ watchdog_failed=false。这是首轮失败后的提前收尾，没有等待或�
 
 外部只读 closeout 核对配置 SHA、全部 33 槽与 15 对、原 runner 日志、
 七组 stop 和 halt，未改 runtime、未派发或接受业务。
-原报告 `/Users/lzhs/uk/driver/final-report.json`，SHA256
+原报告 `/private/evidence/item-278586bd0ebe.json`，SHA256
 `9a2d324a4462223e95ae3fc684de3a0b78536eb010fd96f28691284af71573a5`；
 复核 `maintenance/r20-delivery/terminal-readout.json`（相对于下方证据根 E）。
 
@@ -99,7 +102,7 @@ intent；不能归因 busy、`/goal` 或 key。原生错误切片及独立核验
 native→正式 receipt 237.361 秒，分别计量，不混称传输耗时。
 完整规则与未完成矩阵见 [运行中通信验证](ASYNC-COMMUNICATION-VALIDATION.md)。
 
-surface40 更正后的维护联络因目标 socket 缺失以 NO_INPUT 结束；文件请求及
+shared-maintainer 更正后的维护联络因目标 socket 缺失以 NO_INPUT 结束；文件请求及
 审查报告已进入其原 maintenance inbox，尚无约定回复，不声称充分双向沟通完成。
 本次不自动 r21、不替换或重放，旧会话、控制器、失败与分母保留。
 以下各节均为对应时间的历史状态，不能作为当前仍在运行的证明。
@@ -127,7 +130,7 @@ watchdog的stdout；原runner异常或子进程无终态退出触发stop/halt/re
 外部wrapper的5项检查通过，包括短命父进程退出后子进程继续写日志；均无模型请求。
 这不证明远端在途请求取消，原会话及lease继续保留。
 固定config SHA256：`768e902bf5fdf568755f5f460a568bd0cc85d9d9a9155aa104a65cb9acf1d72c`。
-执行原件：E下`execution/r20-original-driver/`；实验根`/Users/lzhs/uk`。
+执行原件：E下`execution/r20-original-driver/`；实验根`/Users/demo/a8`。
 
 ## 2026-10-18T14:11Z 有界最终候选
 
@@ -239,7 +242,7 @@ workspace、时间和唯一指定原生身份；绑定原三客户端adoption及
 两次压力及回归均无真实模型请求或输入操作；不重放r19，不重复旧完整测试。
 本节、SKILL及lessons在上述测试结束后更新，不追称其文档SHA被该批测试覆盖。
 
-证据根E=`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`：
+证据根E=`/private/evidence/item-151557e33ca7`：
 `validation/r19-pack-repair-regression-01/`、`validation/r19-pack-input-pressure-01/`、
 `validation/r19-pack-input-pressure-02/`；脚本位于`preparation/validate-r19-pack-repair.py`、
 `preparation/pressure-r19-pack-inputs.py`及`preparation/pressure-r19-pack-inputs-v2.py`。
@@ -261,7 +264,7 @@ delivery lock”拒绝；13:04仍在处理原回调。后续历史核收或晚�
 追改已发布超时结果。旧模型会话和原controller保留，不将driver退出
 冒充三会话关闭或所有资源已释放。
 
-原报告：`/Users/lzhs/uj/driver/final-report.json`，25,117 bytes，SHA256
+原报告：`/private/evidence/item-edfd0d2f8279.json`，25,117 bytes，SHA256
 `00ddd7b99d3eff1666a798d3777558dc412c7b9e3904a25777d808d9ed8d43e3`。
 独立只读摘要：E下`maintenance/r19-delivery/terminal-readout.json`，SHA256
 `618349e8449bccc960a23532d0da1e578803e4cfe1593f653d570ef08abbb657`。
@@ -299,7 +302,7 @@ PR39实测案例已吸收，但双向咨询未完成。本节原现场诊断不�
 r18 三客户端于12:09:14Z ADOPTED，pilot-01于12:11:40Z启动；两个lane均在
 preflight返回BRIDGE_TEST_UNCONFIRMED，正式Claude业务任务未发送。原driver
 exit2，12:15:45Z发布最终报告：pilot0/3、pairs0/15、业务0/33；旧会话及
-未提交探针保留。原报告 `/Users/lzhs/ui/driver/final-report.json` SHA256：
+未提交探针保留。原报告 `/private/evidence/item-ce8d0ba2f9e4.json` SHA256：
 `37649afa106c2678b15d82f5a771336fd4a95adbb12fa5028c7755d2730d08b9`。
 
 两lane原清理各三次观察均为owned_token_prefix=false、clear_key_count=0；
@@ -315,7 +318,7 @@ recovery及实际materialization共**50/50通过**，6.582秒，零failure/error
 `2abb752d05432ffeece44e47bc53026b441c4468020252f030fbd93c399d2318`。
 这是诊断增强的定向验证，不是新的完整压力通过成绩。
 
-r19冻结v17（相对v16仅两个源码/测试文件变化），新根`/Users/lzhs/uj`；七组
+r19冻结v17（相对v16仅两个源码/测试文件变化），新根`/Users/demo/a7`；七组
 实际controller与14条socket/lock路径完整核验，沿已有全面授权于12:29:16Z
 启动唯一driver。仍为同三会话pilot连续3轮后12warm＋3cold配对，33轮15对；
 启动900秒、单轮1800秒。启动记录不是业务验收，不重放r18。
@@ -441,7 +444,7 @@ bootstrap 在09:28:13.648Z发布，原等待命令09:28:13.765Z成功完成；�
 `execution/r16-original-driver/`。watcher/driver 的原生中断检测已在上述独立完整回归中验证，
 不能用此前1,848项全测覆盖新增代码。
 
-r17 在 `/Users/lzhs/uh` 复用未修改且已全测的冻结 v15 与私有 provider 快照。
+r17 在 `/Users/demo/a6` 复用未修改且已全测的冻结 v15 与私有 provider 快照。
 7组控制器核验通过，沿已有原生全面授权配置完成并启动唯一 driver；
 当时尚待 adoption 和业务证据；后续三客户端已 ADOPTED，pilot-01因上述
 协调锁冲突失败，未进入配对。新进度观察器额外记录 turn_aborted，未热改
@@ -574,7 +577,7 @@ r14 原失败保持：07:44:54.401Z HALTED/FAILED，原 driver exit 2，
 inventory changed 拒绝，原记录没有快照，具体变化字段未知。
 **pilot 0/3、pairs 0/15、closures 0/33**，33 个注册轮次保留；
 INSUFFICIENT_EVIDENCE、measured_runs=0、observed_runs=1、cost UNKNOWN。
-原报告 `/Users/lzhs/ue/driver/final-report.json` SHA256：
+原报告 `/private/evidence/item-60118687f5e9.json` SHA256：
 `69cdff3a23e9b60f2ed150a79d53f146a22cfd1509b0b83f9cbdc6bea5d44301`。
 原 r13 candidate EBADF 仍未归因；新增诊断不是原根因已修复的证明。
 
@@ -614,7 +617,7 @@ r13 原 driver 已 exit 2，06:23:31.336Z HALTED/TIMEOUT；注册截止为
 06:23:21.229Z，未延长。三客户端实际 ADOPTED，Claude B 已完成 source_index
 业务产物，处理 48 个源码文件、4,817 行、194,785 字节。完整业务验收仍为
 **pilot 0/3、pairs 0/15、closures 0/33**，产物和收到 callback 不等于整轮通过。
-原最终报告 `/Users/lzhs/ud/driver/final-report.json` SHA256：
+原最终报告 `/private/evidence/item-2aa8541982a1.json` SHA256：
 `116e6a8d628effb8dc893e05c0f12a3bf757073025b922e9536dbe72f6db3249`。
 
 正式任务原生接收已确认，重试数为零。Claude callback 的完整 native user 于
@@ -666,7 +669,7 @@ r14 外部准备脚本已静态审查，尚未导出或启动客户端。沿用�
 
 r12 已于 05:15:29Z HALTED/FAILED，原 driver exit 2；原报告仍保留全部
 33 个注册轮次，pilot 0/3、pairs 0/15、verified_runs=0、passing_runs=0。
-`/Users/lzhs/uc/driver/final-report.json` SHA256：
+`/private/evidence/item-9898952f6fcc.json` SHA256：
 `193257945d2355e2b87830389f10a0c1686413fe717a727c01685bb9ead66355`。
 
 实际三客户端、自动 hooks、preflight 和 Claude ACK 均已观察到；失败发生在
@@ -676,7 +679,7 @@ r12 已于 05:15:29Z HALTED/FAILED，原 driver exit 2；原报告仍保留全�
 
 当前修复从固定的原 identity gate 认证 supervisor ref 到 UUID/workspace/pane/
 native session/role 的对应关系；callback 绑定已验证 pack。已用 r12 原 gate
-只读核对，成功解析原 `surface:1000021656`，input_operations=0；这不是重放或
+只读核对，成功解析原 `surface:7`，input_operations=0；这不是重放或
 重新验收旧实验。另修未映射 UI ref 被零输入检查误当无关接收者的漏洞，该漏洞
 由离线审计发现，不声称 r12 现场触发。
 
@@ -694,7 +697,7 @@ callback目标绑定及未映射ref零输入判定；v2原ref兼容保持。
 这项离线原证据验证不改变r12终态或已完成轮数。
 
 r13外部准备脚本已独立审查；导出时另核对49个未纳入本轮监测的文件与已验证
-v11原件SHA/bytes一致。已使用独立v12 export及私有根 `/Users/lzhs/ud`，
+v11原件SHA/bytes一致。已使用独立v12 export及私有根 `/Users/demo/a5`，
 沿现有全面授权启动7组、33轮、15对的原注册实验。
 05:49:16Z，pilot原1 Codex＋2 Claude全部ADOPTED；原生readiness、实际自动
 hooks、内核隔离及输入能力分别核验。05:50:44Z发布bootstrap，原Codex已
@@ -710,7 +713,7 @@ pairs 0/15、closures 0/33；没有halt，尚不能宣称真实业务或提效�
 
 v11 已冻结 295 个文件，七组生成控制器已逐字自审；沿用完整回归通过的
 `4b38553` 产品代码。独立 r12 授权配置已成功生成，原 driver 仅启动一次，
-证据为 `execution/r12-original-driver/`，实验根 `/Users/lzhs/uc`。
+证据为 `execution/r12-original-driver/`，实验根 `/Users/demo/a4`。
 
 - 04:53:39Z：原 1 Codex＋2 Claude 全部 ADOPTED，原生 readiness、实际自动
   hooks、内核隔离及输入能力分别核验。04:54:59Z 发布原 bootstrap。
@@ -858,7 +861,7 @@ Claude Code 2.1.170 的原生注册提供 `peerProtocol=1/startedAt`，不再提
 证据：`validation/r8-pressure-and-full/claude-registration-full-01/`、
 `validation/claude-registration-live-01/result.json`、
 `execution/r9-original-driver/result.json`。r9 原报告为
-`/Users/lzhs/u9/driver/final-report.json`；源码修复后的完整业务压力尚未完成。
+`/private/evidence/item-8694852679a5.json`；源码修复后的完整业务压力尚未完成。
 本节在全测完成后更新，文档变化与经过测试的可执行源码分别固定。
 
 用户已全面授权继续全量测试并要求不重复询问。修复后的独立实验沿用该明确授权，
@@ -915,7 +918,7 @@ r8 已经发布 freeze/bootstrap，原 Codex 已读取 bootstrap，随后在
 
 后续只读核实纠正了当前阻断：同一原 Codex 在收到用户“请继续”后，于
 `2026-10-17T20:01:02.433Z` 完成新 turn
-`01a14b6f-018d-79f1-a8f8-f0299c59d086`，终态没有 error。该回合实际执行
+`b020c432-b446-591b-a47c-f8deed01af86`，终态没有 error。该回合实际执行
 `start --run pilot-01` 时被拒绝：`current native supervisor process proof is unresolved`。
 实测父链为工具代理 → 非 managed app-server → 原生 Codex → shell/login。
 原控制器只支持 managed-daemon 身份，因此返回 None。本地缺陷已修复并完成全测；
@@ -927,8 +930,8 @@ r8 已经发布 freeze/bootstrap，原 Codex 已读取 bootstrap，随后在
 ## r8时点的经验会话与论文工作流（历史）
 
 用户指定的经验会话为 workspace
-`6FB20312-9E66-43DB-AF09-92C3B18E1296`、surface
-`A93448E1-E329-493D-9B45-568D5FC0DAD0`。
+`384d35b8-76b9-5185-805e-aa952de98039`、surface
+`4f1ca49d-86d6-55eb-b5da-219dd40aa2b0`。
 已创建询问 `UPGRADE_EXPERIENCE_20261018_R8_01`，并在其既有 maintenance inbox
 提供诊断补充。原生发送尝试因缺少控制 socket 在输入前结束；未粘贴或补键。
 截至本报告，三个指定回件路径均不存在，也未观察到其原生日志消费 marker/SHA。
@@ -971,7 +974,7 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 
 ## 可复核证据
 
-本地证据根：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+本地证据根：`/private/evidence/item-151557e33ca7`。
 以下相对路径均基于该根；原生记录与凭据不纳入公开仓库。
 
 | 证据 | 路径 |
@@ -996,7 +999,7 @@ Word/Zotero 或 NotebookLM，也未声称已经完成这些领域的真实负载
 | 经验询问补充与最新观察 | `maintenance/standalone-caller-v1/diagnosis-file-supplement-02.json`、`maintenance/standalone-caller-v1/request-observation-35.json` |
 | r13原driver与只读进度 | `execution/r13-original-driver/`、`maintenance/r13-progress/observation-0002.json` |
 
-最近已结束实验的最终报告：`/Users/lzhs/uk/driver/final-report.json`。
+最近已结束实验的最终报告：`/private/evidence/item-278586bd0ebe.json`。
 r20已HALTED/TIMEOUT，没有真实提效通过结论；r19及更早报告继续保留。
 进程发现修复全测日志 SHA256：`43d38e5d08c420f1ae2c55d1613ce64abc25f8ce0224625a52dec4e207590a2e`。
 
@@ -1009,3 +1012,10 @@ r20已HALTED/TIMEOUT，没有真实提效通过结论；r19及更早报告继续
 
 复现本地完整回归：`python -B scripts/test_all.py`。本次没有放宽测试内部超时、
 跳过测试或安装共享 MAC。GitHub Actions 与真实活跃客户端采用分别报告。
+
+## Original private-archive fixture hashes
+
+The historical validation above used the original private captures listed below. These SHA256 values are retained only as archive references, not as hashes of the sanitized public fixtures. Privacy replacement does not rerun the historical tests or convert a pending/failed result to a pass.
+
+- `verification/fixtures/claude-default-a-20261018.txt` — original private-archive SHA256 `e512b4961023f38ec5c8f2330699ba50dfbbd69cdb588d903fbc464ca366e983`.
+- `verification/fixtures/claude-default-b-20261018.txt` — original private-archive SHA256 `3231def4788525f486985c5d2ed4e612db59d27af69c3af5abcdcf6992f946c7`.

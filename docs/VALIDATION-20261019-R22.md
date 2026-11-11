@@ -1,10 +1,13 @@
 # r22：真实首轮超时，候选修复与本机压力结果
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 原实验终态记录于 2026-10-19 02:39（Asia/Taipei），后续诊断见下文。原实验已终止：**1 TIMEOUT＋32 MISSING**，
 业务 **0/33**、pilot **0/3**、pairs **0/15**；提效 **INSUFFICIENT_EVIDENCE**，成本 UNKNOWN。
 本机优化及回归已提交，不构成全量真实压力通过。连续 `/goal` 通信仍未验证。
 r21 保持原终态：1 FAILED＋32 MISSING，业务 0/33、pilot 0/3、pairs 0/15。
-r22 使用独立根 `/Users/lzhs/um` 和冻结 v20；不修改 r21 控制器、原输入或失败结果。
+r22 使用独立根 `/Users/demo/a9` 和冻结 v20；不修改 r21 控制器、原输入或失败结果。
 
 ## 本次变更
 
@@ -159,10 +162,10 @@ reader 仅用于核验原字节，不能作为新的 live 身份授权。
 
 ## Provider 容量核验
 
-当前默认 Claude 端点 `https://k40.shengqainbang.cn` 的单次只读 `/v1/usage` 返回
+当前默认 Claude 端点 `https://provider.example.invalid` 的单次只读 `/v1/usage` 返回
 HTTP 200、`isValid=true`。这是用量服务接受 key 的证据，不是两个模型流可同时完成
 的证据。返回 `.usage.rpm=1` 是用量，不能解释为 RPM 上限；套餐名称不是权威到期
-字段。返回的订阅 expiry 为 `2026-10-19T11:17:24.559722+08:00`。接口没有提供
+字段。返回的订阅 expiry 为 `[private subscription-expiry field retained in archive]`。接口没有提供
 并发上限或空闲槽数，因此当时实际并发容量仍 UNKNOWN。没有修改 key、渠道或设置。
 
 03:00–03:01 又执行一次预先记录的真实并发容量核验：两个原始流式请求同时发出，
@@ -179,7 +182,7 @@ HTTP 200 写成模型成功，也不能把它叫作两条 HTTP 429 或无效 key
 
 ## 原证据
 
-证据根：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+证据根：`/private/evidence/item-151557e33ca7`。
 
 - `validation/r22-body-read-regression-01/result.json`，SHA256 `c4dd90f9fc35be6fa5651afd5ebb5d488fd22b46a50f8b4446ee2f190fe47234`。
 - `validation/r22-generated-reader-pressure-01/result.json`，SHA256 `050bf0d0b5028eaa770f43de8525bd878f29dcce0913d7d954b613af21394586`。
@@ -202,16 +205,16 @@ HTTP 200 写成模型成功，也不能把它叫作两条 HTTP 429 或无效 key
 - `maintenance/r22-development/runtime-validation-dedup-20261019/RESULT.md`、`benchmark-results.json`、`source-pins.json`：真实注册测试、八次局部计时、36 个源码 pin。
 - `maintenance/r22-provider-capacity-01/result.json`：单次只读用量接口结果，非模型并发证据。
 - `maintenance/r22-provider-dual-stream-01/result.json`、`A-response.bin` 与 `B-response.bin`：两条 HTTP 200 内的实际并发拒绝，原请求、意图和逐事件时间分别保存。
-- `maintenance/r22-development/surface40-latency-capacity-exchange-01/`：新实测请求、九项证据 pin、301 文件通信 release 核验，以及原生通知的零输入拒绝。
+- `maintenance/r22-development/shared-maintainer-latency-capacity-exchange-01/`：新实测请求、九项证据 pin、301 文件通信 release 核验，以及原生通知的零输入拒绝。
 
-配置：`/Users/lzhs/um/driver/config.json`，SHA256 `5a42d6d03a7b6f895ef0d44e32e6edac8ca37ae85e1733d49082cd06fafd4ccf`。
+配置：`/private/evidence/item-4fb4de59205a.json`，SHA256 `5a42d6d03a7b6f895ef0d44e32e6edac8ca37ae85e1733d49082cd06fafd4ccf`。
 
-共享 MAC 和论文精炼助手仍由指定 surface40 统一管理。本实验仅修改 upgrade，
+共享 MAC 和论文精炼助手仍由指定 shared-maintainer 统一管理。本实验仅修改 upgrade，
 通过既有 maintenance 文件 inbox 交换实测发现。归因/UUID/限流发现已发布为
 `upgrade42-r22-attribution-provider-findings-20261019.json`；后续延迟、局部校验优化与
 HTTP 200 流内拒绝证据已另行发布为 `upgrade42-r22-latency-capacity-findings-20261019.json`。
 新通知沿 MAC 0.4.47 的授权同 pane 原生路径执行一次，在 metadata 阶段因
-`/Users/lzhs/.codex/app-server-control/app-server-control.sock` 不存在而返回
+`/Users/example/.codex/app-server-control/app-server-control.sock` 不存在而返回
 `NO_INPUT`，input_operations=0。保留原次且不重发；文件发布不证明对方已读。
 
 ## 尚未完成的交付条件

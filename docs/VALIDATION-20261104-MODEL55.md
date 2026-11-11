@@ -1,5 +1,8 @@
 # November 4 continuation: code verified, native experiment pending
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 The objective remains reliable one-Codex/two-Claude collaboration in all three
 availability modes, followed by separate upgrade-vs-MAC and JEV off/on efficiency
 comparisons. Current implementation is `CODEX_SOLO`, review `solo_self_review`.
@@ -28,7 +31,7 @@ on that failing job. Skips are not passes.
 
 The original `adc70616` full local/CI evidence and frozen source archive remain
 attached to that candidate. A detached clean checkout of the new candidate is
-`/Users/lzhs/projects/multi-agent-collaboration-upgrade-model55-20261104`.
+`/private/evidence/item-59eef3ee1b47`.
 
 ## Explicit model amendment and bounded observations
 
@@ -95,7 +98,7 @@ upgrade-vs-MAC requirements remain open. The original missed deadline is retaine
 ## Local evidence
 
 ROOT evidence directory:
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1`.
+`/private/evidence/item-c8e3756e2d85`.
 
 - `SUCCESSOR-01a1a1e3-20261104-CONTINUE-v2`: 76-check result, 48-check result,
   failed CI log, S02/S03 responses and original S40 send/reconcile evidence.

@@ -1,9 +1,23 @@
 # Publication privacy
 
-The current tree replaces the private transcript bodies in `verification/fixtures/claude-c2596-screen-20261008.txt` and `verification/fixtures/claude-c41-screen-20261008.txt` with minimal synthetic terminal layouts. The replacements retain only parser-relevant composer, footer and activity shapes, with neutral project and branch labels. The fixture README now states this scope explicitly; an earlier synthetic-fixture description did not accurately describe those transcript bodies.
+The public integration uses ordinary forward commits. It removes identified personal-machine paths and a provider endpoint from incoming evidence documents, provenance metadata, a module description and test configuration. External test dependencies use optional `MAC_TEST_*` variables with neutral defaults; they do not embed the maintainer's private directory structure. See [test dependencies](test-dependencies.md).
 
-This is a current-tree cleanup. Git history has not been rewritten, so earlier commits may still contain the removed private content. Neither replacing these files nor passing their parser tests establishes that the published history has been cleared. No force-push is part of this change.
+The two previously published synthetic fixtures remain unchanged:
 
-The reported historical Gitleaks scan produced one finding in `scripts/fixtures/mac-0.4.58/executor_reask_identity.py` for a protocol schema identifier (`executor-reply-consumer-proof-v1`). It is not an authentication secret. This finding is a false positive, but a secret scanner does not establish that history is free of personal paths, transcript text or other private context. The schema finding and the retained-history privacy issue are separate conclusions.
+- `verification/fixtures/claude-c2596-screen-20261008.txt`
+- `verification/fixtures/claude-c41-screen-20261008.txt`
 
-Validation for this cleanup includes 24 tests in the two targeted Claude footer parser modules and all 1,290 tests in the full offline suite. They verify synthetic layouts and other offline behavior without sending input to a live terminal. This note makes no claim of a comprehensive privacy audit of every file or historical commit.
+Four additional terminal fixtures now contain synthetic public layouts:
+
+- `verification/fixtures/claude-default-a-20261018.txt`
+- `verification/fixtures/claude-default-b-20261018.txt`
+- `verification/fixtures/claude-busy-goal-split-a-20261026.txt`
+- `verification/fixtures/claude-busy-goal-split-b-20261026.txt`
+
+Their parser-relevant composer, footer, activity and goal shapes are retained. Hash assertions refer to the new synthetic bytes; historical hashes remain archive references and are not presented as hashes of the transformed files. Missing external test dependencies remain explicit skips. The stage-path stress input retains the original 68-byte length.
+
+Validation is scoped to the affected parser, dependency-selection, materialization and stage tests. The earlier two-fixture cleanup passed 24 parser tests and its historical 1,290-test offline suite; those old counts do not describe the integrated runtime. Current validation results must be tied to their actual commit. No live terminal input or model request is established by these checks.
+
+Git history has not been rewritten. Older commits and retained branches may still expose removed content. Current-tree replacements and passing tests do not establish deletion of historical copies. The separate whole-history publication decision remains pending; no force-push is part of this integration.
+
+Known-pattern inspection is limited to the identified material. It does not prove absence of every private narrative, credential or personal identifier. The earlier historical Gitleaks finding for the protocol identifier `executor-reply-consumer-proof-v1` was a false positive, not an authentication secret; that conclusion does not certify either this tree or all history.

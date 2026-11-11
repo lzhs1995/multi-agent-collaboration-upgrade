@@ -1,5 +1,8 @@
 # Claude failures before readiness
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 A Claude startup can end with a native API error before executing its readiness
 probe. Previously the inspector kept reporting missing readiness and the Driver
 spent the rest of the original startup window waiting. The new controller
@@ -38,7 +41,7 @@ source pins and result records. The previous 3,108-test result belongs to
 `52efd3c`; neither candidate's code checks establish native workflow efficiency.
 
 Original evidence:
-`/Users/lzhs/uz/state/B/recovery-20261024/r89-u22-held-verification-v1/R657-ROOT-CLAUDE-STARTUP-FAILURE-REPAIR-v1/`.
+`/private/evidence/item-634898f15c0d/`.
 
 This repair reduces time wasted after a proven startup failure. It does not
 restore provider capacity or establish workflow efficiency.

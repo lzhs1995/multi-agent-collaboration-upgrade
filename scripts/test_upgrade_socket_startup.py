@@ -19,8 +19,7 @@ import upgrade_live_entry as entry
 
 SOURCE = Path.home() / '.local/share/multi-agent-collaboration/releases/0.4.34-d333557fb498/source'
 WRAPPERS = Path('/Applications/cmux.app/Contents/Resources/bin')
-BINARY = Path('/Users/lzhs/Documents/cnm/tasks/06_Mintransition/verification/'
-    'ccc-collaboration-efficiency-20261004-01/post-submit10/native-package194/package/bin/codex')
+BINARY = Path(os.environ.get("MAC_TEST_CODEX_BINARY") or "/opt/collaboration/test-fixtures/codex")
 
 
 @unittest.skipUnless(sys.platform == 'darwin' and SOURCE.is_dir() and BINARY.is_file(),

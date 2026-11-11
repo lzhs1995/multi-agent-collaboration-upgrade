@@ -1,5 +1,8 @@
 # Official Codex startup: observed gaps and next implementation boundary
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 Status: the original j7 pilot ended with startup TIMEOUT on 2026-11-04 at
 19:10:07 UTC. One permit and one release were consumed. Business acceptance
 remains 0/33 and paired acceptance 0/15. None of the changes in this worktree
@@ -196,7 +199,7 @@ opposite-direction ID collisions, refusal before write, and failure cleanup.
 The controller still supplies genuine enrollment and durable send authority.
 
 The first separately scoped real diagnostic used the same official binary and
-the unchanged agentrouter-a / 3465 / gpt-6-astra route. Official server startup,
+the unchanged example-codex-route / 3465 / gpt-6-astra route. Official server startup,
 experimental initialize, thread/start with dynamicTools and turn/start succeeded.
 The upstream gateway then returned HTTP 401 "unauthorized client detected";
 no dynamic operation occurred, no native tool result or model consumption passed.
@@ -210,8 +213,8 @@ separate local regression evidence.
 
 ## First successful official TUI and dynamic-operation round trip
 
-A distinct diagnostic (`native-dynamic-smoke-v5`, private root `/Users/lzhs/d5`)
-passed on the same official 0.164.0 binary, agentrouter-a gateway on port 3465,
+A distinct diagnostic (`native-dynamic-smoke-v5`, private root `/Users/demo/a0`)
+passed on the same official 0.164.0 binary, example-codex-route gateway on port 3465,
 and gpt-6-astra. The actual official remote TUI initialized the new server first;
 the helper kept its own `cmux_native_input` identity. The new thread's observed
 originator was `codex-tui`. No header override or provider configuration change
@@ -224,7 +227,7 @@ The three diagnostic processes were stopped after the result; the server exited
 normally. The maintenance ROOT, S40 and original Claude sessions were unchanged.
 
 The accepted record is
-`/Users/lzhs/.local/state/codex-toolchain/unification-20261104/official-next-preparation-20261105/j7-startup-diagnosis/ROOT-NATIVE-DYNAMIC-V5-ACCEPTANCE.json`.
+`/private/evidence/item-4c4e5592b857.json`.
 It pins the original user/assistant journal slices, single server request and
 response intent, completion and TUI bytes. This is one bounded capability
 diagnostic; it does not satisfy the 33 business items or 15 paired comparisons.

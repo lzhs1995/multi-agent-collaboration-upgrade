@@ -28,7 +28,7 @@ class LiveCampaignValidationTests(unittest.TestCase):
     publish_fixture = live_fixtures.LiveControlTests.publish_fixture
 
     def setUp(self):
-        # /private/tmp resolves one byte longer than /Users/lzhs; the registered
+        # Keep the temporary root under the real home directory; the registered
         # A1 layout also needs to fit Claude's 44-byte private temp path limit.
         self.tmp = tempfile.TemporaryDirectory(prefix="", dir=Path.home())
         self.addCleanup(self.tmp.cleanup)

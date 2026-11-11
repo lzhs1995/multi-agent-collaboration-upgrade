@@ -1,5 +1,8 @@
 # R28：编排推进与原生压力验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 R28 已于 2026-10-19 09:33:19 UTC 终态 TIMEOUT / INSUFFICIENT_EVIDENCE，耗时 905.064 秒。第一组 1 Codex＋2 Claude 实际启动，Codex probe/自动 hook 已观察，双 Claude 2.1.170 仅有 Goal SET，没有 assistant/tool 或启动 probe。pilot 0/3、业务 0/33、配对 0/15，真实提效未证明；33轮、15对及192通信槽位全部保留。用户授权升级后，独立 R29 使用 2.1.303 和同一 v24 控制器继续有界验证，见[版本验证](CLAUDE-VERSION-VALIDATION.md)。R28 不重启。
 
 ## 目标和可比较条件
@@ -37,19 +40,19 @@ R28 driver/watchdog 均 exit 2，无存活 driver 子进程；`clients_terminate
 
 [问题台账](COLLABORATION-ISSUE-LEDGER.md) 重建 41 类，固定 1045 文件库存与 79 个分类来源；另对 966 个文件完成机器扫描，43 份报告全文复核，923 份未全文复核，不能声称逐件人工审阅完成。[社区矩阵](COMMUNITY-ADOPTION-20261019.md) 覆盖 15 条线索及四仓补证，区分固定源码、间接支持与正文/项目身份缺失。
 
-surface40 继续独占共享 MAC 与论文精炼助手。本轮询问已发布到其维护 inbox，但两种直接输入入口被 WORKSPACE_SCOPE_DENIED 拒绝，没有实际消息输入。尚无本轮回复；文件发布不算收到、已读或合并。upgrade 私有实验不等待共享层变更。
+shared-maintainer 继续独占共享 MAC 与论文精炼助手。本轮询问已发布到其维护 inbox，但两种直接输入入口被 WORKSPACE_SCOPE_DENIED 拒绝，没有实际消息输入。尚无本轮回复；文件发布不算收到、已读或合并。upgrade 私有实验不等待共享层变更。
 
 ## 原始证据
 
-- [本轮状态](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-implementation/checkpoint.json)
-- [完整回归](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-implementation/full-regression.json)
-- [原生 driver 原日志](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-original-driver/stdout.jsonl)
-- [R28 原次终态](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-original-driver/result.json)
-- [固定导出](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/source-exports/resume-20261019-live-v24/export.json)
-- [锁压力结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-implementation/multiprocess-lock-pressure/result.json)
-- [wrapper 时钟反例](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r28-implementation/wrapper-deadline-validation.json)
-- [准备与启动独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-plan-execution/script-review.md)
-- [脚本固定清单](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/preparation/r28-script-manifest.json)
+- [本轮状态](/private/evidence/item-d56d0a1224cd.json)
+- [完整回归](/private/evidence/item-4c3f511168e0.json)
+- [原生 driver 原日志](/private/evidence/item-432e279eec12.jsonl)
+- [R28 原次终态](/private/evidence/item-65c7e6fefb95.json)
+- [固定导出](/private/evidence/item-5f649958eeaa.json)
+- [锁压力结果](/private/evidence/item-cb9832ade2dc.json)
+- [wrapper 时钟反例](/private/evidence/item-5704f46a4bb6.json)
+- [准备与启动独审](/private/evidence/item-ff51a4e6dc9f.md)
+- [脚本固定清单](/private/evidence/item-021b8fc44dac.json)
 
 
 ## 最终补记：9a09f32 回归与 R29 终态

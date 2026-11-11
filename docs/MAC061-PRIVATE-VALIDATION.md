@@ -1,10 +1,13 @@
 # MAC 0.4.61 私有入口兼容验证
 
-2026-10-22。这是原三态协作任务的有限实机前置修复，不是新增实验、共享安装或现场验收。原 surface40 仍是共享 MAC / thesis-refiner 唯一整合者；原会话、模型、控制器、输入原次和 R33 STOP 保留。
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
+2026-10-22。这是原三态协作任务的有限实机前置修复，不是新增实验、共享安装或现场验收。原 shared-maintainer 仍是共享 MAC / thesis-refiner 唯一整合者；原会话、模型、控制器、输入原次和 R33 STOP 保留。
 
 ## 固定来源与最小变更
 
-完整来源：`/Users/lzhs/.local/share/multi-agent-collaboration/releases/0.4.61-d14ae7c2b757/source`。351 件 release 成员的原字节与 executable mode 已逐件核验，tree SHA256 `d14ae7c2b757c30b9fab21bd4d9556b43f6015e2e481be4c91ea44a6e7486bb6`；SKILL SHA256 `b8ac049b559a1531dede6e2b6d1674c82d68b6cf439d515d10fb64e6750bc5ea`。
+完整来源：`/Users/example/.local/share/multi-agent-collaboration/releases/0.4.61-d14ae7c2b757/source`。351 件 release 成员的原字节与 executable mode 已逐件核验，tree SHA256 `d14ae7c2b757c30b9fab21bd4d9556b43f6015e2e481be4c91ea44a6e7486bb6`；SKILL SHA256 `b8ac049b559a1531dede6e2b6d1674c82d68b6cf439d515d10fb64e6750bc5ea`。
 
 原 `cmux_native_delivery.py` 36048B，SHA256 `104a3242a3c188106dbcc8abe4d018bf43d12f8c62c21c0a1f40f636b601a955`。新独立 MIT fixture 保持原字节，旧 .58 fixtures 不变。fixture 不是完整 release，不能拿它初始化实验。
 
@@ -16,7 +19,7 @@
 
 ## 实际检查与失败保留
 
-证据目录：`/Users/lzhs/projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021`。以下检查使用 Python 3.14.7；没有模型请求或真实业务输入。
+证据目录：`/private/evidence/item-bf941e9491bf`。以下检查使用 Python 3.14.7；没有模型请求或真实业务输入。
 
 | 检查 | 结果 / 范围 |
 | --- | --- |

@@ -1,5 +1,8 @@
 # r23：准备完成，恢复后的双路容量核验仍未通过
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 截至 2026-10-19 10:55（Asia/Taipei），**r23 全量实验尚未启动**。
 7 组、33 轮、15 对、192 条普通消息已准备并绑定既有全面授权。
 连续 `/goal`、业务正确性与配对协作提效仍未通过；旧 r22 保持
@@ -8,7 +11,7 @@
 ## 已完成的准备
 
 - 冻结提交 `4de3df97d8af58a72de5e1559fe52d81cb357dd6`，323 个文件；
-  新根 `/Users/lzhs/un`。保留已核验私有基线及全部旧会话、控制器和失败。
+  新根 `/Users/demo/b0`。保留已核验私有基线及全部旧会话、控制器和失败。
 - 七组实际生成控制器已核验，包含正文读取、metrics v3 原始消息归因、
   配置生成及重复校验优化；既有测试结果不计作本次新测试。
 - 14 条限定 socket/lock 路径全部不存在，尚无 driver 配置、启动或输入。
@@ -65,7 +68,7 @@
 
 本机重新核验 71 个引用文件、完整源码树和语料树；14 条端点路径均不存在，
 driver 未配置或启动，磁盘可用约 19.0 GB。两份原 Claude journal 无新增记录，
-surface40 原三份回复仍缺失。新报告为本次进展；真实协作验收仍未完成。
+shared-maintainer 原三份回复仍缺失。新报告为本次进展；真实协作验收仍未完成。
 
 ## 当前边界与后续执行
 
@@ -76,13 +79,13 @@ surface40 原三份回复仍缺失。新报告为本次进展；真实协作验�
 切换模型、延长时限、替换失败客户端或补样。
 两小时是启动后的整体上限，不能承诺提供方恢复时间或最终通过时间。
 
-新事实已发布到 surface40 原维护文件 inbox；未重发原 native 通知，
-文件发布不证明已读。共享 MAC/论文精炼助手由 surface40 管理，
+新事实已发布到 shared-maintainer 原维护文件 inbox；未重发原 native 通知，
+文件发布不证明已读。共享 MAC/论文精炼助手由 shared-maintainer 管理，
 其新版本不热换入冻结实验。原经验请求继续使用原回复路径。
 
 ## 证据
 
-根目录：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+根目录：`/private/evidence/item-151557e33ca7`。
 
 - `authorization/r23-20261019/offline-readiness.json`：7 组准备及既有授权。
 - `preparation/r23-candidate/REVIEW-AND-NEXT.md`：完整冻结计划及 14 条路径。
@@ -91,7 +94,7 @@ surface40 原三份回复仍缺失。新报告为本次进展；真实协作验�
 - `maintenance/r23-provider-dual-stream-01/`：两路原请求、意图、完整响应及结果。
 - `maintenance/r23-native-recovery-01/closeout-readback.json`：新诊断、66 个旧文件
   pin、配置不变、14 路径不存在、尚未启动的读回核验。
-- `maintenance/r23-native-recovery-01/surface40-file-publication.json`：指定 inbox
+- `maintenance/r23-native-recovery-01/shared-maintainer-file-publication.json`：指定 inbox
   发布及完整读回；对方阅读仍未确认。
 - `maintenance/r23-provider-capacity-02/`：10:48 只读 usage 查询及完整结果。
 - `maintenance/r23-provider-dual-stream-02/`：10:51 新双路原请求、HTTP 429 正文和结果。

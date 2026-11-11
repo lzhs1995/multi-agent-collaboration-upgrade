@@ -1,5 +1,8 @@
 # Opt-in whole-task native child accounting
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-21. This is private experimental code, not a shared MAC release or a
 claim that an active native client has loaded the guard. The reviewed
 `624d11a36c4a4ef5426802a88e25d074a114febe` continuity candidate is separate
@@ -181,7 +184,7 @@ enforcement or the user's actual three-mode collaboration.
 ## Historical validation state, not live acceptance
 
 Working-source evidence is under
-`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/`.
+`/private/evidence/item-4ce3c79f206e/`.
 All RED logs are retained. Latest small public-boundary run
 `child-terminal-tools-green1` passed29 tests, zero errors/failures/skips,
 1.151seconds unittest/1.613851seconds wrapper, ending

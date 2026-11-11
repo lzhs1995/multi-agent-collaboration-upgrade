@@ -1,5 +1,8 @@
 # r27：恢复重试在启动窗口超时
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 原 runner 已于 2026-10-19 **06:32:10.773952Z（台北 14:32:10）**结束，
 退出码 **2**；driver 因首组 startup/bootstrap 超过原 900 秒窗口而
 `HALTED / TIMEOUT`，总运行 909.432 秒。首组 1 Codex＋2 Claude 已启动，
@@ -31,7 +34,7 @@ Driver、watchdog 和 runner 均退出 2。Watchdog 在 06:32:10.770961Z
 - 本轮实际 watchdog deadline：06:46:12.915788Z；总 CAP 仍为 06:47:01.737033Z。
 - 启动和 bootstrap 原 900 秒上限于 06:32:09.766347Z 触发 TIMEOUT，未延长。
 - 原 runner 工具 62236 已收取退出；保留全部旧会话、控制器、原输入、失败和缺失分母。
-- 原配置根 `/Users/lzhs/ur`；未经原 adoption 核验，不发送业务或另起替代客户端。
+- 原配置根 `/Users/demo/b3`；未经原 adoption 核验，不发送业务或另起替代客户端。
 
 候选使用提交 `b42923dd9e2d7447c1fb4e322ca4ed46ca92fc52`，冻结为
 `resume-20261019-live-v23`。独立核查通过 334 份冻结源码、1869 份生成
@@ -97,14 +100,14 @@ Goal SET、流首块、后续助手输出、probe、自动 hooks、原生接收�
 
 ## 原始证据
 
-证据根 `/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`：
+证据根 `/private/evidence/item-151557e33ca7`：
 
 - `preparation/r27-candidate/candidate.json`，SHA `16968f6889875a7c660254c9848284f35f8bed4e58bd8ab1fda9e803971474a0`。
 - `maintenance/r25-driver-goal-audit/r27-actual-candidate-audit.json`，SHA `0db81b0c262dcf2bfe416a44bdb4686702b74cccb2a2c49e6a1e3c81fa71ff94`。
 - `authorization/r27-20261019/configuration-result.json`，SHA `2a34923e917ba3d85a458b5b5e4c183285eb9a8296d449842d959da3398d6934`。
 - `execution/r27-original-driver/intent.json` 和 `stdout.jsonl`：唯一原调用和逐步结果。
 - `execution/r27-original-driver/result.json`，SHA `483c78a20c2822f734164afc5340280ef3c61d35e99fbfb1f61742f84e79f923`：原运行终态。
-- `/Users/lzhs/ur/driver/final-report.json`，SHA `694c2014ec7356e0ec4a4e6a3db8bd59604c7fe8981ed094434d50c1ef8df97f`：完整原分母报告。
+- `/private/evidence/item-2cb2eb9edc06.json`，SHA `694c2014ec7356e0ec4a4e6a3db8bd59604c7fe8981ed094434d50c1ef8df97f`：完整原分母报告。
 - `maintenance/r25-driver-goal-audit/r27-business-observation/20261019T063231.574745Z/checkpoint.json`，SHA `afa96787c4fdfc95314912674fdef1fea726cdc9c9e73d22d4d298dc79da0baa`：独立终态重算，input/runtime writes 均为 0。
 - `maintenance/r27-goal-audit/STARTUP-DIAGNOSTIC-062240.json`，SHA `b19453e8e792ef30da17647a289acb250c54d826e1803a9aaeb8c33618820125`。
 - `maintenance/r27-goal-audit/STARTUP-READOUT-062240.md`，SHA `ac9a942a4870fa71426a4089381b4ce952d8c2d010482bf2a1c6d94b64350f75`。
@@ -112,8 +115,8 @@ Goal SET、流首块、后续助手输出、probe、自动 hooks、原生接收�
 - `maintenance/r27-goal-audit/TERMINAL-OBSERVATION-063725.json`，SHA `afc2b3acbbe94696acf26568caf335aa43db244b38ccc46acf9ba2d6a4e94546`：原 runner 结束后的同身份、同前缀原生日志核收。
 - `maintenance/r27-goal-audit/TERMINAL-DEBUG-TAIL-063725.json`，SHA `8bd310d0faf9806c421277456b333c7a48ea3b15fb640335a7df7325bba1c0fa`：同一固定 EOF 内的新增 debug 内容，未延长观察。
 - `maintenance/r26-goal-repair/full-regression.json`：唯一完整回归结果。
-- `maintenance/r27-goal-run/publication.json`：surface40 既有收件箱发布记录；发布不证明已读。
-- `maintenance/r27-goal-run/terminal-publication.json`，SHA `456ce7dd9291350152ea84f99004a69a9ad545187ffefc6ee39a30e9aa97ada4`：06:38:57Z 向同一 surface40 收件箱发布终态；截至此时原约定回复文件仍不存在。
+- `maintenance/r27-goal-run/publication.json`：shared-maintainer 既有收件箱发布记录；发布不证明已读。
+- `maintenance/r27-goal-run/terminal-publication.json`，SHA `456ce7dd9291350152ea84f99004a69a9ad545187ffefc6ee39a30e9aa97ada4`：06:38:57Z 向同一 shared-maintainer 收件箱发布终态；截至此时原约定回复文件仍不存在。
 
 本轮已终结，不重放原输入、不补样，也不自动启动 r28。尚缺双 Claude
 原生探针成功后的整套业务、通信、连续 Goal 及效率证据。现有日志不足以

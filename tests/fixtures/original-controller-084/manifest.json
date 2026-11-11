@@ -1,7 +1,7 @@
 {
   "schema": "original-controller-test-source-v1",
   "release": "0.4.84-387ccf207a86",
-  "original_source": "/Users/lzhs/Documents/cnm/tasks/02_Word_review/handoff/collaboration-maintenance-context-5994-20261011-v1/successor28-from6105-20261012-v1/continuation-01a13480-20261013-v1/maintenance0435-integration-20261015-v1/surface40-execution-20261021-v202/WORD0483-DISK-PREINPUT-v226/0.4.84-387ccf207a86/source",
+  "original_source": "/opt/collaboration/0.4.84/source",
   "purpose": "Exact original reader/parser bytes for offline tests only. Not an installable controller.",
   "files": {
     "scripts/cmux_confirmation.py": {

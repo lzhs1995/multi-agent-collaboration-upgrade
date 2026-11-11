@@ -260,10 +260,10 @@ print("PRIVATE_TEMP_CHILD_PASS")
 
     @unittest.skipUnless(sys.platform == "darwin" and SANDBOX.exists()
         and Path("/Applications/cmux.app/Contents/Resources/bin/cmux-claude-wrapper").is_file()
-        and Path("/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node").is_file(),
+        and Path(os.environ.get("MAC_TEST_NODE") or "/opt/collaboration/test-fixtures/node").is_file(),
         "requires pinned local cmux, Node and Seatbelt")
     def test_real_wrapper_merge_with_pinned_node_preserves_both_hook_sources(self):
-        node = Path("/Users/lzhs/.nvm/versions/node/v24.16.0/bin/node")
+        node = Path(os.environ.get("MAC_TEST_NODE") or "/opt/collaboration/test-fixtures/node")
         self.paths["tmp"].mkdir(mode=0o700)
         base = prepare_client_temp(self.paths, "claude_a")
         original = Path("/Applications/cmux.app/Contents/Resources/bin/cmux-claude-wrapper").read_bytes()

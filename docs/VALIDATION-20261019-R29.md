@@ -1,5 +1,8 @@
 # R29 最终交付：Claude 303 已采用，真实提效未证明
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19。**本轮原生实验已结束，结论为 TIMEOUT / INSUFFICIENT_EVIDENCE。** 不再把它描述为持续进行的全量压力测试，也不以离线测试或启动成功替代真实业务完成。
 
 ## 与任务初衷的对应
@@ -33,7 +36,7 @@ driver 与 watchdog 均 exit 2，无存活 driver 子进程。7 个停止输入�
 
 官方 2.1.303 的 manifest、SHA256、版本及 strict codesign 已验证，三个 CLI 入口均实际输出 2.1.303。旧二进制、CCC launcher、旧会话与配置保留；采用官方原生安装，未迁移 Homebrew cask 元数据。详见 [版本验证](CLAUDE-VERSION-VALIDATION.md)。
 
-R29 两路实际进程及原生日志均为 2.1.303。后续[原生诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/native-diagnosis/report.md)确认，两路主任务各三次 `resultLen=0` 原生回合结束、各三条原生 continuation 提示，主客户端可见输出为空。B 后台 `away_summary` 曾收到 assistant 并成功结束 `output=43`，不能写成所有请求均无输出。Codex probe 和自动 hook 已观察，双 Claude 未达到 ready。
+R29 两路实际进程及原生日志均为 2.1.303。后续[原生诊断](/private/evidence/item-4dce76a0e4c8.md)确认，两路主任务各三次 `resultLen=0` 原生回合结束、各三条原生 continuation 提示，主客户端可见输出为空。B 后台 `away_summary` 曾收到 assistant 并成功结束 `output=43`，不能写成所有请求均无输出。Codex probe 和自动 hook 已观察，双 Claude 未达到 ready。
 
 debug 请求入口计数为主任务 A7/B6、Goal `hook_prompt` A5/B3、`away_summary` A2/B3，含重试/fallback，不是唯一request ID；主journal各六条 `api-request` 不是全部API活动。主任务/后台请求型号呈现 `claude-opus-5-5[1m]`，Goal为 `claude-opus-5-5`；字符串及后缀均不证明后端实际型号或有效上下文。
 
@@ -45,7 +48,7 @@ debug 请求入口计数为主任务 A7/B6、Goal `hook_prompt` A5/B3、`away_su
 
 官方后续版本修过 Goal 恢复/Stop hook，2.1.280 正式支持 Opus 5.5，因此从 170 升级有依据。但某项 290 loop 修复已在 293 撤回；版本发布说明、Goal SET 或退避提示均不能证明 `/goal` 稳定性。本轮也不是独立 `/loop` 长期验证。两个版本顺序运行且服务状态等条件不同，不能得出单变量版本因果结论。
 
-随后[观察器候选修复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)已覆盖新构造原生FetchSession，区分安装与实际拦截，并保留 `rate_limit_exceeded` 及可见文本计数。**47/47 Node、本机固定303内嵌Bun的4×256并发loopback流通过**；四轮global/session × reader/iterator共1024流、1048576个delta，每轮新观察上下文。候选SHA `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。实际二进制只运行隔离 `--version` 加本地fixture；没有原生业务请求或效率样本。已有session/缓存构造器未覆盖、开销未校准、类别仍UNKNOWN；未读/截断/预消费不能据text=false判空。旧控制器与结果未修改，后续须验证新客户端实际加载和业务覆盖。
+随后[观察器候选修复](/private/evidence/item-dce7ddd10d41.md)已覆盖新构造原生FetchSession，区分安装与实际拦截，并保留 `rate_limit_exceeded` 及可见文本计数。**47/47 Node、本机固定303内嵌Bun的4×256并发loopback流通过**；四轮global/session × reader/iterator共1024流、1048576个delta，每轮新观察上下文。候选SHA `f698017e8bd438074baacf584d65b0b8602705aee5c4d15921d61e9595453ba9`。实际二进制只运行隔离 `--version` 加本地fixture；没有原生业务请求或效率样本。已有session/缓存构造器未覆盖、开销未校准、类别仍UNKNOWN；未读/截断/预消费不能据text=false判空。旧控制器与结果未修改，后续须验证新客户端实际加载和业务覆盖。
 
 ## 实现、组件和跨平台验证
 
@@ -68,29 +71,29 @@ debug 请求入口计数为主任务 A7/B6、Goal `hook_prompt` A5/B3、`away_su
 
 组件压力完成 24 进程、7200 次 reserve、31200 次 release 检查、2400/2400 独立成功；冲突双 owner、registry_busy、异常和历史丢失均为 0。该结果仅证明受测组件，不替代原生协作结果。
 
-## surface40 与社区建议
+## shared-maintainer 与社区建议
 
 [问题台账](COLLABORATION-ISSUE-LEDGER.md) 已列 41 类问题及来源、owner 处置、upgrade 落点和待测边界。库存 1045 个文件；补扫 966，其中 43 份全文复核、923 份未全文复核，不能称事无巨细的人工审核已经完成。
 
-[社区矩阵](COMMUNITY-ADOPTION-20261019.md) 已对 15 条线索逐项区分源码支持、采用决定和缺失证据。采用任务四字段、依赖/尝试分层、持久状态补查、单写者/集成验收、有界独审等机制；不采信未经核验的成本节省，不把超时上限误读成最低等待。较早9机制映射为5个离线限定、2个部分覆盖、2个精确场景未测；随后[五项实际API组合测试](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/community-gaps/RESULTS.md)全部通过，12.909秒、零failure/error/skip，补测空历史/断链、旧owner释放和旧candidate隔离、callback与local结果共同ready、无新事件的持久backlog发现。没有修改实现或重跑full/CI，也没有运行模型/第三方软件。当前无ring cursor、generation watcher或统一async select，这些字面场景不以本项目API测试冒充覆盖；显式foreground发现不等于唤醒空闲模型。
+[社区矩阵](COMMUNITY-ADOPTION-20261019.md) 已对 15 条线索逐项区分源码支持、采用决定和缺失证据。采用任务四字段、依赖/尝试分层、持久状态补查、单写者/集成验收、有界独审等机制；不采信未经核验的成本节省，不把超时上限误读成最低等待。较早9机制映射为5个离线限定、2个部分覆盖、2个精确场景未测；随后[五项实际API组合测试](/private/evidence/item-c5a140833448.md)全部通过，12.909秒、零failure/error/skip，补测空历史/断链、旧owner释放和旧candidate隔离、callback与local结果共同ready、无新事件的持久backlog发现。没有修改实现或重跑full/CI，也没有运行模型/第三方软件。当前无ring cursor、generation watcher或统一async select，这些字面场景不以本项目API测试冒充覆盖；显式foreground发现不等于唤醒空闲模型。
 
-surface40 继续统一维护共享 MAC 和论文精炼助手。本轮两份询问已写其维护 inbox，尚未取得 owner 回复；文件发布不代表收到、读取或合并。直接联络被自动审批/guard 以工作区边界拒绝，实际输入为零，未绕过该拒绝。因此“充分沟通并统一合并”仍未完成。
+shared-maintainer 继续统一维护共享 MAC 和论文精炼助手。本轮两份询问已写其维护 inbox，尚未取得 owner 回复；文件发布不代表收到、读取或合并。直接联络被自动审批/guard 以工作区边界拒绝，实际输入为零，未绕过该拒绝。因此“充分沟通并统一合并”仍未完成。
 
-[EXECUTOR_READY_161独立期限审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/deadline-audit/REPORT.md)已重建原链：正文在回件deadline前42.974896秒完整展示，显式consumed回执晚29.344876秒，原控制器仍返回 `REPLY_CONSUMED=true`。应记为reply-consume延迟/成功迟到ACK，不能记成正式业务任务超时。原TASK回复明确不是正式派包；正式包按实际可见TASK_ACCEPTED起算600秒，本审计未重建其接受/报告。cron配置600秒有证据，“唯一唤醒源/仅空闲触发”未独立证明，正文展示也不等于理解或业务接受。
+[EXECUTOR_READY_161独立期限审计](/private/evidence/item-29264586bb41.md)已重建原链：正文在回件deadline前42.974896秒完整展示，显式consumed回执晚29.344876秒，原控制器仍返回 `REPLY_CONSUMED=true`。应记为reply-consume延迟/成功迟到ACK，不能记成正式业务任务超时。原TASK回复明确不是正式派包；正式包按实际可见TASK_ACCEPTED起算600秒，本审计未重建其接受/报告。cron配置600秒有证据，“唯一唤醒源/仅空闲触发”未独立证明，正文展示也不等于理解或业务接受。
 
 ## 本轮收口与剩余工作
 
 此前R29收口时保留全部原次，未启动R30，也未重放或补样；这不是对用户已授权后续独立实验的永久禁令。本次文档补记接收任务时R30尚未启动，后续状态须由其独立实验记录证明。草稿PR保持Draft。观察器缺口已有本地通过的候选修复，社区四类映射缺口已有五项实际API测试；剩余为核实B路原因及新客户端实际加载/业务响应覆盖，完成原生业务、通信、配对效率及独立loop长期验证，并取得surface40回复。不存在的第三方运行时语义保持不适用/待引入后验证。现有失败不能被未来成功删除或改写。
 
-原始证据根：`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1`。
+原始证据根：`/private/evidence/item-151557e33ca7`。
 
 - `execution/r29-original-driver/result.json`，SHA256 `626fc92ebec785c889f3e02c585110d216481b9d2082121f77a6d4b87b8a9666`。
-- `/Users/lzhs/ut/driver/final-report.json`，SHA256 `ec2b702f8c2d9070c510668d672fbbc71efa401596c95b443893f17c02950dea`。
+- `/private/evidence/item-03f60a9e9859.json`，SHA256 `ec2b702f8c2d9070c510668d672fbbc71efa401596c95b443893f17c02950dea`。
 - `maintenance/r29-delivery-review/terminal-review.md` 与 `terminal-review.json`：独立原终态审查。
 - `maintenance/r28-claude-version/r29-native-final.json`，SHA256 `781096e209a09be77dc4f05d295a7d9a61ce4581831313663cac2050d6d9206e`。
 - `maintenance/r28-ci-portability/application/private-support-repair/final-full/full-regression.json`：本机最终完整回归。
 - `maintenance/r28-ci-portability/application/private-support-repair/final-ci/result.json`，SHA256 `4f5050d890a90dd2052a53e24d1b4ee02fd47d348adf228a7102077a785ca6ab`。
-- [后续原生诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/native-diagnosis/report.md)。
-- [后续观察器候选修复及本地验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/observer-repair/report.md)。
-- [后续社区五项组合验证](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/community-gaps/RESULTS.md)。
-- [后续期限独立审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r29-followthrough/deadline-audit/REPORT.md)。
+- [后续原生诊断](/private/evidence/item-4dce76a0e4c8.md)。
+- [后续观察器候选修复及本地验证](/private/evidence/item-dce7ddd10d41.md)。
+- [后续社区五项组合验证](/private/evidence/item-c5a140833448.md)。
+- [后续期限独立审计](/private/evidence/item-29264586bb41.md)。

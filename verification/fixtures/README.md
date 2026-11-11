@@ -7,3 +7,14 @@ These files exercise terminal layout parsing. They are regression inputs, not ev
 The five Claude fixtures added for 2026-10-09 are minimal synthetic reconstructions. They retain the tested border/footer fields, folded-draft shape, active spinner and historical status lookalikes. Their names identify regression origins, not live proof or current session identities.
 
 Current-file cleanup does not remove earlier versions from Git history. See [publication privacy](../../docs/publication-privacy.md) for that distinction.
+
+## Additional public terminal layouts
+
+The `claude-default-{a,b}-20261018.txt` and
+`claude-busy-goal-split-{a,b}-20261026.txt` files are synthetic public layouts.
+They preserve parser-relevant footer, composer, activity and goal shapes while
+removing private terminal conversation bodies and machine paths. Test hashes
+identify these replacement bytes; older capture hashes are historical archive
+references, not proof that these files are original transcripts. The earlier
+`claude-c2596-screen-20261008.txt` and `claude-c41-screen-20261008.txt` synthetic
+fixtures are unchanged. See [publication privacy](../../docs/publication-privacy.md).

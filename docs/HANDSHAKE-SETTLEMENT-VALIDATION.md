@@ -1,5 +1,8 @@
 # 私有握手失败结算验证
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19。新生成的私有控制器在原次握手抛出 `TaskPackContractError` 时，复核原 root 后记录主管归属的 `FAIL/REJECTED`，避免异常留下陈旧 `PENDING` 后继续等待。本改动没有解决或重写 [R30](VALIDATION-20261019-R30.md) 的启动超时；真实双 Claude 提效仍未证明。
 
 ## 实现范围
@@ -9,7 +12,7 @@
 - 缺失、不可读或变化的证据保留 `UNAVAILABLE`。`ORIGINAL_ATTEMPT_PINNED` 仅是诊断 pin；controller authentication 仍为 `UNVERIFIED`，不证明原生收件、`NO_INPUT`、业务接受或可重发。
 - 原 `DispatchUnconfirmed` 分支保持不变。root 被替换或终态写入失败时继续抛错；写失败后原 receipt 可以仍为 `PENDING`，不能声称已持久化终态。
 - 固定基底仍为 `0.4.34-d333557fb498`。它没有新版 shared `handshake_evidence` 集成；一些原错误本来就不附 details。本改动不是 [MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55) 的完整移植。
-- PR55 于 `2026-10-19T11:23:09Z` 合并，head `b461edc5171b8d018338fe45655bb750c94cc3a6`，merge `ed8f7447bd7242901ec1bb76d3871ab36bbf45eb`。共享层继续由 surface:1000020040 维护。R30 已有版本目录 executable pins 与 kernel TTY/UID inventory，本次不引入共享 regex/ps 改动。
+- PR55 于 `2026-10-19T11:23:09Z` 合并，head `b461edc5171b8d018338fe45655bb750c94cc3a6`，merge `ed8f7447bd7242901ec1bb76d3871ab36bbf45eb`。共享层继续由 surface:7 维护。R30 已有版本目录 executable pins 与 kernel TTY/UID inventory，本次不引入共享 regex/ps 改动。
 
 ## 实际验证
 
@@ -45,9 +48,9 @@ R30 的 pilot 0/3、业务 0/33（1 TIMEOUT＋32 MISSING）、有效配对 0/15�
 
 ## 本机原始证据
 
-- [29 项执行记录](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/handshake-auditor-result.json)
-- [首次 42 项集成](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/targeted-integration.json)
-- [超时栈诊断](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/settlement-timeout-diagnostic.json)
-- [修复后 2 项集成](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/verification/settlement-repaired-materialized.json)
-- [7fa8e4e 四组 CI 原始摘要与日志哈希](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/publication/ci-39249352530/result.json)
-- [原 R30 恢复观察](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/post-r30-pr55/recovery-observation/REPORT.md)
+- [29 项执行记录](/private/evidence/item-9e98353c016b.json)
+- [首次 42 项集成](/private/evidence/item-6b10caed8468.json)
+- [超时栈诊断](/private/evidence/item-9db5e369791f.json)
+- [修复后 2 项集成](/private/evidence/item-5768f4a04913.json)
+- [7fa8e4e 四组 CI 原始摘要与日志哈希](/private/evidence/item-e8c79d2bee38.json)
+- [原 R30 恢复观察](/private/evidence/item-66981f7dc28a.md)

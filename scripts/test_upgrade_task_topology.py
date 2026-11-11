@@ -17,7 +17,7 @@ import upgrade_live_control as control
 
 SOURCE=Path.home()/".local/share/multi-agent-collaboration/releases/0.4.34-d333557fb498/source"
 WRAPPERS=Path("/Applications/cmux.app/Contents/Resources/bin")
-PACKAGE=Path("/Users/lzhs/Developer/codex-releases/0.164.0")
+PACKAGE=Path(os.environ.get("MAC_TEST_CODEX_PACKAGE") or "/opt/collaboration/test-fixtures/codex-package")
 
 
 @unittest.skipUnless(SOURCE.is_dir() and WRAPPERS.is_dir() and PACKAGE.is_dir(), "local frozen packages required")
@@ -53,8 +53,8 @@ class TaskTopologyTests(unittest.TestCase):
                     "requires_openai_auth":False}}},
                 {"model":"fixture-claude","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:3445"}}),
             station_launchers={"mg":"/usr/bin/true","magpie":"/usr/bin/true",
-                "codex":{"station":"agentrouter-a","base_url":"http://127.0.0.1:3465"},
-                "claude":{"station":"linxi","key":"linxi-s1"}},
+                "codex":{"station":"example-codex-route","base_url":"http://127.0.0.1:3465"},
+                "claude":{"station":"example-provider","key":"example-key"}},
             goal_startup={lane:"Complete this fixture only" for lane in ("claude_a","claude_b")},
             lane_instructions=instructions,
             task_startup=task,task_model_network=getattr(cls,"model_network",False),

@@ -1,5 +1,8 @@
 # 新 callback 优先核收与失败后原成果收取
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-20。候选分支 `upgrade/callback-drain-20261020`，基于 `2efca96`，与正在使用的源码和 R33 冻结实验分离。本修复落实 A/B/C/D 中的 P3；尚无采用本候选的原生配对结果。
 
 ## 触发问题与行为
@@ -32,7 +35,7 @@ callback 的来源继续使用原 `continuation.json` 中的 `callback_native`�
 
 完整首次日志、结果及运行前后源码 SHA 保存在：
 
-`/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r33-closeout-20261020/callback-drain-validation/`
+`/private/evidence/item-a4b9016f579e/`
 
 其中 `result.json` 保留首次完整失败；`recheck/result.json` 和 `recheck/test-all.log` 保存最终通过结果。最终日志 SHA256 为 `e248a7278ac52bc74a7052b5e30bd657de1eaa1b790fe26d72b9bad7d3bb1812`，`source_changed=[]` 覆盖 259 个 Python 源文件。首次失败日志不覆盖。
 

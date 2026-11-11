@@ -91,6 +91,6 @@ cmux 與 Herdr 提供執行環境與操作能力，協作規則決定團隊如�
 
 歷史規劃器細節見[排程文件](docs/ORCHESTRATION.md)、[離線驗證](verification/ORCHESTRATION-VALIDATION.md)及[繼承的原生 SKILL 契約](SKILL.md)。其中 `multi-agent-collaboration` 名稱與舊平台描述保留作歷史材料，不是覆蓋已安裝 skill 的指令。實際科研任務應使用當前已授權的領域 skill。
 
-公開範例應採用可攜路徑與合成資料；憑證、私有逐字稿及帳號設定不應進入公開提交，詳見 [SECURITY.md](SECURITY.md)。[隱私清理範圍](docs/publication-privacy.md)記錄兩份合成測試資料的替換。匯入的歷史證據文件與舊提交仍保留私人路徑或內容；此整合不宣稱整個程式樹或 Git 歷史已完成脫敏。
+公開範例應採用可攜路徑與合成資料；憑證、私有逐字稿及帳號設定不應進入公開提交，詳見 [SECURITY.md](SECURITY.md)。[隱私清理範圍](docs/publication-privacy.md)記錄目前程式樹中已識別的個人路徑與端點移除、另外四份合成終端測試資料及測試專用的外部相依入口。較早的提交仍可取得；整個 Git 歷史的脫敏尚待處理。這些有限範圍變更不代表全面隱私稽核。
 
 MIT。cmux、Herdr、Codex、Claude Code、Gemini CLI 與 OpenCode 均為獨立專案；本倉庫不代表其背書，也不保證所有版本均相容。

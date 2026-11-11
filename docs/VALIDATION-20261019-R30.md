@@ -1,5 +1,8 @@
 # R30 交付：实现与升级完成，原生提效未通过
 
+> Public privacy edition: personal paths, account routes and participant identifiers are replaced with neutral examples. Technical results, failures and the historical checkpoint state below are retained from this exact original version. Paths under `/private/evidence/` are placeholders for records retained in the original private archive, not public files or live execution instructions. Unchanged historical source/receipt SHA values identify original archived bytes; they do not authenticate the sanitized text, fixtures or a new run. This edition grants no new retry, session takeover, acceptance or release authority.
+
+
 2026-10-19，台北时间。**R30 已终态 TIMEOUT / INSUFFICIENT_EVIDENCE：pilot 0/3、业务 0/33、有效配对 0/15。不能声称完成了全量原生压力矩阵，也不能声称协作提效达到 15%。** 两个 Claude 2.1.303 进程均已实际启动；900 秒超时发生在等待双路有效主任务输出及启动采用证明的阶段，不能概括为 Claude 进程无法启动。
 
 代码、组件压力验证、Claude Code 升级、社区逐项研究和维护者经验回件已形成可核查成果。本轮终态不再追加样本、替换客户端或重放原输入；全部旧结果保留。项目仍为实验技能，PR 保持 Draft。
@@ -20,7 +23,7 @@
 
 | 项目 | 核实结果 |
 |---|---|
-| 实验根 | `/Users/lzhs/uu` |
+| 实验根 | `/Users/demo/b4` |
 | 实验 ID | `resume-20261019-r30-fetchsession` |
 | 受测源码 / 冻结控制器 | `d8a158509680de53f9c8bdc8c541408c3054f605` / v25 |
 | 原 launch request | 11:10:26.545509 UTC |
@@ -44,13 +47,13 @@ wrapper 总耗时 911.127 秒；实际 schedule halt 比启动截止晚 5.011 �
 | 原生证据 | Codex | Claude A | Claude B |
 |---|---|---|---|
 | PID | 61228 / app-server 61357 | 61220 | 61210 |
-| session | `01a153db-34c5-7151-8e20-fd985ae2579f` | `88e07a68-2129-497e-b15b-618a8feb4b11` | `feead08c-49e1-428d-a278-d9064ba4cce0` |
+| session | `ef27328a-6314-51c9-a51c-6e380ac3038e` | `2399bdf5-7de5-56c6-bcdd-91ed5144bac9` | `0ed09b1e-ae9b-5278-bd21-18a33d22fdc9` |
 | 原生启动探针 | 1 次完成，整体 adoption=false | 0 | 0 |
 | 自动 Pre/PostToolUse 记录 | 114 | 0 | 0 |
 | Claude 主 journal assistant | 不适用 | 0 | 0 |
 | Goal | create_goal 返回 active | SET 后检查超时暂停 | SET、退避后检查超时暂停 |
 
-两路真实 executable 均为 `/Users/lzhs/.local/share/claude/versions/2.1.303`。私有配置为 `fable/xhigh`，主 journal 请求 `claude-opus-5-5`；这证明请求型号，不证明后端成功完成。Claude 的 Stop advisory 确有自动执行，但 `thread_scope=UNVERIFIED`，不能替代启动 probe 和完整采用门槛。
+两路真实 executable 均为 `/Users/example/.local/share/claude/versions/2.1.303`。私有配置为 `fable/xhigh`，主 journal 请求 `claude-opus-5-5`；这证明请求型号，不证明后端成功完成。Claude 的 Stop advisory 确有自动执行，但 `thread_scope=UNVERIFIED`，不能替代启动 probe 和完整采用门槛。
 
 A 在 11:11:52.906 UTC、B 在 11:21:09.581 UTC 自行显示 Goal 检查超时暂停；对应 Stop prompt-hook 分别超时 30004 / 30018 毫秒。主管没有发送暂停或唤醒输入。Goal Stop 检查是独立模型请求，不等于普通任务输出，也不验证独立 `/loop` 长时运行。
 
@@ -90,15 +93,15 @@ debug 日志明确分类计数为主任务 A2/B8、Goal `hook_prompt` A1/B4、�
 
 此前 green CI 未捕获本机 13 个打包失败的记录保留，相关私有 TOML 依赖、许可、provenance 及 portable 测试已修复。后续交付提交仅修改文档，不重导出 v25 或改写受测代码。
 
-## surface40 回件、完整问题台账与社区借鉴
+## shared-maintainer 回件、完整问题台账与社区借鉴
 
-已收取并全文读取两份询问的[共同答复](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r28-owner-reply.md)和[详细经验](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/standalone-caller-v1/EXPERIENCE-REPLY.md)，两请求 SHA 与附件 SHA 均独立核对。此前“回件未取得”已过时。普通 helper 的历史拒绝仍保留为零输入，没有绕过；指定文件回件是经验交流，不冒充原生投递或业务验收。
+已收取并全文读取两份询问的[共同答复](/private/evidence/item-7dbcbd03f843.md)和[详细经验](/private/evidence/item-cf9376261957.md)，两请求 SHA 与附件 SHA 均独立核对。此前“回件未取得”已过时。普通 helper 的历史拒绝仍保留为零输入，没有绕过；指定文件回件是经验交流，不冒充原生投递或业务验收。
 
 [41 类问题台账](COLLABORATION-ISSUE-LEDGER.md)逐项记录事实、出处、归属、实现落点和未测范围，涵盖任务四字段、忙态通信、Goal/loop、身份/进程/会话绑定、草稿/折叠、原生回执、callback、占用与租约、文件回件、hook 采用、版本升级、隔离、截止与计量、共享应用单写、成本/返工等。1045 文件库存、966 文件补扫中 43 份全文审读、923 份未全文审读，不能声称穷尽人工审计；owner 也未重新穷尽全部 41 类。
 
 本轮吸收的具体经验：普通忙碌不阻断就绪消息；发布→自动曝光→全文→mailbox 回件→原执行者读取→exact consume→rearm→RELEASE 分层；升级文件不等于进程采用；PID 更换后旧 episode 不能继承成功；不把询问次数当吞吐，不把 81 MB state 当每次写量，不把锁失败跨度当持锁时间。论文独立核验/草拟可并行，Word/Zotero 等真实共享资源按租约单写。owner 报告的完整 reservation 往返仍为 0/2。
 
-[共享 MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55) 在本轮审计时 OPEN、非 Draft，head `b461edc5171b8d018338fe45655bb750c94cc3a6`。独审实际 diff 确认版本目录 executable 严格识别，以及握手 `TaskPackContractError` 归责 supervisor、写 FAIL/REJECTED、保留原 paste intent 并停止 ACK 轮询。其 [PR CI](https://github.com/lzhs1995/multi-agent-collaboration/actions/runs/39243112331) 四格各 2445 项（skip 1、F0/E0），另有 schema 6 项通过。这不证明旧进程加载、真实草稿恢复或在线接收；这些共享源码修复未移植进冻结 R30，后续隔离整合须先比对等价私有路径。共享代码仍由 surface40 管理。
+[共享 MAC PR55](https://github.com/lzhs1995/multi-agent-collaboration/pull/55) 在本轮审计时 OPEN、非 Draft，head `b461edc5171b8d018338fe45655bb750c94cc3a6`。独审实际 diff 确认版本目录 executable 严格识别，以及握手 `TaskPackContractError` 归责 supervisor、写 FAIL/REJECTED、保留原 paste intent 并停止 ACK 轮询。其 [PR CI](https://github.com/lzhs1995/multi-agent-collaboration/actions/runs/39243112331) 四格各 2445 项（skip 1、F0/E0），另有 schema 6 项通过。这不证明旧进程加载、真实草稿恢复或在线接收；这些共享源码修复未移植进冻结 R30，后续隔离整合须先比对等价私有路径。共享代码仍由 shared-maintainer 管理。
 
 [15 条社区逐项分析](COMMUNITY-ADOPTION-20261019.md)已更新源码 pin、Issue/PR、采用决定与缺证。采用四字段任务单、写域隔离、集成后验收、有界独审、持久 callback、复用已有 agent 和依赖图；不照搬成本节省、模型排行或第三方默认等待。Orca 的 600 秒是超时上限，不是最低等待。13 条推文来自第三方镜像而非 X 第一方认证；视频 LOGIN_REQUIRED/无字幕、Reddit 官方 403 保持未验证。未实现的 ring cursor、generation watcher、统一 async select 不由相似本地用例替代验证。
 
@@ -110,9 +113,9 @@ debug 日志明确分类计数为主任务 A2/B8、Goal `hook_prompt` A1/B4、�
 
 ## 原始证据
 
-- [原 runner 结果](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/execution/r30-original-driver/result.json)：SHA256 `a0bb407e3f96084c52a8dcb1de2eab2dc79f06d003a180f19ff93381ecd57817`。
-- [原配对终态](/Users/lzhs/uu/driver/final-report.json)：SHA256 `7ca3a200132efa79119252f3dd714fbe1371fb9e79647bb37e05aa56a8c39fc2`。
-- [独立原生终态审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/native-adoption-audit/FINAL-INDEPENDENT-AUDIT.md)：SHA256 `427291e63e92aa394261c9a8a38458a5468a89b983241f0233b2e1e5ed02fe85`。
-- [CI 与 v25 对照审计](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/ci-closure/REPORT.md)。
-- [surface40 回件与 PR55 独审](/Users/lzhs/Projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/r30-followthrough/owner-update-audit/REPORT.md)：SHA256 `7588343f6a55d8a9e51eb34d954e3b4343502bc09c09c172aa46ef32a403fec2`。
+- [原 runner 结果](/private/evidence/item-926ae314421e.json)：SHA256 `a0bb407e3f96084c52a8dcb1de2eab2dc79f06d003a180f19ff93381ecd57817`。
+- [原配对终态](/private/evidence/item-be8976f934f4.json)：SHA256 `7ca3a200132efa79119252f3dd714fbe1371fb9e79647bb37e05aa56a8c39fc2`。
+- [独立原生终态审计](/private/evidence/item-50bb72bae4fc.md)：SHA256 `427291e63e92aa394261c9a8a38458a5468a89b983241f0233b2e1e5ed02fe85`。
+- [CI 与 v25 对照审计](/private/evidence/item-f9b46dabe8fc.md)。
+- [Archived evidence record](/private/evidence/item-28cb41d6210c.md)：SHA256 `7588343f6a55d8a9e51eb34d954e3b4343502bc09c09c172aa46ef32a403fec2`。
 - [Claude 升级与采用](CLAUDE-VERSION-VALIDATION.md)；[R29 历史终态](VALIDATION-20261019-R29.md)。

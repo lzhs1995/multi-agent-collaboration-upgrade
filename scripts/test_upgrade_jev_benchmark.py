@@ -11,8 +11,7 @@ import upgrade_benchmark as v3
 import upgrade_jev_benchmark as jb
 from orchestration_common import ContractError, file_ref
 
-PLAN = Path("/Users/lzhs/projects/multi-agent-collaboration-upgrade-evidence/20261014-v1/maintenance/execution-20261021/"
-            "jev-s2-consumer-plan-v1/OWNER43-JEV-S2-CONSUMER-ATTRIBUTION-PLAN-v1.json")
+PLAN = Path(os.environ.get("MAC_TEST_JEV_PLAN") or "/opt/collaboration/test-fixtures/jev-plan.json")
 PLAN_SHA = "da34a9c5d09dbe53456f600645fe90a90ac394c70b7d3e1a010fa04b264581db"
 
 
