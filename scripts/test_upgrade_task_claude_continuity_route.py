@@ -24,6 +24,7 @@ import uuid
 from orchestration_common import ContractError, canonical, file_ref, json_ref, write_json
 from orchestration_native import NativeReader
 from test_orchestration_native import NativeFixture
+from cmux_daemon_identity import process as native_process
 import upgrade_task_continuity_capability as core
 import upgrade_task_claude_continuity_route as route
 
@@ -77,6 +78,11 @@ def foreign_server(pipe,path):
 @unittest.skipUnless(sys.platform=='darwin','real kernel process ancestry fixture uses macOS native reader')
 class PeerRouteTests(unittest.TestCase):
     def setUp(self):
+        # test_all supplies a synthetic ordinary-client process by default.
+        # This fixture owns real Python parents and needs their kernel identity;
+        # override only the peer route, leaving other offline readers isolated.
+        process_patch=patch.object(route,'_process',native_process)
+        process_patch.start();self.addCleanup(process_patch.stop)
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name).resolve();self.pipes={};self.parents={}
         ctx=multiprocessing.get_context('spawn')
