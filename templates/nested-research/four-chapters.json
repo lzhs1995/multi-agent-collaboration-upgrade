@@ -69,6 +69,8 @@
       "artifact_root": null,
       "accepted_delta_path": null,
       "accepted_delta_interface": {
+        "chapter_id": "chapter_1",
+        "acceptance_scope": null,
         "task_id": null,
         "owner_actor_id": "chapter_1_supervisor",
         "artifact_pins": [],
@@ -123,6 +125,8 @@
       "artifact_root": null,
       "accepted_delta_path": null,
       "accepted_delta_interface": {
+        "chapter_id": "chapter_2",
+        "acceptance_scope": null,
         "task_id": null,
         "owner_actor_id": "chapter_2_supervisor",
         "artifact_pins": [],
@@ -177,6 +181,8 @@
       "artifact_root": null,
       "accepted_delta_path": null,
       "accepted_delta_interface": {
+        "chapter_id": "chapter_3",
+        "acceptance_scope": null,
         "task_id": null,
         "owner_actor_id": "chapter_3_supervisor",
         "artifact_pins": [],
@@ -231,6 +237,8 @@
       "artifact_root": null,
       "accepted_delta_path": null,
       "accepted_delta_interface": {
+        "chapter_id": "chapter_4",
+        "acceptance_scope": null,
         "task_id": null,
         "owner_actor_id": "chapter_4_supervisor",
         "artifact_pins": [],

@@ -43,7 +43,7 @@ templates/nested-research/four-chapters.json
 
 Copy [four-chapters.json](../templates/nested-research/four-chapters.json) to a private task output directory. It is an editable workflow form, **not** input to `orchestration_planner.py` or a runnable scheduler. Keep only the chapters and roles actually assigned; update their edge lists together. Four chapters and separate reviewers are examples, not prerequisites.
 
-Fill the objective, owner, authorized write paths, acceptance criteria and finite task budget from the existing assignment. For each chapter, use `accepted_delta_interface` to record artifact/source pins, definitions or methods shared with other chapters, actual checks, scientific limits, unresolved items, prior review rounds and resource status. A non-Word evidence package can be prepared without claiming final Word/PDF/NotebookLM completion. Fill live endpoints and controller pins only from real evidence when an authorized action needs them; nulls are intentional for this unregistered template.
+Fill the objective, owner, authorized write paths, acceptance criteria and finite task budget from the existing assignment. For each chapter, use `accepted_delta_interface` to record artifact/source pins, definitions or methods shared with other chapters, actual checks, scientific limits, unresolved items, prior review rounds and resource status. Keep the delta's `chapter_id` equal to its actual chapter so it remains identifiable when exported to `accepted_delta_path`; fill `acceptance_scope` with what the acceptance covers, such as a definitions/evidence package or chapter prose. `review.acceptance_status` records the decision, not its scope. A non-Word evidence package can be prepared without claiming final Word/PDF/NotebookLM completion. Fill live endpoints and controller pins only from real evidence when an authorized action needs them; nulls are intentional for this unregistered template.
 
 ```sh
 # Parse the neutral template without contacting any agent or provider.
@@ -52,7 +52,7 @@ python3 -m json.tool templates/nested-research/four-chapters.json > /dev/null
 
 The senior supervisor consumes each accepted chapter delta and reconciles cross-chapter claims. It reuses existing review evidence and the same three-round budget for the same acceptance scope. A handoff to senior does not start another full review. Scientific limits remain visible in the integrated manuscript.
 
-繁體中文：在私有任務目錄複製模板，依原分派填寫章數、角色、寫入範圍及章增量接口。可先完成已授權的定義／證據包；只有真實發送或共享資源動作才核對相關端點與原控制器。不為補齊空欄創建會話，也不以別章缺項阻擋獨立工作。
+繁體中文：在私有任務目錄複製模板，依原分派填寫章數、角色、寫入範圍及章增量接口。章增量內的 `chapter_id` 須與實際章節一致，單獨匯出時也保留；`acceptance_scope` 說明本次驗收涵蓋定義／證據包或章節文稿等何種產物，不能只用 `review.acceptance_status` 代替。可先完成已授權的定義／證據包；只有真實發送或共享資源動作才核對相關端點與原控制器。不為補齊空欄創建會話，也不以別章缺項阻擋獨立工作。
 
 ## Runtime boundary / 執行邊界
 
