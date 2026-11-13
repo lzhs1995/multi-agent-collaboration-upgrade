@@ -50,6 +50,27 @@ Fill the objective, owner, authorized write paths, acceptance criteria and finit
 python3 -m json.tool templates/nested-research/four-chapters.json > /dev/null
 ```
 
+### Check the chapter delta / 檢查章增量
+
+The offline checker validates the existing delta fields before handoff. It reports the recorded decision and structural errors separately; a valid record can contain a partial or rejected decision. Only the optional `--require-accepted` gate requires the exact recorded value `ACCEPTED`. Neither result creates an acceptance decision.
+
+```sh
+# Blank template: null task bindings and UNVERIFIED decisions remain valid.
+python3 -B scripts/chapter_delta_validator.py templates/nested-research/four-chapters.json --mode template
+
+# A populated private copy: check just the chapter being handed upward.
+python3 -B scripts/chapter_delta_validator.py /path/to/private-task.json --chapter chapter_1
+
+# Additionally require recorded ACCEPTED and verify referenced file bytes.
+python3 -B scripts/chapter_delta_validator.py /path/to/private-task.json --chapter chapter_1 --require-accepted --verify-files
+```
+
+Use the actual chapter identifier, and repeat `--chapter` to select more than one. Unselected blank deltas do not block the selected chapter. Chapter identifiers must still be unique across the form. The checker requires a populated delta's task, owner and acceptance scope, artifact/source references, and a review count from zero to three; a nonzero count needs its baseline reference. Zero rounds permits work that did not require review. It does not audit the historical review ledger or interpret scientific limits, findings, checks and resource-state subrecords.
+
+References use `{ "path": "...", "sha256": "..." }` with an optional nonnegative `bytes` count. By default only the descriptors are checked. `--verify-files` reads the referenced local files, checks their SHA-256 and optional size, and rejects identity or metadata changes observed during reading. Relative paths resolve against the input JSON directory. This option reads no network source and proves neither authorship nor scientific validity. Exit code 0 means the requested offline checks passed; 1 means validation failed or the optional accepted gate was not met. Neither exit code dispatches work, updates the input, authorizes shared writes or fills a formal experiment slot.
+
+繁體中文：離線檢查器沿用現有欄位，分別報告結構錯誤與原驗收決定。`--mode template` 允許空模板；正式交接預設使用 `handoff`。以 `--chapter` 選取當次章節，其他未填章增量不會阻擋它。`--require-accepted` 只檢查是否記錄了精確的 `ACCEPTED`，不替主管作驗收決定。未加 `--verify-files` 時只核引用格式；加上後才讀取本地文件並驗 SHA／可選大小。有效結構、原始字節相符、科學接受、實際交接及資源釋放仍是不同證據。
+
 The senior supervisor consumes each accepted chapter delta and reconciles cross-chapter claims. It reuses existing review evidence and the same three-round budget for the same acceptance scope. A handoff to senior does not start another full review. Scientific limits remain visible in the integrated manuscript.
 
 繁體中文：在私有任務目錄複製模板，依原分派填寫章數、角色、寫入範圍及章增量接口。章增量內的 `chapter_id` 須與實際章節一致，單獨匯出時也保留；`acceptance_scope` 說明本次驗收涵蓋定義／證據包或章節文稿等何種產物，不能只用 `review.acceptance_status` 代替。可先完成已授權的定義／證據包；只有真實發送或共享資源動作才核對相關端點與原控制器。不為補齊空欄創建會話，也不以別章缺項阻擋獨立工作。
