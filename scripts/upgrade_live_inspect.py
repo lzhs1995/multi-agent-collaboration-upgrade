@@ -127,6 +127,28 @@ def confirmed_launch(intent, result, spec, startup_ref):
     return result.get('pane_creation_attempts') == len(LANES)
 
 
+def original_tab_panes(intent, spec, bridge):
+    """Match live protected targets to the panes in the original allocation argv.
+
+    Multiple lanes may use one pane, but neither a target nor a launched tab
+    may move to another pane. The command is retained as opaque intent data;
+    this read-only check never imports a launcher or executes it.
+    """
+    from upgrade_existing_workspace import tab_argv, tab_target_panes
+    tree = strict_json(bridge._run("tree", "--all", "--json", "--id-format", "both"), "live cmux tree")
+    panes = tab_target_panes(tree, spec["existing_workspace_uuid"], spec["existing_tab_targets"])
+    argvs = intent.get("argv")
+    require(isinstance(argvs, dict) and set(argvs) == set(LANES), "TAB_ALLOCATION_ARGV_INVALID")
+    for lane in LANES:
+        argv = argvs[lane]
+        require(isinstance(argv, list) and len(argv) == 15
+                and all(isinstance(arg, str) for arg in argv)
+                and argv[12].strip(), "TAB_ALLOCATION_ARGV_INVALID")
+        require(argv == tab_argv(spec["pins"]["cmux"]["path"], spec["existing_workspace_uuid"],
+                                lane, argv[12], panes[lane]), "TAB_ALLOCATION_TARGET_CHANGED")
+    return {lane: str(uuid.UUID(pane)) for lane, pane in panes.items()}
+
+
 def inspect(startup_ref, spec, binding, *, stage=None):
     """stage: a validated fence; readiness then admits only that stage's window.
 
@@ -140,7 +162,7 @@ def inspect(startup_ref, spec, binding, *, stage=None):
     control = Path(binding["state_root"]) / "startup"
     intent_ref, result_ref = file_ref(control / "intent.json"), file_ref(control / "result.json")
     intent, result = json_ref(intent_ref), json_ref(result_ref)
-    # R511 existing-workspace mode: one pane per lane in the pinned workspace, no workspace creation.
+    # Existing-workspace mode creates panes or tabs, according to the pinned spec.
     existing = spec.get("existing_workspace_uuid") is not None
     require(confirmed_launch(intent, result, spec, startup_ref),
             "ORIGINAL_LAUNCH_UNCONFIRMED")
@@ -170,6 +192,8 @@ def inspect(startup_ref, spec, binding, *, stage=None):
         # Only the three restored clients; the original daemon keeps its original launch.
         launches.update(recovered)
         launch_refs.update({lane: recovery_ref for lane in recovered})
+    tab_panes = (original_tab_panes(intent, spec, bridge)
+                 if existing and "existing_tab_targets" in spec and recovery_ref is None else None)
     sessions, evidence, kernels, errors = {}, {}, {}, {}
     startup_failures = {}
     for lane in LANES:
@@ -187,6 +211,9 @@ def inspect(startup_ref, spec, binding, *, stage=None):
                     == (stage["recovery"]["workspace_uuid"] if recovery_ref is not None
                         else str(uuid.UUID(spec["existing_workspace_uuid"])) if existing
                         else launch_workspace(result["stdout"], bridge)), "LAUNCH_WORKSPACE_CHANGED")
+            if tab_panes is not None:
+                require(str(uuid.UUID(row["target_pane_uuid"])) == tab_panes[lane],
+                        "ORIGINAL_TAB_PANE_CHANGED")
             provider = "codex" if lane == "codex" else "claude"
             require(native._provider(client) == provider
                     and str(process_root(provider, client)) == spec["clients"][lane]["native_root"],
@@ -296,9 +323,11 @@ def inspect(startup_ref, spec, binding, *, stage=None):
         except (ValueError, OSError, KeyError, native.NativeDeliveryError, identity.IdentityError) as exc:
             errors["task-roles"] = str(exc)
     if len(sessions) == 3:
+        distinct_fields = (("surface_uuid", "session_id") if tab_panes is not None
+                           else ("surface_uuid", "pane_uuid", "session_id"))
         require(len({s["workspace_uuid"] for s in sessions.values()}) == 1
                 and all(len({s[k] for s in sessions.values()}) == 3
-                        for k in ("surface_uuid", "pane_uuid", "session_id")), "CLIENT_ENDPOINTS_NOT_DISTINCT")
+                        for k in distinct_fields), "CLIENT_ENDPOINTS_NOT_DISTINCT")
     result = dict(schema="upgrade-live-inspection-task-v1" if task_mode else "upgrade-live-inspection-v2",
                 startup=startup_ref, observed_at=utc_now(),
                 observed_at_ns=time.time_ns(), inspector=file_ref(Path(__file__).resolve()),

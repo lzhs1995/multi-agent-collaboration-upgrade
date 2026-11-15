@@ -758,7 +758,7 @@ class InspectorFlowTests(unittest.TestCase):
         write_json(self.root / "startup/result.json", dict(startup=self.startup, returncode=0,
                    workspace_creation_attempts=1, stdout="OK workspace:42\n"))
 
-    def inspect_fixture(self, stage=None, *, readiness_effect=None):
+    def inspect_fixture(self, stage=None, *, readiness_effect=None, rpc_capable=True):
         import cmux_daemon_identity as identity
         import cmux_native_delivery as native
         # The RPC adapter belongs to the pinned base controller and is copied
@@ -785,7 +785,7 @@ class InspectorFlowTests(unittest.TestCase):
             client = stack.enter_context(patch.object(rpc, "DaemonRPC")).return_value
             client.socket_identity = {"offline_fixture": True}
             client.request.side_effect = [{"thread": {"id": sid, "path": transcript,
-                "canAcceptDirectInput": True}}, {"data": []}]
+                "canAcceptDirectInput": rpc_capable}}, {"data": []}]
             result = subject.inspect(self.startup, self.spec, self.binding, stage=stage)
             self.assertEqual(cmux.call_count, 1)
             self.assertEqual(result["input_operations"], 0)
@@ -798,6 +798,174 @@ class InspectorFlowTests(unittest.TestCase):
         self.assertTrue(result["ready"], result["errors"])
         self.assertEqual(set(lanes), set(LANES))
         self.assertEqual({s["workspace_uuid"] for s in result["sessions"].values()}, {self.workspace})
+
+    def tab_fixture(self, pane_count=1):
+        """Use the real allocation argv builder with protected target surfaces."""
+        import upgrade_existing_workspace as ew
+        panes = [dict(id=str(uuid.uuid4()), surfaces=[]) for _ in range(pane_count)]
+        targets, argvs = {}, {}
+        for index, lane in enumerate(LANES):
+            pane = panes[index % pane_count]
+            target = str(uuid.uuid4())
+            targets[lane] = target
+            pane["surfaces"].extend([
+                dict(id=target, type="terminal", tty="ttys9" + str(index), dock_scope="workspace"),
+                dict(id=self.launches[lane]["surface_uuid"], type="terminal",
+                     tty="ttys" + str(index), dock_scope="workspace")])
+            argvs[lane] = ew.tab_argv(self.spec["pins"]["cmux"]["path"], self.workspace,
+                                      lane, "inert-held-command " + lane, pane["id"])
+        self.tree["windows"][0]["workspaces"][0]["panes"] = panes
+        self.spec.update(existing_workspace_uuid=self.workspace, existing_tab_targets=targets,
+                         protected_surface_uuids=list(targets.values()))
+        write_json(self.root / "startup/intent.json", dict(startup=self.startup, spawn=True,
+            spawn_authorized=True, existing_workspace_uuid=self.workspace, argv=argvs))
+        write_json(self.root / "startup/result.json", dict(startup=self.startup, returncode=0,
+            existing_workspace_uuid=self.workspace, workspace_creation_attempts=0,
+            pane_creation_attempts=0, surface_creation_attempts=3))
+
+    def test_tab_allocation_accepts_one_two_or_three_bound_panes(self):
+        for count in (1, 2, 3):
+            with self.subTest(panes=count):
+                self.tab_fixture(count)
+                result, lanes = self.inspect_fixture()
+                self.assertTrue(result["ready"], result["errors"])
+                self.assertEqual(set(lanes), set(LANES))
+                self.assertEqual(len({s["pane_uuid"] for s in result["sessions"].values()}), count)
+
+    def test_tab_movement_is_refused_before_readiness(self):
+        self.tab_fixture(2)
+        panes = self.tree["windows"][0]["workspaces"][0]["panes"]
+        surface = self.launches["codex"]["surface_uuid"]
+        moved = next(s for s in panes[0]["surfaces"] if s["id"] == surface)
+        panes[0]["surfaces"].remove(moved)
+        panes[1]["surfaces"].append(moved)
+        result, lanes = self.inspect_fixture()
+        self.assertEqual(result["errors"]["codex"], "ORIGINAL_TAB_PANE_CHANGED")
+        self.assertNotIn("codex", lanes)
+        self.assertFalse(result["ready"])
+
+    def test_protected_target_movement_cannot_rebind_the_original_intent(self):
+        self.tab_fixture(2)
+        panes = self.tree["windows"][0]["workspaces"][0]["panes"]
+        target = self.spec["existing_tab_targets"]["codex"]
+        moved = next(s for s in panes[0]["surfaces"] if s["id"] == target)
+        panes[0]["surfaces"].remove(moved)
+        panes[1]["surfaces"].append(moved)
+        with self.assertRaisesRegex(ContractError, "TAB_ALLOCATION_TARGET_CHANGED"):
+            self.inspect_fixture()
+
+    def test_tab_allocation_requires_exact_original_argv(self):
+        self.tab_fixture()
+        path = self.root / "startup/intent.json"
+        original = json.loads(path.read_text())
+        mutations = {
+            "missing_lane": lambda a: a.pop("codex"),
+            "not_argv": lambda a: a.update(codex="new-surface"),
+            "missing_pane": lambda a: a["codex"].__delitem__(slice(9, 11)),
+            "different_pane": lambda a: a["codex"].__setitem__(10, str(uuid.uuid4())),
+            "different_workspace": lambda a: a["codex"].__setitem__(8, str(uuid.uuid4())),
+            "different_binary": lambda a: a["codex"].__setitem__(0, "/other/cmux"),
+            "duplicate_option": lambda a: a["codex"].extend(["--pane", str(uuid.uuid4())]),
+            "empty_command": lambda a: a["codex"].__setitem__(12, " "),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = copy.deepcopy(original)
+                mutate(value["argv"])
+                write_json(path, value)
+                with self.assertRaisesRegex(ContractError, "TAB_ALLOCATION_"):
+                    self.inspect_fixture()
+
+    def test_tab_mode_still_requires_unique_native_sessions(self):
+        self.tab_fixture()
+        sid = self.spec["clients"]["claude_a"]["session_id"]
+        self.spec["clients"]["claude_b"]["session_id"] = sid
+        self.clients[self.launches["claude_b"]["surface_uuid"]]["session_id"] = sid
+        with self.assertRaisesRegex(ContractError, "CLIENT_ENDPOINTS_NOT_DISTINCT"):
+            self.inspect_fixture()
+
+    def test_tab_mode_refuses_duplicate_surface_inventory(self):
+        self.tab_fixture(2)
+        panes = self.tree["windows"][0]["workspaces"][0]["panes"]
+        target = self.launches["codex"]["surface_uuid"]
+        panes[1]["surfaces"].append(copy.deepcopy(next(s for s in panes[0]["surfaces"] if s["id"] == target)))
+        result, lanes = self.inspect_fixture()
+        self.assertFalse(result["ready"])
+        self.assertNotIn("codex", lanes)
+        self.assertIn("codex", result["errors"])
+
+    def test_tab_mode_still_refuses_cross_workspace_movement(self):
+        self.tab_fixture(2)
+        workspaces = self.tree["windows"][0]["workspaces"]
+        source = workspaces[0]["panes"][0]
+        target = self.launches["codex"]["surface_uuid"]
+        moved = next(s for s in source["surfaces"] if s["id"] == target)
+        source["surfaces"].remove(moved)
+        workspaces[1]["panes"].append(dict(id=str(uuid.uuid4()), surfaces=[moved]))
+        result, lanes = self.inspect_fixture()
+        self.assertEqual(result["errors"]["codex"], "LAUNCH_WORKSPACE_CHANGED")
+        self.assertNotIn("codex", lanes)
+        self.assertFalse(result["ready"])
+
+    def test_tab_mode_preserves_readiness_and_rpc_failures(self):
+        self.tab_fixture()
+        result, _ = self.inspect_fixture(readiness_effect=ContractError("fixture-readiness-failure"))
+        self.assertFalse(result["ready"])
+        self.assertTrue(all(result["errors"][lane] == "fixture-readiness-failure" for lane in LANES))
+        result, _ = self.inspect_fixture(rpc_capable=False)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["errors"]["codex-rpc"], "CODEX_DIRECT_INPUT_CAPABILITY_UNVERIFIED")
+
+    def test_tab_mode_refuses_inconsistent_allocation_counts_and_failed_launch(self):
+        self.tab_fixture()
+        path = self.root / "startup/result.json"
+        original = json.loads(path.read_text())
+        for key, value in (("pane_creation_attempts", 1), ("surface_creation_attempts", 2),
+                           ("workspace_creation_attempts", 1), ("returncode", 1)):
+            with self.subTest(field=key):
+                write_json(path, dict(original, **{key: value}))
+                with self.assertRaisesRegex(ContractError, "ORIGINAL_LAUNCH_UNCONFIRMED"):
+                    self.inspect_fixture()
+
+    def test_split_and_new_workspace_modes_still_require_distinct_panes(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                self.tab_fixture()
+                self.spec.pop("existing_tab_targets")
+                if existing:
+                    result = dict(startup=self.startup, returncode=0, existing_workspace_uuid=self.workspace,
+                                  workspace_creation_attempts=0, pane_creation_attempts=3)
+                else:
+                    self.spec.pop("existing_workspace_uuid")
+                    result = dict(startup=self.startup, returncode=0, workspace_creation_attempts=1,
+                                  stdout="OK workspace:42\n")
+                write_json(self.root / "startup/result.json", result)
+                with self.assertRaisesRegex(ContractError, "CLIENT_ENDPOINTS_NOT_DISTINCT"):
+                    self.inspect_fixture()
+
+    def publish_recovered_tab_fixture(self, *, share_pane):
+        import upgrade_stage_fence as fence
+        self.tab_fixture()
+        stage = self.recovered_stage()
+        panes = self.tree["windows"][0]["workspaces"][-1]["panes"]
+        if share_pane:
+            panes[0]["surfaces"].extend(s for pane in panes[1:] for s in pane["surfaces"])
+            del panes[1:]
+        candidates = self.inspect_fixture(stage)[0]["recovery_candidates"]
+        write_json(fence.recovery_path(stage), dict(schema=fence.RECOVERY_SCHEMA,
+            stage=file_ref(Path(stage["control"]) / "stage.json"), startup=self.startup,
+            input_operations=0, launches=candidates))
+        return stage
+
+    def test_recovered_distinct_panes_do_not_need_absent_original_tab_targets(self):
+        stage = self.publish_recovered_tab_fixture(share_pane=False)
+        result, _ = self.inspect_fixture(stage)
+        self.assertTrue(result["ready"], result["errors"])
+
+    def test_recovered_shared_pane_does_not_inherit_original_tab_exception(self):
+        stage = self.publish_recovered_tab_fixture(share_pane=True)
+        with self.assertRaisesRegex(ContractError, "CLIENT_ENDPOINTS_NOT_DISTINCT"):
+            self.inspect_fixture(stage)
 
     def test_task_tui_wrong_remote_refuses_before_dynamic_readiness(self):
         import os
