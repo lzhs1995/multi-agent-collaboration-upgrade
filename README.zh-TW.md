@@ -2,7 +2,7 @@
 
 # Multi-Agent Collaboration Upgrade
 
-[English](README.md) · [Agent 快速入門](docs/agent-quickstart.md) · [通用 Agent 指引](AGENTS.md) · [巢狀科研技能](docs/nested-research-skills.md)
+[English](README.md) · [Agent 快速入門](docs/agent-quickstart.md) · [通用 Agent 指引](AGENTS.md) · [巢狀科研技能](docs/nested-research-skills.md) · [驗證狀態](docs/validation-status-20261116.md)
 
 這是一套供終端 Agent 使用的協作規則、離線相依任務規劃器與實驗性 TASK 執行碼。目標是結合 **cmux 的跨終端、跨工作區協調**與 **Herdr 的單一終端內部協作**，保留既有會話、可追溯交接和清楚的寫入責任。
 
@@ -85,15 +85,18 @@ cmux 與 Herdr 提供執行環境與操作能力，協作規則決定團隊如�
 
 ## 已交付與尚待驗證
 
-狀態日期：**2026-11-11**。此整合包含實驗性原始碼，不代表真實協作已驗收，也不授予安裝權限。
+狀態快照：**2026-11-15 UTC（UTC+08:00 當地為 2026-11-16）**。[驗證摘要](docs/validation-status-20261116.md)分別記錄原始碼／CI、一次實際嘗試、一次普通聯絡及科研證據；不因此授權安裝或更換控制器。
 
 | 範圍 | 證據與界線 |
 |---|---|
 | 離線規劃器 | 歷史規劃器 [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a)；上述三條離線命令已通過。 |
 | 已納入的實驗性執行碼 | `a264ce0` 的啟動及原 TASK owner，加上 [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298) 的[詢問與接續能力](docs/task-capability-extension.md)。[該執行碼四組 CI 已通過](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42973333600)；本整合仍有獨立驗證界線。 |
-| 正式實驗驗收 | **業務 0/33；配對比較 0/15。** 準備、CI 與獨立診斷不能填入這些樣本。 |
-| 原生協作效率 | **尚未驗收。** 範例的 24.051% 不是實際提速；配對實驗也不是 Herdr 與 cmux 的優劣比較。 |
-| 巢狀章節團隊與恢復 | 跨工作區主管協調、真實 callback／正文消費、三種可用性狀態及完整章節團隊整合，仍須端到端證據。 |
+| 章增量檢查器 | [PR #16](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/16)加入既有章決定、必要欄位及可選檔案位元組的離線檢查；格式通過不代表角色接受或科學驗收。 |
+| 既有 tab 檢查 | [PR #17](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/17)修正原始 tab 目標共用 pane 時的檢查。[合併版本 `484c17d` 的四組 main CI 全數通過](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/43723845611)；已結束的實驗仍保留原不可變程式碼與原次。 |
+| 正式實驗驗收 | **已嘗試／觀察 1 次 pilot；通過仍為業務 0/33、pilot 0/3、配對 0/15。** 供應商配額 HTTP 403 導致 `HALTED`／`UNKNOWN_NO_REPLAY`；失敗保留在原分母，原始碼修正不重開原次。 |
+| 原生聯絡與效率 | 一次普通聯絡在 host 完成後約 **0.122／145.052／1118.162 秒**分別收到通知、取得完整正文及產出回件。正文與回件超過 60 秒；此聯絡不屬正式實驗，沒有可比基線或實際提速證據。 |
+| 科研連續性與採用 | 一次有界比較確認 **21/21 來源段落及 8/8 引文**保留。三段候選仍僅作支持材料，母稿採用 **0**；runtime 雜湊時序遺漏及結果閱讀缺十行仍明列於[摘要](docs/validation-status-20261116.md)。 |
+| 巢狀章節團隊與恢復 | 四章角色仍未綁定；跨工作區團隊整合、正式 callback、三種可用性狀態及效率仍須端到端證據。 |
 
 歷史規劃器細節見[排程文件](docs/ORCHESTRATION.md)、[離線驗證](verification/ORCHESTRATION-VALIDATION.md)及[繼承的原生 SKILL 契約](SKILL.md)。其中 `multi-agent-collaboration` 名稱與舊平台描述保留作歷史材料，不是覆蓋已安裝 skill 的指令。實際科研任務應使用當前已授權的領域 skill。
 

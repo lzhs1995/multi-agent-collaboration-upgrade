@@ -1,6 +1,6 @@
 # Agent quickstart / Agent 快速入門
 
-[English overview](../README.md) · [繁體中文完整介紹](../README.zh-TW.md) · [Canonical agent instructions](../AGENTS.md)
+[English overview](../README.md) · [繁體中文完整介紹](../README.zh-TW.md) · [Canonical agent instructions](../AGENTS.md) · [Verification snapshot / 驗證快照](validation-status-20261116.md)
 
 Use this page with Codex, Claude Code, Gemini CLI, OpenCode or another file-reading assistant. It defines a shared reading and offline-planning workflow; it does not certify all native clients.
 
@@ -48,6 +48,8 @@ For chapter research, first choose the correct layer in the [nested research ski
 
 Before a chapter handoff, run the [offline delta checks](nested-research-skills.md#check-the-chapter-delta--檢查章增量) for the selected chapter. The checker distinguishes structural validity, recorded acceptance and optional file-byte verification; it does not dispatch or accept the work. 章節交接前可先離線檢查選定章增量；格式通過不等於主管已接受。
 
+The checker is implemented in [PR #16](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/16). Preserve unknown task/owner bindings in a draft; do not copy example actors or invent an `ACCEPTED` decision to pass it. 缺少實際任務或負責人綁定時，保留草稿及缺項；不得用範例角色或虛構接受狀態填補。
+
 繁體中文：先依[層次導航](nested-research-skills.md)選擇章內或跨章入口，共用同一契約。四章模板可在私有輸出目錄按原分派調整；不為補齊範例新建會話。此候選不宣稱安裝、載入、膠囊顯示或正式科研驗收完成。
 
 Record the objective, source revision/hash, dependencies, named owner, write scope, expected result, acceptance check and next action. A live handoff additionally needs actual session and controller evidence. Synthetic fixture IDs must stay synthetic.
@@ -77,7 +79,13 @@ During an active authorized collaboration episode, publish progress at least eve
 
 ## Runtime and publication boundaries
 
-This source tree includes experimental startup, retained TASK owners and [inquiry/continuity capabilities](task-capability-extension.md) through [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298), alongside the historical contract in [SKILL.md](../SKILL.md). Source integration does not establish the broader target architecture or authorize switching controllers. Formal acceptance is still **0/33 business runs and 0/15 pairs** at the 2026-11-11 checkpoint.
+The [2026-11-15 UTC snapshot](validation-status-20261116.md) (2026-11-16 locally, UTC+08:00) records the merged chapter checker and existing-tab inspection fix, with four main CI jobs passing. The original campaign observed one pilot attempt, then halted on a provider quota HTTP 403: **verified 0/33 business runs, 0/3 pilots and 0/15 pairs**. Keep the failed attempt in the original denominator and preserve `HALTED` / `UNKNOWN_NO_REPLAY`; a source fix does not update its immutable controller or permit replay.
+
+One separate ordinary contact verified notice receipt, full-body reading and a substantive reply. Their observed delays were approximately **0.122, 145.052 and 1118.162 seconds** from host completion. Body and reply did not meet 60 seconds; this single observation establishes neither formal campaign credit nor speedup. A bounded research comparison supports text continuity, while all three candidates remain supporting material with no manuscript adoption. Its runtime hash-order omission and partial result-reading gap remain recorded.
+
+繁體中文：原正式實驗保留一次已觀察失敗及原分母，通過仍為 0/33、pilot 0/3、配對 0/15，不因程式碼修正重播。另一普通聯絡的通知、完整正文與實質回件分別留證，正文／回件未達 60 秒；不算正式樣本或效率提升。科研文字連續性也不等於母稿採用，已知驗證缺口繼續保留。
+
+Experimental startup, retained TASK owners and [inquiry/continuity capabilities](task-capability-extension.md) remain alongside the historical contract in [SKILL.md](../SKILL.md). Source integration does not establish the broader target architecture or authorize switching controllers.
 
 The installed MAC and thesis-refiner skills remain separately maintained. Do not run `manage_install.py install --apply` as part of this quickstart, change global hooks, restart sessions or relabel failed attempts. Consult the authorized current skill/controller before live operations. Older documents are provenance, not a fresh authorization or universal compatibility promise.
 
