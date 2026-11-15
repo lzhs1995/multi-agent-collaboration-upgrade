@@ -2,7 +2,7 @@
 
 # Multi-Agent Collaboration Upgrade
 
-[繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md) · [Nested research skills](docs/nested-research-skills.md)
+[繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md) · [Nested research skills](docs/nested-research-skills.md) · [Validation status](docs/validation-status-20261116.md)
 
 Reusable collaboration rules, an offline dependency planner and experimental TASK runtime code for terminal-based agents. The goal is to combine **cmux for coordination across terminals and workspaces** with **Herdr for teamwork inside a terminal**, while keeping existing sessions, traceable handoffs and clear ownership.
 
@@ -85,15 +85,18 @@ Automatic instruction discovery is client/version dependent and has not been tes
 
 ## What has and has not been delivered
 
-Status snapshot: **2026-11-11**. This integration includes experimental source code; it does not establish live acceptance or authorize installation.
+Status snapshot: **2026-11-15 UTC (2026-11-16 locally, UTC+08:00)**. The [verification summary](docs/validation-status-20261116.md) separates source/CI results, one live attempt, one ordinary contact and research evidence. It does not authorize installation or a new controller.
 
 | Scope | Evidence and boundary |
 |---|---|
 | Offline planner | Historical example from [`4bedae2`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/4bedae241ddf72a0194690e8cfbfcc8a9e75d77a); the three offline commands above passed. |
 | Included experimental runtime | Startup and retained TASK owners from `a264ce0`, plus [inquiry and continuity capabilities](docs/task-capability-extension.md) from [`baa2641`](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/tree/baa26418931cb488a99c0dad84ca8aa8261c7298). [Four CI jobs passed on that runtime head](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/42973333600); this integration has its own validation boundary. |
-| Formal experimental acceptance | **0/33 business runs; 0/15 paired comparisons.** Preparation, CI and standalone diagnostics do not fill those slots. |
-| Native collaboration efficiency | **Not accepted.** The fixture's 24.051% estimate is not a live speedup; the paired experimental track is not a Herdr-versus-cmux comparison. |
-| Nested chapter teams and recovery | Cross-workspace supervisor coordination, real callbacks/body consumption, three availability states and full chapter-team integration still need end-to-end evidence. |
+| Chapter delta checker | [PR #16](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/16) added offline checks for recorded chapter decisions, required fields and optional file bytes. Structural validity does not establish role acceptance or scientific approval. |
+| Existing-tab inspection | [PR #17](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/pull/17) fixed inspection of original tab targets sharing a pane. [All four main CI jobs passed](https://github.com/lzhs1995/multi-agent-collaboration-upgrade/actions/runs/43723845611) on merge `484c17d`; the halted campaign keeps its original immutable code and attempts. |
+| Formal experimental acceptance | **1 pilot attempted/observed; verified 0/33 business runs, 0/3 pilots and 0/15 pairs.** A provider quota HTTP 403 ended the attempt as `HALTED` / `UNKNOWN_NO_REPLAY`. The failed attempt remains in the original denominator; the source fix does not reopen it. |
+| Native contact and efficiency | One ordinary contact recorded notice/body/reply at approximately **0.122 / 145.052 / 1118.162 seconds** after host completion. Body and reply exceeded 60 seconds. This was outside the formal campaign, with no comparable baseline or demonstrated speedup. |
+| Research continuity and adoption | One bounded comparison preserved **21/21 source paragraphs and 8/8 quotes**. Three candidates remain supporting material; manuscript adoption is **0**. The runtime hash-order omission and a ten-line result-reading gap remain explicit in the [summary](docs/validation-status-20261116.md). |
+| Nested chapter teams and recovery | Four chapter roles remain unbound. Cross-workspace team integration, formal callbacks, three availability states and measured efficiency still need end-to-end evidence. |
 
 For the historical planner, see [orchestration](docs/ORCHESTRATION.md), [offline validation](verification/ORCHESTRATION-VALIDATION.md) and the [inherited native SKILL contract](SKILL.md). Its `multi-agent-collaboration` name and legacy platform references are retained historical material, not instructions to overwrite installed skills. Use the current, authorized domain skill for actual research work.
 
