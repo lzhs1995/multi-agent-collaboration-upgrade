@@ -51,8 +51,21 @@ The checkpoint schema is `upgrade-task-continuity-checkpoint-v1` with
 `task_id`, `base_registration`, `budget`, and `scopes`. Each scope has exactly
 `scope_id`, `mode`, `writer_lane`, `output_name`, `inputs`, `handoff`,
 `nonce_state`, `lease_state`. The output name is one bounded filename, never an
-arbitrary path. `CODEX_SOLO` has the original Codex writer; `CLAUDE_PEER` has one
-original Claude writer and the other original Claude as reviewer.
+arbitrary path. `CODEX_SOLO` and `CODEX_CLAUDE` have the original Codex writer;
+`CLAUDE_PEER` has one original Claude writer and the other original Claude as
+reviewer.
+
+A newly registered `CODEX_CLAUDE` scope requires the original native evaluator
+to report that exact mode, with Codex and exactly one original Claude available,
+the other original Claude terminally unavailable, and the matching two active
+identities. Unknown or pending availability does not authorize this scope.
+The healthy Claude keeps its existing work and is not a reviewer of this
+artifact. The Codex result requires `review_statement: null` and retains
+`solo_self_review`: that label describes who reviewed the artifact, not the
+number of available participants. The recorded work retains the actual mode
+and native plan. The same input-consumption, private-output, original-budget
+and no-replay rules apply. Adding this source mode does not alter a frozen
+registration, activate an existing service or reopen a stopped campaign.
 
 The nonce/lease records have schema `upgrade-task-continuity-guard-v1`, exact
 `task_id`, `scope_id`, `kind`, `state`, `pending`. The only accepted states are
