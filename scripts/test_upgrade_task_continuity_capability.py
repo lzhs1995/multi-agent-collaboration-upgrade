@@ -3,11 +3,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import copy
+import sys
 import tempfile
 import unittest
 
 import upgrade_task_continuity_capability as c
-from orchestration_common import ContractError, file_ref, json_ref, require, write_json
+from orchestration_common import ContractError, file_ref, json_ref, require, tree_manifest, write_json
 
 
 class Reader:
@@ -22,7 +23,8 @@ class FixtureContext:
         self.registration_ref = case.reg_ref
         self.operation_id = operation
         self.task_id = 'original-task'
-        self.sessions = {lane: {'session_id':lane + '-original'} for lane in c.LANES}
+        self.sessions = {lane: {'session_id':lane + '-original', 'surface_uuid':lane + '-surface'}
+                         for lane in c.LANES}
         self.directory = Path(case.reg['output_root'])/'operations'/operation
         self.directory.mkdir(parents=True, exist_ok=True)
         self.statements = {}
@@ -192,6 +194,148 @@ class ContinuityCapabilityTests(unittest.TestCase):
         self.allowed.stop()
         with self.assertRaisesRegex(ContractError,'LIVE_CONTEXT'):c.dispatch('continuity-work',{},SimpleNamespace())
         self.allowed.start()
+
+    def mixed_scope(self):
+        self.scope.update(mode='CODEX_CLAUDE', writer_lane='codex')
+        self.setup_contract(); self.set_operations()
+
+    def mixed_plan(self, unavailable='claude_b'):
+        health = {lane + '-surface': {'state': 'UNAVAILABLE' if lane == unavailable else 'AVAILABLE'}
+                  for lane in c.LANES}
+        return dict(mode='CODEX_CLAUDE', health=health,
+                    active=['codex-surface', ('claude_a' if unavailable == 'claude_b' else 'claude_b') + '-surface'])
+
+    def mixed_work(self, plan=None):
+        self.mixed_scope()
+        with patch.object(c, '_evaluate', return_value={'original': {'plan': plan or self.mixed_plan()}}):
+            return self.work()
+
+    def test_codex_claude_either_original_peer_can_remain_available(self):
+        for unavailable in ('claude_a', 'claude_b'):
+            # Each lane case has its own original task files and one result attempt.
+            case = ContinuityCapabilityTests('runTest'); case.setUp()
+            try:
+                case.mixed_work(case.mixed_plan(unavailable))
+                ctx = case.result_context()
+                result = case.call('result', ctx)['value']
+                self.assertEqual(Path(result['artifact']['path']).read_text(), 'Original scoped content.\n')
+                self.assertEqual(result['writer_session'], 'codex-original')
+                self.assertEqual(result['validation'], 'solo_self_review')
+                self.assertEqual(result['review_round'], 2)
+                self.assertEqual(result['children_used'], ['child-original-1', 'child-original-2'])
+                self.assertIsNone(result['peer_session']); self.assertFalse(result['peer_accepted'])
+                self.assertFalse(result['formal_business_accepted']); self.assertFalse(result['live_transport_verified'])
+                self.assertEqual(result['input_operations'], 0); self.assertEqual(result['resource_releases'], 0)
+                self.assertEqual(case.completed['value']['scope']['mode'], 'CODEX_CLAUDE')
+                self.assertEqual(ctx.calls, [(c.SUBMISSION, 'codex', 100)])
+            finally:
+                case.doCleanups()
+
+    def test_codex_claude_rejects_unknown_health_active_set_and_foreign_surface(self):
+        self.mixed_scope()
+        invalid = []
+        for state in ('UNKNOWN', 'PENDING', 'AVAILABLE'):
+            plan = self.mixed_plan(); plan['health']['claude_b-surface']['state'] = state
+            invalid.append(plan)
+        plan = self.mixed_plan(); plan['health']['codex-surface']['state'] = 'UNAVAILABLE'; invalid.append(plan)
+        for active in (['codex-surface', 'claude_b-surface'],
+                       ['codex-surface', 'codex-surface'], ['codex-surface', 'foreign-surface']):
+            plan = self.mixed_plan(); plan['active'] = active; invalid.append(plan)
+        plan = self.mixed_plan()
+        plan['health']['foreign-surface'] = plan['health'].pop('claude_b-surface'); invalid.append(plan)
+        for plan in invalid:
+            with self.subTest(plan=plan), patch.object(c, '_evaluate', return_value={'original': {'plan': plan}}):
+                with self.assertRaisesRegex(ContractError, 'CONTINUITY_CODEX_CLAUDE'):
+                    self.call('work')
+                _, directory = c._paths(self.reg, 'chapter')
+                self.assertFalse(directory.exists())
+
+    def test_codex_claude_does_not_relabel_another_original_mode(self):
+        self.mixed_scope()
+        for mode in ('TRIO', 'CODEX_SOLO'):
+            plan = self.mixed_plan(); plan['mode'] = mode
+            with self.subTest(mode=mode), patch.object(c, '_evaluate', return_value={'original': {'plan': plan}}):
+                with self.assertRaisesRegex(ContractError, 'MODE_CHANGED'):
+                    self.call('work')
+        _, directory = c._paths(self.reg, 'chapter')
+        self.assertFalse(directory.exists())
+
+    def test_codex_claude_cannot_assign_writer_or_review_to_the_healthy_peer(self):
+        self.mixed_scope(); self.scope['writer_lane'] = 'claude_a'
+        self.setup_contract(); self.set_operations()
+        with self.assertRaisesRegex(ContractError, 'SINGLE_WRITER'):
+            self.call('work')
+        self.mixed_work()
+        self.reg['operations']['result']['payload']['review_statement'] = {'fake': True}
+        with self.assertRaisesRegex(ContractError, 'SOLO_CANNOT'):
+            self.call('result', self.result_context())
+        _, directory = c._paths(self.reg, 'chapter')
+        self.assertFalse((directory/'result-intent.json').exists())
+
+    def test_codex_claude_retains_native_body_and_unknown_result_guards(self):
+        self.mixed_work(); ctx = self.result_context()
+        original = self.completed; self.completed = dict(original, forged=True)
+        with self.assertRaisesRegex(ContractError, 'WORK_NOT_CONSUMED'):
+            self.call('result', ctx)
+        self.completed = original
+        real = c.write_json
+        def fail(path, value, **kwargs):
+            if Path(path).name == 'result.json': raise OSError('simulated commit loss')
+            return real(path, value, **kwargs)
+        with patch.object(c, 'write_json', side_effect=fail):
+            with self.assertRaises(OSError): self.call('result', ctx)
+        with self.assertRaisesRegex(ContractError, 'UNKNOWN_RESULT'):
+            self.call('result', ctx)
+        _, directory = c._paths(self.reg, 'chapter')
+        self.assertTrue((directory/'chapter.md').exists())
+        self.assertTrue((directory/'result-intent.json').exists())
+
+    def test_codex_claude_mode_comes_from_original_native_evaluator(self):
+        import upgrade_continuity_native as native
+        from test_upgrade_continuity_native import NativeContinuityTests, MODERN_SOURCE
+        if not MODERN_SOURCE.is_dir():
+            self.skipTest('requires complete fixed original MAC0.4.58')
+        journals = NativeContinuityTests('runTest'); journals.setUp()
+        self.addCleanup(journals.doCleanups)
+        journals.codex_success(10); journals.claude_success('claude_a', 10)
+        for epoch in (30, 90, 150): journals.claude_error('claude_b', epoch, 502)
+        self.mixed_scope()
+        ctx = FixtureContext(self, 'work'); ctx.sessions = journals.sessions
+        registered = dict(task_id=ctx.task_id, runtime=ctx.registration['runtime'],
+                          adoption=ctx.registration['adoption'], sessions=journals.sessions,
+                          authorization=self.authority)
+        runtime = dict(controller=tree_manifest(MODERN_SOURCE.resolve()),
+                       python=file_ref(Path(sys.executable).resolve()))
+        collect, invoke = native.collect_native_outcomes, native.invoke_original_plan
+        def fixture_collect(sessions, **kwargs):
+            kwargs['fixtures'] = True
+            return collect(sessions, **kwargs)
+        def fixture_invoke(*args, **kwargs):
+            kwargs.pop('runtime_ref'); kwargs.pop('adoption_ref')
+            return invoke(*args, fixtures=True, **kwargs)
+        # Only deployment/runtime boundaries are fixtures. Parse real-format
+        # journals and run the complete pinned original evaluator, not a mode stub.
+        self.evaluation.stop()
+        with patch.object(native, 'validate_native_registration', return_value=(registered, runtime)), \
+             patch.object(native, 'collect_native_outcomes', side_effect=fixture_collect), \
+             patch.object(native, 'invoke_original_plan', side_effect=fixture_invoke) as evaluator:
+            # Retryable failures lack authoritative Retry-After and remain blocked.
+            with patch.object(c.time, 'time', return_value=160):
+                with self.assertRaisesRegex(ContractError, 'NATIVE_PENDING_NO_TAKEOVER'):
+                    self.call('work', ctx)
+            evaluator.assert_not_called()
+            _, directory = c._paths(self.reg, 'chapter')
+            self.assertFalse(directory.exists())
+            journals.claude_error('claude_b', 210, 403)
+            with patch.object(c.time, 'time', return_value=220):
+                work = self.call('work', ctx)['value']
+            self.assertEqual(evaluator.call_count, 1)
+        plan = work['native_plan']['original']['plan']
+        self.assertEqual(plan['mode'], 'CODEX_CLAUDE')
+        self.assertEqual(plan['active'], [ctx.sessions[lane]['surface_uuid'] for lane in ('codex', 'claude_a')])
+        self.assertEqual(plan['health'][ctx.sessions['claude_b']['surface_uuid']]['state'], 'UNAVAILABLE')
+        self.assertEqual(work['scope']['writer_lane'], 'codex')
+        self.assertEqual(work['input_operations'], 0); self.assertEqual(work['resource_releases'], 0)
 
 
 if __name__=='__main__':unittest.main()

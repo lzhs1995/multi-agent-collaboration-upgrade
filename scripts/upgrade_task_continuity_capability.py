@@ -75,8 +75,9 @@ def _contract(ref, registration):
         _fields(scope, 'scope_id mode writer_lane output_name inputs handoff nonce_state lease_state',
                 'CONTINUITY_SCOPE_FIELDS')
         key = _name(scope['scope_id'])
-        require(key not in scopes and scope['mode'] in ('CODEX_SOLO', 'CLAUDE_PEER'), 'CONTINUITY_SCOPE_CHANGED')
-        require(scope['writer_lane'] == 'codex' if scope['mode'] == 'CODEX_SOLO'
+        require(key not in scopes and scope['mode'] in ('CODEX_SOLO', 'CODEX_CLAUDE', 'CLAUDE_PEER'),
+                'CONTINUITY_SCOPE_CHANGED')
+        require(scope['writer_lane'] == 'codex' if scope['mode'] != 'CLAUDE_PEER'
                 else scope['writer_lane'] in ('claude_a', 'claude_b'), 'CONTINUITY_SINGLE_WRITER_REQUIRED')
         name = scope['output_name']
         require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', name)
@@ -152,11 +153,30 @@ def _evaluate(context, contract):
     result = invoke_original_plan(runtime['controller'], runtime['python'], registered['sessions'], collection,
         registered['authorization'], output=context.directory/'native-plan', now=now,
         runtime_ref=registered['runtime'], adoption_ref=registered['adoption'])
-    require(result['plan']['mode'] in ('CODEX_SOLO', 'CLAUDE_PEER')
+    require(result['plan']['mode'] in ('CODEX_SOLO', 'CODEX_CLAUDE', 'CLAUDE_PEER')
             and result['plan']['max_subagents'] == 2 and result['plan']['child_budget_scope'] == 'WHOLE_TASK'
             and result['plan']['resource_releases'] == result['plan']['input_operations'] == 0,
             'CONTINUITY_ORIGINAL_FALLBACK_PLAN_REQUIRED')
     return dict(collection=collection, original=result)
+
+
+def _require_codex_claude_plan(plan, sessions):
+    """The healthy peer keeps its own work; UNKNOWN grants no missing role."""
+    surfaces = {lane: sessions[lane]['surface_uuid'] for lane in LANES}
+    health, active = plan.get('health'), plan.get('active')
+    require(len(set(surfaces.values())) == 3 and isinstance(health, dict)
+            and set(health) == set(surfaces.values())
+            and all(isinstance(value, dict) for value in health.values()),
+            'CONTINUITY_CODEX_CLAUDE_ORIGINAL_IDENTITIES_REQUIRED')
+    states = {lane: health[surface].get('state') for lane, surface in surfaces.items()}
+    require(states['codex'] == 'AVAILABLE'
+            and [states[lane] for lane in ('claude_a', 'claude_b')].count('AVAILABLE') == 1
+            and [states[lane] for lane in ('claude_a', 'claude_b')].count('UNAVAILABLE') == 1,
+            'CONTINUITY_CODEX_CLAUDE_TERMINAL_HEALTH_REQUIRED')
+    expected = {surface for lane, surface in surfaces.items() if states[lane] == 'AVAILABLE'}
+    require(isinstance(active, list) and len(active) == 2
+            and all(isinstance(surface, str) for surface in active) and set(active) == expected,
+            'CONTINUITY_CODEX_CLAUDE_ACTIVE_IDENTITIES_REQUIRED')
 
 
 def _paths(registration, scope_id):
@@ -221,6 +241,8 @@ def dispatch(action, payload, context):
             require(not directory.exists(), 'CONTINUITY_SCOPE_ALREADY_CLAIMED_NO_REPLAY')
             observed = _evaluate(context, contract)
             require(observed['original']['plan']['mode'] == scope['mode'], 'CONTINUITY_MODE_CHANGED')
+            if scope['mode'] == 'CODEX_CLAUDE':
+                _require_codex_claude_plan(observed['original']['plan'], context.sessions)
             inputs = _input_bodies(scope)
             context.recheck(); _contract(payload['contract'], context.registration)
             directory.mkdir(mode=0o700)
