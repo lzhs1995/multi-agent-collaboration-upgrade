@@ -1,6 +1,8 @@
 <p align="center"><img src="assets/logo.svg" width="176" alt="Multi-Agent Collaboration Upgrade logo"></p>
 
-# Multi-Agent Collaboration Upgrade
+# Multi-Agent Collaboration Upgrade (Archived Experimental Sandbox — 2026-11-24)
+
+> **Status (2026-11-24): Graduated & Archived.** Validated capabilities from this experimental repository (`chapter_delta_validator.py`, three-state Codex/Claude continuity rules, and tab/pane binding checks) have been merged into the single canonical repository **[lzhs1995/multi-agent-collaboration](https://github.com/lzhs1995/multi-agent-collaboration)** alongside explicit Herdr spatial naming (`herdr_roster.py`) and 6+ pane `cmux-herdr` sidebar folding. Legacy pure-cmux R30–R34 (`0/33`) replay harnesses and offline TypeSafe JEV (`S0/S2/E3`) branches remain preserved as historical research records. See [docs/GRADUATION-AND-ARCHIVE-20261124.md](docs/GRADUATION-AND-ARCHIVE-20261124.md).
 
 [繁體中文](README.zh-TW.md) · [Agent quickstart](docs/agent-quickstart.md) · [Agent instructions](AGENTS.md) · [Nested research skills](docs/nested-research-skills.md) · [Validation status](docs/validation-status-20261116.md)
 
